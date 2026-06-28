@@ -1,0 +1,160 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --line: #9a9a9a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, sans-serif;
+  background: #f3f3f3;
+  color: #111;
+  user-select: none;
+  font-size: 12px;
+}
+
+/* Urdu text uses a Nastaliq face where available, falling back gracefully. */
+.urdu {
+  font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaleeq', 'Segoe UI', Tahoma, sans-serif;
+  line-height: 1.9;
+}
+
+@layer components {
+  /* Dense bordered cells used throughout the grids */
+  .cell {
+    @apply border border-line px-1 text-[11px] leading-tight flex items-center;
+    min-height: 20px;
+  }
+  .cell-c {
+    @apply justify-center;
+  }
+  .hdr {
+    @apply bg-header border border-line px-1 text-[11px] font-semibold flex items-center justify-center text-center;
+    min-height: 22px;
+  }
+  /* White input with a classic sunken border */
+  .inp {
+    @apply bg-white border border-sunken px-1 text-[11px] outline-none w-full;
+    min-height: 20px;
+    box-shadow: inset 1px 1px 1px rgba(0, 0, 0, 0.12);
+  }
+  /* Green input — only for the specific highlighted cells (سونا وزن, کیش, combos) */
+  .inp-g {
+    @apply bg-mint border border-sunken px-1 text-[11px] outline-none w-full;
+    min-height: 20px;
+    box-shadow: inset 1px 1px 1px rgba(0, 0, 0, 0.1);
+  }
+  .inp-y {
+    @apply bg-yellowCell border border-sunken px-1 text-[11px] outline-none w-full;
+    min-height: 20px;
+    box-shadow: inset 1px 1px 1px rgba(0, 0, 0, 0.1);
+  }
+  .lbl {
+    @apply text-[11px] font-semibold;
+  }
+  .btn {
+    @apply border border-line bg-gradient-to-b from-white to-gray-200 px-2 py-[2px] text-[11px] hover:from-gray-50 hover:to-gray-300 active:translate-y-px;
+  }
+  /* Classic raised "Windows" action button for the receipt action bars.
+     Beveled outset border, light-grey fill, darken on hover, inset when pressed.
+     Bigger hit area (~26px tall) but shrinkable so a row can wrap inside a panel. */
+  .abtn {
+    @apply inline-flex items-center justify-center gap-1 text-[11px] font-semibold text-gray-800 cursor-pointer select-none whitespace-nowrap;
+    min-width: 30px;
+    height: 26px;
+    padding: 0 8px;
+    background: linear-gradient(#fafafa, #d9d9d9);
+    border: 2px outset #eee;
+    border-radius: 2px;
+  }
+  .abtn:hover {
+    background: linear-gradient(#efefef, #cccccc);
+  }
+  .abtn:active {
+    border-style: inset;
+    background: linear-gradient(#cfcfcf, #e6e6e6);
+    transform: translateY(1px);
+  }
+  /* WhatsApp keeps its green label on the raised button */
+  .abtn-green {
+    @apply text-green-700;
+  }
+  /* Red X stays red, on a raised red button */
+  .abtn-red {
+    @apply text-white;
+    background: linear-gradient(#e25b5b, #c0392b);
+    border-color: #f0b3ad;
+  }
+  .abtn-red:hover {
+    background: linear-gradient(#d44a4a, #a93226);
+  }
+  .abtn-red:active {
+    background: linear-gradient(#a93226, #c0392b);
+  }
+  .btn-blue {
+    @apply text-blue-700 font-bold;
+  }
+  /* Red hyperlink-style action text (New / Find / navigation arrows) */
+  .link-red {
+    @apply text-redX font-bold underline decoration-1 underline-offset-2 cursor-pointer flex items-center justify-center;
+  }
+  .tab {
+    @apply border border-line bg-gradient-to-b from-gray-100 to-gray-300 px-4 py-[3px] text-[13px] font-bold cursor-pointer;
+  }
+  .tab-active {
+    @apply from-mint to-mintDark;
+  }
+  .status-green {
+    @apply bg-statusGreen text-statusGreenText font-bold text-center flex items-center justify-center;
+  }
+  .panel-title {
+    @apply bg-gradient-to-b from-gray-200 to-gray-300 border border-line text-center font-bold text-[12px] py-[2px];
+  }
+}
+
+/* Editable purity cells get a subtle affordance + override highlight */
+.editable {
+  background: #fff;
+  cursor: text;
+}
+.editable:focus {
+  background: #eef6ff;
+  outline: 1px solid #4a90d9;
+}
+.overridden {
+  background: #fff4d6 !important;
+}
+
+/* Hide number-input spinners */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #b0b0b0;
+  border-radius: 4px;
+}
