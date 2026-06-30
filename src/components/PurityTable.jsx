@@ -6,8 +6,10 @@ import { fmtNum, fmtMoney } from '../logic/units.js'
 // last (right-most) column; checking a row selects it for the لیب رسید.
 const COLS = [
   { key: 'label', label: '', field: 'label', kind: 'rowlabel' },
-  { key: 'khalisPerGram', label: 'خالص سونا(گرام)', field: 'khalisPerGram', editable: true, dp: 4 },
-  { key: 'malawatPerGram', label: 'ملاوٹ فی گرام', field: 'malawat', editable: true, dp: 3 },
+  // Column 1 now shows khalis grams; editing it back-solves this row's factor.
+  { key: 'khalisSona', label: 'خالص سونا(گرام)', field: 'khalisSona', editable: true, dp: 4 },
+  // Milawat fi gram is editable: typing it back-solves point = 1 - milawat/g.
+  { key: 'malawatPerGram', label: 'ملاوٹ فی گرام', field: 'malawatPerGram', editable: true, dp: 4 },
   { key: 'tola', label: 'تولہ', field: 'tola', editable: true, dp: 0 },
   { key: 'masha', label: 'ماشہ', field: 'masha', editable: true, dp: 0 },
   { key: 'ratti', label: 'رتی', field: 'ratti', editable: true, dp: 2 },
@@ -19,8 +21,8 @@ const COLS = [
 ]
 
 const OVR_KEY = {
-  khalisPerGram: 'fineness',
-  malawat: 'malawat',
+  khalisSona: 'khalisSona',
+  malawatPerGram: 'milawatFiGram',
   tola: 'tola',
   masha: 'masha',
   ratti: 'ratti',
@@ -33,7 +35,13 @@ const OVR_KEY = {
 // ONE shared grid template for the header and every data row, so all columns
 // line up perfectly. Using CSS grid (not flex) is what guarantees alignment —
 // flex + <input> intrinsic widths is what caused the brick-wall misalignment.
-const GRID = '96px 1.5fr 1.1fr 0.55fr 0.55fr 0.55fr 1fr 1fr 1fr 1fr 34px'
+// Column widths. The money columns (سونا ریٹ / نوٹل رقم / باقی رقم) keep their
+// wide share so large amounts (e.g. 10,360,752, 430,000) fit fully. تولہ/ماشہ
+// only ever show a dash or single digit, so they're kept narrow and the freed
+// width is given to رتی (which shows values like 1.84 / 7.46) so it no longer
+// truncates. Order:
+// label | khalisSona | milawat/g | tola | masha | ratti | rate | total | labCharges | baqi | parchi
+const GRID = '92px 1.4fr 1.0fr 0.32fr 0.34fr 0.7fr 1.25fr 1.3fr 1.0fr 1.3fr 30px'
 
 function Cell({ col, row }) {
   const { overrides, setCell, clearCell, toggleParchi } = useApp()
@@ -73,8 +81,48 @@ function Cell({ col, row }) {
       title="کلک کر کے اپنی قیمت لکھیں — Edit to override the formula"
       onChange={(e) => {
         const v = e.target.value
-        if (v === '') clearCell(row.key, ovrKey)
-        else setCell(row.key, ovrKey, v)
+        // Empty -> revert this cell to the formula.
+        if (v === '') { clearCell(row.key, ovrKey); return }
+
+        const isTMR = col.field === 'tola' || col.field === 'masha' || col.field === 'ratti'
+
+        // khalisSona, ملاوٹ فی گرام, the tola/masha/ratti trio, fineness and a Baqi
+        // edit are all "purity drivers" — each sets this row's khalis/point a
+        // different way, so editing one must drop the others (last edit wins).
+        if (col.field === 'khalisSona') {
+          clearCell(row.key, 'tola'); clearCell(row.key, 'masha'); clearCell(row.key, 'ratti')
+          clearCell(row.key, 'fineness'); clearCell(row.key, 'milawatFiGram'); clearCell(row.key, 'baqiRaqam')
+        }
+        // ملاوٹ فی گرام edit: rate stays at the header value, khalis re-derives from
+        // point = 1 - milawat/g. Drop the other khalis-drivers and a stale total.
+        if (col.field === 'malawatPerGram') {
+          clearCell(row.key, 'khalisSona'); clearCell(row.key, 'fineness')
+          clearCell(row.key, 'tola'); clearCell(row.key, 'masha'); clearCell(row.key, 'ratti')
+          clearCell(row.key, 'baqiRaqam'); clearCell(row.key, 'totalRaqam')
+        }
+        if (isTMR) {
+          clearCell(row.key, 'khalisSona'); clearCell(row.key, 'fineness')
+          clearCell(row.key, 'milawatFiGram'); clearCell(row.key, 'baqiRaqam')
+          // Seed the other two TMR cells from the current values so a single-cell
+          // edit back-solves correctly (a blank sibling would read as 0).
+          for (const k of ['tola', 'masha', 'ratti']) {
+            if (k !== col.field && (rowOvr[k] === undefined || rowOvr[k] === '')) {
+              setCell(row.key, k, String(row[k]))
+            }
+          }
+        }
+        // Baqi reverse-calc holds the rate FIXED and back-solves khalis — so it
+        // must drop every other driver for this row (khalis/milawat/TMR/rate/total).
+        if (col.field === 'baqiRaqam') {
+          clearCell(row.key, 'khalisSona'); clearCell(row.key, 'fineness'); clearCell(row.key, 'milawatFiGram')
+          clearCell(row.key, 'tola'); clearCell(row.key, 'masha'); clearCell(row.key, 'ratti')
+          clearCell(row.key, 'rate'); clearCell(row.key, 'totalRaqam')
+        }
+        // Editing rate/total drops a stale Baqi override so they don't fight.
+        if (col.field === 'rate' || col.field === 'totalRaqam') {
+          clearCell(row.key, 'baqiRaqam')
+        }
+        setCell(row.key, ovrKey, v)
       }}
     />
   )
@@ -83,7 +131,7 @@ function Cell({ col, row }) {
 export default function PurityTable() {
   const { computedRows } = useApp()
   return (
-    <div className="border border-line bg-white">
+    <div className="purity-table border border-line bg-white">
       {/* header — same grid template as the rows */}
       <div className="grid" style={{ gridTemplateColumns: GRID, height: 34 }}>
         <div className="hdr min-w-0"> </div>

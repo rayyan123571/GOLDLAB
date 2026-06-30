@@ -33,8 +33,8 @@ export function tmrToGrams({ tola = 0, masha = 0, ratti = 0 }) {
 }
 
 export function round(n, dp = 3) {
-  const f = Math.pow(10, dp)
-  return Math.round((Number(n) || 0) * f) / f
+  const v = Number(n) || 0
+  return Number(v.toFixed(dp))
 }
 
 // Format a number with thousands separators (en) — used for PKR amounts.

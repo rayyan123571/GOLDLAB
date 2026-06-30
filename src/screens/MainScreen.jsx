@@ -16,7 +16,11 @@ const CANVAS_W = 1460
 const CANVAS_H = 820
 const TOPBAR_H = 40
 const STATUS_H = 34
-const HALF_W = CANVAS_W / 2 // 730
+// The center divider is shifted right of center so the LEFT section (purity
+// table + وصولی/لیب receipts) gets extra room for very large amounts (e.g.
+// 10,360,752) without truncation; the RIGHT section (نقد/ادھار) is the rest.
+const LEFT_W = 790
+const RIGHT_W = CANVAS_W - LEFT_W // 670
 const UPPER_H = 258 // height of the data-entry band (both halves)
 
 export default function MainScreen() {
@@ -34,7 +38,7 @@ export default function MainScreen() {
         <div
           className="grid overflow-hidden"
           style={{
-            gridTemplateColumns: `${HALF_W}px ${HALF_W}px`,
+            gridTemplateColumns: `${LEFT_W}px ${RIGHT_W}px`,
             gridTemplateRows: `${UPPER_H}px 1fr`
           }}
         >

@@ -60,6 +60,14 @@ export function AppProvider({ children }) {
     if (hasApi) await window.api.saveRates(next)
   }, [rates])
 
+  // Change a top weight (gross / water). Changing a weight reruns the forward
+  // calc fresh for all 5 rows, so any per-row manual edits (e.g. Baqi Raqam
+  // reverse-calc) are dropped.
+  const setWeight = useCallback((field, value) => {
+    setInput((s) => ({ ...s, [field]: value }))
+    setOverrides({})
+  }, [])
+
   const setCell = useCallback((rowKey, field, value) => {
     setOverrides((o) => ({
       ...o,
@@ -124,7 +132,7 @@ export function AppProvider({ children }) {
     receiptNo, setReceiptNo,
     customer, setCustomer, newCustomer, saveCustomer,
     totals, refresh, bump,
-    input, setInput,
+    input, setInput, setWeight,
     overrides, setCell, clearCell, toggleParchi, resetEntry,
     computedRows,
     addTransaction,

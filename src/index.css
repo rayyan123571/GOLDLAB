@@ -158,3 +158,170 @@ input[type='number'] {
   background: #b0b0b0;
   border-radius: 4px;
 }
+
+/* --------------------------------------------------------------------------
+   TOP purity table only — make the number cells bold and larger so they fill
+   each cell, while staying fully inside it (overflow clips, never spills). The
+   table structure/column widths/row heights are unchanged; only the cell text
+   weight + size change. Scoped to .purity-table so receipts, header inputs and
+   the cash/udhaar grids are untouched.
+   -------------------------------------------------------------------------- */
+.purity-table .cell {
+  font-weight: 700 !important;
+  font-size: 14px !important; /* up from 11px; raise toward 15–16 if it still fits */
+  line-height: 1.1 !important;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Row labels + Urdu column headers: bold for consistency, size unchanged so they
+   never wrap or overflow their header cells. */
+.purity-table .hdr {
+  font-weight: 700 !important;
+}
+
+/* --------------------------------------------------------------------------
+   Sixth behavior — the four bottom receipt panels (وصولی / لیب / ادھار / نقد):
+   ALL text bold; numbers/English large (14px), Urdu labels bold but smaller
+   (11px) so they fit; and the rows are SPREAD down the panel so nothing
+   overlaps.
+
+   The overlap fix is mostly structural: each receipt row helper used to cap at
+   `maxHeight: 30` while being `flex-1`, so rows packed at the top and left
+   empty space below. That cap was removed in Receipts.jsx, so the flex-1 rows
+   now distribute evenly across the full (fixed) panel height — giving a clear,
+   even gap between every line without changing panel size, grid columns or row
+   count. These rules only set weight/size; scoped to .receipt-panel so the top
+   inputs, purity table and cash/udhaar grids are untouched.
+   -------------------------------------------------------------------------- */
+.receipt-panel,
+.receipt-panel * {
+  font-weight: 700 !important; /* bold everything, including the Urdu labels */
+}
+
+/* Numbers / English values (real .cell/.inp/.lbl AND the inline text-[Npx]
+   spans) -> large. [class*="text-["] also matches Urdu spans that carry a
+   text-[Npx] utility, but the .urdu rule below comes LATER at equal
+   specificity, so Urdu wins (stays 11px) for those. */
+.receipt-panel .cell,
+.receipt-panel .lbl,
+.receipt-panel .inp,
+.receipt-panel .inp-g,
+.receipt-panel .inp-y,
+.receipt-panel [class*='text-['] {
+  font-size: 14px !important;
+  line-height: 1.3 !important;
+}
+
+/* Urdu Nastaliq labels: bold (from the rule above) but kept smaller so the tall
+   glyphs don't collide even in the now-roomier rows. */
+.receipt-panel .urdu {
+  font-size: 11px !important;
+  line-height: 1.3 !important;
+}
+
+/* Clip HORIZONTALLY so a bigger number ellipsises instead of wrapping to a new
+   line that would break the grid or widen the panel. */
+.receipt-panel {
+  overflow: hidden;
+}
+.receipt-panel .cell,
+.receipt-panel [class*='text-['] {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Urdu labels must render WHOLE — never letter-spaced, never ellipsis-clipped,
+   never shrunk below their content. Any of those truncates a Nastaliq word so it
+   looks like the letters are split/broken. The numbers (which CAN shrink) absorb
+   tight space instead. Placed AFTER the clip rule so it wins for label spans
+   that also carry a text-[Npx] utility. */
+.receipt-panel .urdu {
+  letter-spacing: normal !important;
+  text-overflow: clip !important;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
+  line-height: 1.45 !important;
+}
+
+/* Problem 1 — keep the bold text clear of the row divider lines. Every field
+   row in these receipts has a bottom border (the `border-b` utility); box-sizing
+   is border-box so this padding stays INSIDE the fixed row height (no layout
+   change) and just lifts the glyphs off the underline. [class~="border-b"]
+   matches the border-b token regardless of the other utilities on the row. */
+.receipt-panel [class~='border-b'] {
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+
+/* The cramped total/charges/baqaya line is split into TWO rows: Row 1 holds
+   ٹوٹل رقم + total + charges, Row 2 holds بقایا رقم + the baqaya box. Each is a
+   simple flex row, label on the right (row-reverse), items spread with a gap so
+   nothing touches; overflow:hidden keeps even very large numbers inside the
+   panel. Charges is a single number (no "+"). These rows are flex-1 like the
+   other Laib rows, so adding the extra row just compacts them all to fit. */
+.receipt-panel .laib-total-row,
+.receipt-panel .laib-baqaya-row {
+  display: flex !important;
+  flex-direction: row-reverse !important; /* RTL: label sits on the right */
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  gap: 10px !important;
+  padding: 2px 12px !important; /* margin from both panel borders */
+  white-space: nowrap !important;
+  overflow: hidden !important; /* nothing crosses the panel edge */
+}
+.receipt-panel .laib-total-row > *,
+.receipt-panel .laib-baqaya-row > * {
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+}
+/* Urdu labels keep their full width (never shrink) so Nastaliq letters stay
+   joined and the label is never clipped; only the numbers may shrink. */
+.receipt-panel .laib-total-row .urdu,
+.receipt-panel .laib-baqaya-row .urdu {
+  flex: 0 0 auto !important;
+  white-space: nowrap !important;
+}
+/* numbers stay bold and clip inside their own cell rather than spilling over */
+.receipt-panel .laib-total-row .num,
+.receipt-panel .laib-baqaya-row .num {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700 !important;
+}
+
+/* تاریخ row — same flex spreading so تاریخ / date / وقت / time / رتی / value are
+   evenly separated and never touch. Horizontal-spacing only: `padding: 0 12px`
+   keeps the existing row height (no vertical padding), and the row stays flex-1
+   like the others so it is NOT taller than before. */
+.receipt-panel .laib-date-row {
+  display: flex !important;
+  flex-direction: row-reverse !important; /* RTL: label on the right */
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  gap: 10px !important;
+  padding: 0 12px !important; /* side margins only — keeps the same height */
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
+.receipt-panel .laib-date-row > * {
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+}
+.receipt-panel .laib-date-row .urdu {
+  flex: 0 0 auto !important; /* labels keep full width, never clipped */
+  white-space: nowrap !important;
+}
+/* the baqaya highlighted box keeps a little inner padding around its number */
+.receipt-panel .laib-baqaya-row .bg-yellowCell {
+  padding: 0 6px !important;
+}

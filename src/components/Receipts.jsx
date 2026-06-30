@@ -52,9 +52,13 @@ function RateRow({ rates }) {
 // One label:value field for the two-column receipt forms. Label sits on the
 // right (RTL), the value underline / yellow box fills the space to its left.
 function Fld({ label, value, yellow, red, strong }) {
+  // justify-between + a bigger gap and side padding spread the label (right) and
+  // its value (left) with a clear gap and keep both off the panel borders —
+  // matching the even spacing used in the Laib receipt. The Urdu label is a
+  // single text node so Nastaliq letters join correctly.
   return (
-    <div className="flex items-center gap-1 w-full min-w-0 px-1 border-b border-dotted border-gray-300 min-h-[19px]">
-      <span className={`urdu text-[10px] whitespace-nowrap ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
+    <div className="flex items-center justify-between gap-3 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px]">
+      <span dir="rtl" className={`urdu text-[10px] whitespace-nowrap shrink-0 ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
         {label} :
       </span>
       {yellow ? (
@@ -117,15 +121,12 @@ function RecoveryReceipt({ row, lab, ctx }) {
   // comfortable height so they never over-stretch in a tall panel — giving even,
   // moderate line spacing (not too much, not too little).
   const R = ({ children, top }) => (
-    <div
-      className={`flex-1 flex flex-col justify-center ${top ? 'border-t border-line' : ''}`}
-      style={{ maxHeight: 30 }}
-    >
+    <div className={`flex-1 flex flex-col justify-center ${top ? 'border-t border-line' : ''}`}>
       {children}
     </div>
   )
   return (
-    <div className="border border-line bg-white flex flex-col h-full">
+    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu flex items-center justify-center relative">
         <span>وصولی رسید</span>
         <span className="absolute left-1 bg-header border border-line text-[10px] font-normal px-2">{time()}</span>
@@ -194,10 +195,14 @@ function LabReceipt({ row, lab, ctx }) {
   // ONE shared 6-col grid (left -> right): گرام | ملی گرام | تولہ | ماشہ | رتی | label.
   // Every row uses it (with column spans) so the whole receipt stays aligned.
   const LG = { gridTemplateColumns: '1fr 1.2fr 0.55fr 0.55fr 0.55fr 78px' }
+  // ملی گرام column = the .xxxx fraction of the gram value, as a padded 4-digit
+  // number (e.g. 11.6640 -> "6640", 1.0375 -> "0375", 10.6265 -> "6265").
   const mg = (grams) => {
-    const v = fmtNum((grams % 1) * 1000, 0)
-    return v === '-' ? '0000' : v
+    const frac = Math.round(((Number(grams) || 0) % 1) * 10000)
+    return String(frac).padStart(4, '0')
   }
+  // گرام column = the whole-gram part (11.664 -> 11).
+  const gWhole = (grams) => Math.floor(Number(grams) || 0)
   const C = ({ children, cls = '', span }) => (
     <div className={`flex items-center justify-center min-w-0 text-[10px] ${cls}`} style={span ? { gridColumn: `span ${span}` } : undefined}>{children}</div>
   )
@@ -208,11 +213,11 @@ function LabReceipt({ row, lab, ctx }) {
   // never over-stretches — same moderate spacing as the وصولی رسید. The 6-col
   // grid (column widths) is untouched; only the row's vertical size changes.
   const Row = ({ children }) => (
-    <div className="grid border-b border-gray-300 flex-1" style={{ ...LG, maxHeight: 30 }}>{children}</div>
+    <div className="grid border-b border-gray-300 flex-1" style={LG}>{children}</div>
   )
   const div = 'border-l border-gray-400' // faint vertical divider after ملی گرام
   return (
-    <div className="border border-line bg-white flex flex-col h-full">
+    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">لیب رسید</div>
       <div className="flex-1 px-1 pt-[2px] flex flex-col">
         {/* header */}
@@ -224,63 +229,74 @@ function LabReceipt({ row, lab, ctx }) {
           <C cls="urdu text-red-600">رتی</C>
           <C> </C>
         </Row>
-        {/* آمد / ملاوٹ / خالص وزن */}
+        {/* آمد / ملاوٹ / خالص وزن — each weight gets its OWN gram->tola/masha/ratti */}
         {[
-          { label: 'آمدوزن', grams: lab?.aamadWazan || 0, red: true },
-          { label: 'ملاوٹ وزن', grams: lab?.malawatWazan || 0, red: true },
-          { label: 'خالص وزن', grams: lab?.khalisWazan || 0, strong: true }
+          { label: 'آمدوزن', grams: lab?.aamadWazan || 0, tmr: lab?.grossTMR, red: true },
+          { label: 'ملاوٹ وزن', grams: lab?.malawatWazan || 0, tmr: lab?.malawatTMR, red: true },
+          { label: 'خالص وزن', grams: lab?.khalisWazan || 0, tmr: lab?.khalisTMR, strong: true }
         ].map((r, i) => (
           <Row key={i}>
-            <C>{fmtNum(r.grams, 3)}</C>
+            <C>{gWhole(r.grams)}</C>
             <C cls={r.strong ? 'font-bold' : ''}>{mg(r.grams)}</C>
-            <C cls={div}>{fmtNum(row?.tola, 0)}</C>
-            <C>{fmtNum(row?.masha, 0)}</C>
-            <C>{fmtNum(row?.ratti, 2)}</C>
+            <C cls={div}>{fmtNum(r.tmr?.tola, 0)}</C>
+            <C>{fmtNum(r.tmr?.masha, 0)}</C>
+            <C>{fmtNum(r.tmr?.ratti, 2)}</C>
             <Lb cls={r.red ? 'text-red-600' : ''}>{r.label}</Lb>
           </Row>
         ))}
-        {/* ملاوٹ فی تولہ */}
+        {/* ملاوٹ فی تولہ — value (0.0889) + its masha/ratti breakdown */}
         <Row>
-          <C>-</C>
+          <C>{fmtNum(lab?.malawatPerGram, 4)}</C>
           <C cls="urdu text-red-600">فی گرام</C>
-          <C cls={div}>-</C>
-          <C>-</C>
-          <C>-</C>
+          <C cls={div}>{fmtNum(lab?.milawatFiTolaTMR?.tola, 0)}</C>
+          <C>{fmtNum(lab?.milawatFiTolaTMR?.masha, 0)}</C>
+          <C>{fmtNum(lab?.milawatFiTolaTMR?.ratti, 2)}</C>
           <Lb cls="text-red-600">ملاوٹ فی تولہ</Lb>
         </Row>
         {/* کیرٹ | ریٹ فی تولہ */}
         <Row>
-          <C>-</C>
+          <C>{fmtMoney(lab?.ratePerTola)}</C>
           <Lb span={2}>ریٹ فی تولہ</Lb>
           <C> </C>
           <C>{fmtNum(lab?.keerat, 2)}</C>
           <Lb>کیرٹ</Lb>
         </Row>
-        {/* ٹوٹل رقم | چار جز | بقایا رقم (yellow) */}
+        {/* The cramped total/charges/baqaya line is split into TWO rows so the big
+            money numbers each get room and never overlap. Each is a simple flex
+            row (label on the right via row-reverse), charges as a single number.
+            DOM order is [label, …numbers] so row-reverse puts the label rightmost. */}
+        {/* Row 1 (RTL): ٹوٹل رقم · total · چارجز · charges. Each label is ONE clean
+            .urdu text node with dir=rtl so the Nastaliq letters join correctly
+            (no Lb flex-wrapper, no split). چارجز labels the charges number. */}
+        <div className="laib-total-row border-b border-gray-300 flex-1">
+          <span className="urdu" dir="rtl">ٹوٹل رقم</span>
+          <span className="num">{fmtMoney(lab?.totalRaqam)}</span>
+          <span className="urdu" dir="rtl">چارجز</span>
+          <span className="num">{fmtMoney(lab?.charges)}</span>
+        </div>
+        {/* Row 2 (RTL): بقایا رقم · baqaya value (highlighted box) */}
+        <div className="laib-baqaya-row border-b border-gray-300 flex-1">
+          <span className="urdu" dir="rtl">بقایا رقم</span>
+          <span className="num bg-yellowCell border border-line text-red-600">{fmtMoney(lab?.baqi)}</span>
+        </div>
+        {/* نام | پوائنٹ (khalis fraction 0.9111) */}
         <Row>
-          <C cls="bg-yellowCell border border-line">{fmtMoney(lab?.baqi)}</C>
-          <Lb>بقایا رقم</Lb>
-          <C>{fmtMoney(lab?.charges)}</C>
-          <Lb>چار جز</Lb>
-          <C>{fmtMoney(lab?.totalRaqam)}</C>
-          <Lb>ٹوٹل رقم</Lb>
-        </Row>
-        {/* نام */}
-        <Row>
-          <C>{fmtNum(rates.point, 0)}</C>
+          <C>{fmtNum(lab?.point, 4)}</C>
           <Lb>پوائنٹ</Lb>
           <C span={3} cls="border-b border-gray-400">{customer.name || ' '}</C>
           <Lb>نام</Lb>
         </Row>
-        {/* تاریخ | وقت | رتی */}
-        <Row>
-          <C>-</C>
-          <Lb>رتی</Lb>
-          <C cls="text-[9px]">{time()}</C>
-          <Lb>وقت</Lb>
-          <C cls="text-[9px]">{dispDate(rates.date)}</C>
-          <Lb>تاریخ</Lb>
-        </Row>
+        {/* تاریخ row (RTL): تاریخ · date · وقت · time · رتی · ratti — spread evenly
+            on one line via flex space-between. Same height as before (flex-1);
+            this is a horizontal-spacing-only fix. Labels are clean .urdu spans. */}
+        <div className="laib-date-row border-b border-gray-300 flex-1">
+          <span className="urdu" dir="rtl">تاریخ</span>
+          <span className="num">{dispDate(rates.date)}</span>
+          <span className="urdu" dir="rtl">وقت</span>
+          <span className="num">{time()}</span>
+          <span className="urdu" dir="rtl">رتی</span>
+          <span className="num">{fmtNum(lab?.milawatTotalRatti, 2)}</span>
+        </div>
       </div>
       <ActionBar
         onWa={() => waOpen(customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`)}
@@ -299,7 +315,7 @@ function CSide({ f }) {
   if (!f) return <div className="flex-1 min-w-0" />
   if (f.bare)
     return (
-      <div className="flex-1 min-w-0 px-1 border-b border-dotted border-gray-300 min-h-[19px] flex items-center justify-end">
+      <div className="flex-1 min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] flex items-center justify-end">
         <span dir="ltr" className="text-[10px]">{f.value ?? '-'}</span>
       </div>
     )
@@ -325,10 +341,10 @@ function CreditReceipt({ ctx }) {
   // Each row grows (flex-1) so rows fill the panel evenly instead of bunching at
   // the top, but is capped at a comfortable height so they never over-stretch.
   const R = ({ children }) => (
-    <div className="flex-1 flex flex-col justify-center" style={{ maxHeight: 30 }}>{children}</div>
+    <div className="flex-1 flex flex-col justify-center">{children}</div>
   )
   return (
-    <div className="border border-line bg-white flex flex-col h-full">
+    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">ادھار کی رسید</div>
       <div className="flex-1 px-1 pt-1 flex flex-col" dir="rtl">
         {/* رسید نمبر + تاریخ */}
@@ -375,15 +391,17 @@ function CreditReceipt({ ctx }) {
 /* 4) نقد کی رسید — Cash Receipt (رسید سونا خرید) */
 function CashReceipt({ ctx }) {
   const { customer, receiptNo, rates } = ctx
-  // Mini TMR band grid (RTL right->left): پوائنٹ | label | value | رتی | ماشہ | تولہ
-  const tmrGrid = { gridTemplateColumns: '34px 1fr 1fr 22px 22px 26px' }
+  // Mini TMR band grid (RTL right->left): پوائنٹ | label | value | رتی | ماشہ | تولہ.
+  // columnGap keeps adjacent cells (e.g. پوائنٹ and سونا وزن) from abutting so the
+  // Urdu labels don't read as merged. Column widths are unchanged.
+  const tmrGrid = { gridTemplateColumns: '34px 1fr 1fr 22px 22px 26px', columnGap: 6 }
   // Each row grows (flex-1) so rows fill the panel evenly instead of bunching at
   // the top, but is capped at a comfortable height so they never over-stretch.
   const R = ({ children }) => (
-    <div className="flex-1 flex flex-col justify-center" style={{ maxHeight: 30 }}>{children}</div>
+    <div className="flex-1 flex flex-col justify-center">{children}</div>
   )
   return (
-    <div className="border border-line bg-white flex flex-col h-full">
+    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">نقد کی رسید</div>
       <div className="urdu text-center text-[12px] font-bold py-[2px]">رسید سونا خرید</div>
       <div className="flex-1 px-1 pt-1 flex flex-col" dir="rtl">
@@ -410,16 +428,16 @@ function CashReceipt({ ctx }) {
             <div className="flex"><input type="checkbox" className="scale-90" /></div>
             <div></div>
             <div></div>
-            <div className="urdu text-[9px] text-red-600 text-center">رتی</div>
-            <div className="urdu text-[9px] text-center">ماشہ</div>
-            <div className="urdu text-[9px] text-center">تولہ</div>
+            <div dir="rtl" className="urdu text-[9px] text-red-600 text-center">رتی</div>
+            <div dir="rtl" className="urdu text-[9px] text-center">ماشہ</div>
+            <div dir="rtl" className="urdu text-[9px] text-center">تولہ</div>
           </div>
         </R>
         {/* سونا وزن row — پوائنٹ label sits on the right */}
         <R>
           <div className="grid items-center" style={tmrGrid}>
-            <div className="urdu text-[10px] text-center border-b border-gray-400">پوائنٹ</div>
-            <div className="urdu text-[10px] text-right whitespace-nowrap">سونا وزن :</div>
+            <div dir="rtl" className="urdu text-[10px] text-center border-b border-gray-400">پوائنٹ</div>
+            <div dir="rtl" className="urdu text-[10px] text-right whitespace-nowrap">سونا وزن :</div>
             <div className="text-[10px] text-center border-b border-gray-400" dir="ltr">-</div>
             <div className="text-[10px] text-center">-</div>
             <div className="text-[10px] text-center">-</div>
@@ -430,7 +448,7 @@ function CashReceipt({ ctx }) {
         <R>
           <div className="grid items-center" style={tmrGrid}>
             <div className="text-[10px] text-center font-bold" dir="ltr">{fmtNum(rates.point, 0)}</div>
-            <div className="urdu text-[10px] text-right whitespace-nowrap">خالص وزن :</div>
+            <div dir="rtl" className="urdu text-[10px] text-right whitespace-nowrap">خالص وزن :</div>
             <div className="text-[10px] text-center border-b border-gray-400" dir="ltr">-</div>
             <div className="text-[10px] text-center">-</div>
             <div className="text-[10px] text-center">-</div>
