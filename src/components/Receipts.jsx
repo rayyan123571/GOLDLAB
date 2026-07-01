@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useApp } from '../state/store.jsx'
 import { buildLabReceipt } from '../logic/purity.js'
-import { fmtMoney, fmtNum } from '../logic/units.js'
+import { fmtMoney, fmtNum, round, GRAMS_PER_TOLA, GRAMS_PER_RATTI, gramsToTMR } from '../logic/units.js'
+import { useClock } from '../logic/useClock.js'
 import LeftSidebar from './LeftSidebar.jsx'
 
-const time = () => {
-  const d = new Date()
+// AM/PM time string from a live Date (passed in so the component re-renders).
+const fmtTime = (d) => {
   let h = d.getHours()
   const m = String(d.getMinutes()).padStart(2, '0')
   const ap = h >= 12 ? 'PM' : 'AM'
@@ -17,6 +18,13 @@ const dispDate = (iso) => {
   const p = String(iso || '').split('-')
   return p.length === 3 ? `${p[2]}-${p[1]}-${p[0].slice(2)}` : iso
 }
+
+// yyyy-mm-dd for a live Date, so it can flow through dispDate().
+const isoFrom = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Date shown on receipts: the user-entered receipt date if set, else live today.
+const showDate = (rates, now) => (rates.date ? dispDate(rates.date) : dispDate(isoFrom(now)))
 
 function Row({ label, value, strong, red, yellow }) {
   return (
@@ -49,26 +57,64 @@ function RateRow({ rates }) {
   )
 }
 
-// One label:value field for the two-column receipt forms. Label sits on the
-// right (RTL), the value underline / yellow box fills the space to its left.
-function Fld({ label, value, yellow, red, strong }) {
-  // justify-between + a bigger gap and side padding spread the label (right) and
-  // its value (left) with a clear gap and keep both off the panel borders —
-  // matching the even spacing used in the Laib receipt. The Urdu label is a
-  // single text node so Nastaliq letters join correctly.
+// Value renderer that NEVER overflows its box. Numbers (and dates) shrink their
+// font-size to fit — so digits are never lost — while plain text (names) is
+// truncated with an ellipsis. The element fills its parent (`w-full`, one line),
+// and we shrink until scrollWidth ≤ clientWidth. Because the design canvas is a
+// fixed size that FitScreen only CSS-transforms, these measurements are stable
+// regardless of window size, so a single layout pass on value change suffices.
+function FitValue({ value, align = 'right', strong, red, min = 6 }) {
+  const ref = useRef(null)
+  const raw = value === null || value === undefined || value === '' ? '-' : String(value)
+  // Digits plus number/date punctuation only → treat as numeric (shrink, keep all
+  // digits). Anything with letters (names) → text (ellipsis is acceptable there).
+  const numeric = /\d/.test(raw) && /^[\d.,:\-−()%/\s]+$/.test(raw)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.fontSize = '' // reset to the inherited size before measuring
+    if (!numeric || !el.clientWidth) return
+    let size = parseFloat(getComputedStyle(el).fontSize) || 10
+    let guard = 0
+    while (el.scrollWidth > el.clientWidth && size > min && guard < 30) {
+      size -= 0.5
+      el.style.fontSize = `${size}px`
+      guard++
+    }
+  }, [raw, numeric, min])
+
+  const alignCls = align === 'center' ? 'text-center' : align === 'left' ? 'text-left' : 'text-right'
   return (
-    <div className="flex items-center justify-between gap-3 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px]">
-      <span dir="rtl" className={`urdu text-[10px] whitespace-nowrap shrink-0 ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
+    <span
+      ref={ref}
+      dir="ltr"
+      className={`block w-full whitespace-nowrap overflow-hidden ${numeric ? '' : 'text-ellipsis'} ${alignCls} ${strong ? 'font-bold' : ''} ${red ? 'text-red-600' : ''}`}
+    >
+      {raw}
+    </span>
+  )
+}
+
+// One label:value field for the two-column receipt forms. Label sits on the
+// right (RTL), the value / yellow box fills the space to its left and is
+// right-aligned against the label. Values can never spill the panel border:
+// min-w-0 lets the value box shrink, overflow-hidden clips, and FitValue keeps
+// numbers readable (shrink-to-fit) and text tidy (ellipsis).
+function Fld({ label, value, yellow, red, strong }) {
+  return (
+    <div className="flex items-center gap-1 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px]">
+      <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
         {label} :
       </span>
       {yellow ? (
-        <span dir="ltr" className="bg-yellowCell border border-line text-[10px] text-center flex-1 min-w-0 leading-tight">
-          {value ?? '-'}
-        </span>
+        <div className="bg-yellowCell border border-line text-[9px] leading-tight px-2 py-[1px] flex-1 min-w-0 overflow-hidden box-border">
+          <FitValue value={value} align="right" />
+        </div>
       ) : (
-        <span dir="ltr" className={`text-[10px] text-center flex-1 min-w-0 ${strong ? 'font-bold' : ''} ${red ? 'text-red-600' : ''}`}>
-          {value ?? '-'}
-        </span>
+        <div className={`text-[10px] flex-1 min-w-0 overflow-hidden ${red ? 'text-red-600' : ''}`}>
+          <FitValue value={value} align="right" strong={strong} red={red} />
+        </div>
       )}
     </div>
   )
@@ -97,6 +143,17 @@ function Btn({ children, onClick, variant, title, className = '' }) {
   )
 }
 
+// "Saved" confirmation tick under a receipt — auto-checks after a successful DB
+// save of that section (driven by the store's savedFlags; read-only for the user).
+function SavedChk({ on }) {
+  return (
+    <label className="flex items-center gap-1 text-[10px] urdu cursor-default">
+      <input type="checkbox" checked={!!on} readOnly className={on ? 'accent-emerald-600' : ''} />
+      {on ? 'محفوظ ✓' : 'Saved'}
+    </label>
+  )
+}
+
 function ActionBar({ children, onWa, onPrint }) {
   return (
     <div className="flex flex-wrap items-center gap-1 mt-1 px-1 pb-1">
@@ -116,7 +173,14 @@ const waOpen = (mobile, text) => {
 
 /* 1) وصولی رسید — Recovery Receipt */
 function RecoveryReceipt({ row, lab, ctx }) {
-  const { customer, receiptNo, rates } = ctx
+  const { customer, receiptNo, rates, ujratKaSona } = ctx
+  const now = useClock()
+  // اجرت کا سونا checkbox: convert the labour charge (PKR) into its gold weight
+  // at the per-tola rate (grams = money / ratePerTola * GRAMS_PER_TOLA). When on,
+  // the cash اجرت کی رقم field zeroes out and the gold weight shows instead.
+  const ujratGold = lab?.ratePerTola
+    ? (Number(row?.labCharges) || 0) / lab.ratePerTola * GRAMS_PER_TOLA
+    : 0
   // Each row grows (flex-1) so rows never bunch at the top, but is capped at a
   // comfortable height so they never over-stretch in a tall panel — giving even,
   // moderate line spacing (not too much, not too little).
@@ -129,14 +193,14 @@ function RecoveryReceipt({ row, lab, ctx }) {
     <div className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu flex items-center justify-center relative">
         <span>وصولی رسید</span>
-        <span className="absolute left-1 bg-header border border-line text-[10px] font-normal px-2">{time()}</span>
+        <span className="absolute left-1 bg-header border border-line text-[10px] font-normal px-2">{fmtTime(now)}</span>
       </div>
       {/* Row-based two-column form; rows evenly distributed to fill the panel. */}
       <div className="flex-1 flex flex-col" dir="rtl">
         <R>
           <FLine
             right={{ label: 'رسید نمبر', value: receiptNo, strong: true }}
-            left={{ label: 'تاریخ', value: `${time()}  ${dispDate(rates.date)}`, strong: true }}
+            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true }}
           />
         </R>
         <R><Fld label="نام" value={customer.name || '-'} /></R>
@@ -150,8 +214,8 @@ function RecoveryReceipt({ row, lab, ctx }) {
         <R><FLine left={{ label: 'خالص وزن', value: fmtNum(row?.khalisSona) }} /></R>
         <R>
           <FLine
-            right={{ label: 'اجرت کی رقم', value: fmtMoney(row?.labCharges) }}
-            left={{ label: 'اجرت کا سونا', value: '-' }}
+            right={{ label: 'اجرت کی رقم', value: ujratKaSona ? '-' : fmtMoney(row?.labCharges) }}
+            left={{ label: 'اجرت کا سونا', value: ujratKaSona ? fmtNum(ujratGold) : '-' }}
           />
         </R>
         <R><FLine left={{ label: 'سونا دینا ہے', value: '-' }} /></R>
@@ -179,12 +243,11 @@ function RecoveryReceipt({ row, lab, ctx }) {
       </div>
       <ActionBar
         onWa={() => waOpen(customer.mobile, `وصولی رسید نمبر ${receiptNo}\nخالص سونا: ${fmtNum(row?.khalisSona)}\nباقی: ${fmtMoney(row?.baqiRaqam)}`)}
-        onPrint={() => window.print()}
+        onPrint={() => ctx.printSlips()}
       >
-        {['I', 'C', 'R', 'P', 'O', 'Q'].map((b) => (
-          <Btn key={b} title={`بٹن ${b}`} onClick={() => console.log(`وصولی رسید: action ${b}`, { receiptNo })}>{b}</Btn>
-        ))}
+        <SavedChk on={ctx.savedFlags?.wasooli} />
       </ActionBar>
+
     </div>
   )
 }
@@ -192,6 +255,7 @@ function RecoveryReceipt({ row, lab, ctx }) {
 /* 2) لیب رسید — Lab Receipt */
 function LabReceipt({ row, lab, ctx }) {
   const { customer, receiptNo, rates } = ctx
+  const now = useClock()
   // ONE shared 6-col grid (left -> right): گرام | ملی گرام | تولہ | ماشہ | رتی | label.
   // Every row uses it (with column spans) so the whole receipt stays aligned.
   const LG = { gridTemplateColumns: '1fr 1.2fr 0.55fr 0.55fr 0.55fr 78px' }
@@ -291,18 +355,18 @@ function LabReceipt({ row, lab, ctx }) {
             this is a horizontal-spacing-only fix. Labels are clean .urdu spans. */}
         <div className="laib-date-row border-b border-gray-300 flex-1">
           <span className="urdu" dir="rtl">تاریخ</span>
-          <span className="num">{dispDate(rates.date)}</span>
+          <span className="num">{showDate(rates, now)}</span>
           <span className="urdu" dir="rtl">وقت</span>
-          <span className="num">{time()}</span>
+          <span className="num">{fmtTime(now)}</span>
           <span className="urdu" dir="rtl">رتی</span>
           <span className="num">{fmtNum(lab?.milawatTotalRatti, 2)}</span>
         </div>
       </div>
       <ActionBar
         onWa={() => waOpen(customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`)}
-        onPrint={() => window.print()}
+        onPrint={() => ctx.printSlips()}
       >
-        <label className="flex items-center gap-1 text-[10px]"><input type="checkbox" /> Saved</label>
+        <SavedChk on={ctx.savedFlags?.lab} />
         <span className="urdu text-[10px]">رسید</span>
       </ActionBar>
     </div>
@@ -315,8 +379,8 @@ function CSide({ f }) {
   if (!f) return <div className="flex-1 min-w-0" />
   if (f.bare)
     return (
-      <div className="flex-1 min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] flex items-center justify-end">
-        <span dir="ltr" className="text-[10px]">{f.value ?? '-'}</span>
+      <div className="flex-1 min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] flex items-center overflow-hidden text-[10px]">
+        <FitValue value={f.value} align="right" />
       </div>
     )
   return <div className="flex-1 min-w-0"><Fld {...f} /></div>
@@ -332,12 +396,48 @@ function CRow({ right, left }) {
 
 /* 3) ادھار کی رسید — Credit Receipt */
 function CreditReceipt({ ctx }) {
-  const { customer, receiptNo, rates, bump, hasApi } = ctx
+  const { customer, receiptNo, rates, bump, hasApi,
+    udharGive, udharTake, udharCashGive, udharCashTake } = ctx
+  const now = useClock()
   const [led, setLed] = useState({ balance_gold: 0, balance_cash: 0 })
   useEffect(() => {
-    if (hasApi && customer.id) window.api.getCustomerLedger(customer.id).then(setLed)
+    if (hasApi && customer.id)
+      window.api.getCustomerLedger(customer.id).then((l) => setLed(l || { balance_gold: 0, balance_cash: 0 }))
     else setLed({ balance_gold: 0, balance_cash: 0 })
   }, [customer.id, bump, hasApi])
+
+  // Live ادھار transaction figures — same ratti-scale formula as the panel's
+  // GoldRow. null when a gold row's wazan is empty so the field shows '-'.
+  const calcGold = (st) => {
+    if (!st) return null
+    const wazan = Number(st.wazan) || 0
+    if (wazan <= 0) return null
+    const point = Number(st.point) || 0
+    const above = point - 100
+    const deduction = (above / 100) * (wazan / GRAMS_PER_TOLA) * GRAMS_PER_RATTI
+    const khalis = round(wazan - deduction, 3)
+    const rate = st.rate === '' ? (Number(rates.rate_tezabi_tola) || 0) : Number(st.rate)
+    const qeemat = round(khalis / GRAMS_PER_TOLA * rate, 0)
+    return { wazan, khalis, rate, qeemat, tmr: gramsToTMR(khalis) }
+  }
+  const gGive = udharGive ? calcGold(udharGive) : null // gold given
+  const gTake = udharTake ? calcGold(udharTake) : null // gold taken
+  const cGive = Number(udharCashGive) || 0
+  const cTake = Number(udharCashTake) || 0
+  // One shared point for the gold block — from whichever entry has a weight.
+  const activePoint = (Number(udharGive?.wazan) > 0) ? udharGive?.point
+                    : (Number(udharTake?.wazan) > 0) ? udharTake?.point
+                    : null
+  // This transaction's net (give − take); previous ledger balance + net = new باقی.
+  const netGold = (gGive?.khalis || 0) - (gTake?.khalis || 0)
+  const netCash = cGive - cTake
+  // Final gold balance = previous ledger balance + this transaction's net.
+  // Shop convention: give MORE than you take (net > 0) -> the customer owes YOU
+  // that gold -> "لینا" (to take). Net < 0 -> you owe them -> "دینا".
+  const finalGold = (led?.balance_gold || 0) + netGold
+  // Same orientation for cash: previous balance + this transaction's net.
+  // net > 0 -> customer owes YOU -> "لینا"; net < 0 -> you owe them -> "دینا".
+  const finalCash = (led?.balance_cash || 0) + netCash
   // Each row grows (flex-1) so rows fill the panel evenly instead of bunching at
   // the top, but is capped at a comfortable height so they never over-stretch.
   const R = ({ children }) => (
@@ -351,37 +451,35 @@ function CreditReceipt({ ctx }) {
         <R>
           <FLine
             right={{ label: 'رسید نمبر', value: receiptNo }}
-            left={{ label: 'تاریخ', value: `${time()}  ${dispDate(rates.date)}`, strong: true }}
+            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true }}
           />
         </R>
         <R><Fld label="نام" value={customer.name || '-'} /></R>
-        {/* ریٹ فی تولہ + ریٹ فی گرام */}
-        <R>
-          <FLine
-            right={{ label: 'ریٹ فی تولہ', value: rates.rate_tezabi_tola ?? '-' }}
-            left={{ label: 'ریٹ فی گرام', value: rates.rate_tezabi_gram ?? '-' }}
-          />
-        </R>
 
         {/* ---- Gold block ---- */}
-        <R><CRow right={{ label: 'سونا۔ دیا', value: fmtNum(led.balance_gold) }} left={{ label: 'خالص وزن', value: '-' }} /></R>
-        <R><CRow right={{ label: 'سونا۔ لیا', value: '-' }} left={{ label: 'خالص وزن', value: '-' }} /></R>
-        <R><CRow right={null} left={{ label: 'باقی', value: '-' }} /></R>
-        <R><CRow right={{ bare: true, value: fmtNum(led.balance_gold) }} left={{ label: 'سابقہ سونا بیلنس', value: '-' }} /></R>
-        <R><CRow right={{ bare: true, value: '-' }} left={{ label: 'باقی', value: fmtNum(led.balance_gold), yellow: true }} /></R>
+        <R><CRow right={{ label: 'تیزابی دیا', value: gGive ? fmtNum(gGive.wazan) : '-' }} left={{ label: 'خالص وزن', value: gGive ? fmtNum(gGive.khalis) : '-' }} /></R>
+        <R><CRow right={{ label: 'تیزابی لیا', value: gTake ? fmtNum(gTake.wazan) : '-' }} left={{ label: 'خالص وزن', value: gTake ? fmtNum(gTake.khalis) : '-' }} /></R>
+        {/* پوائنٹ on its own line in the empty space below تیزابی لیا. */}
+        <R><CRow right={{ label: 'پوائنٹ', value: activePoint != null ? fmtNum(Number(activePoint), 0) : '-' }} left={null} /></R>
+        <R><CRow right={null} left={{ label: 'باقی', value: netGold ? fmtNum(netGold) : '-' }} /></R>
+        <R><CRow right={{ bare: true, value: fmtNum(led?.balance_gold) }} left={{ label: 'سابقہ سونا بیلنس', value: fmtNum(led?.balance_gold) }} /></R>
+        <R><CRow right={null} left={{ label: 'باقی تیزابی دینا ہے', value: finalGold < 0 ? fmtNum(Math.abs(finalGold)) : '-', yellow: true }} /></R>
+        <R><CRow right={null} left={{ label: 'باقی تیزابی لینا ہے', value: finalGold > 0 ? fmtNum(finalGold) : '-', yellow: true }} /></R>
 
         <div className="border-t border-line my-[1px]" />
 
         {/* ---- Cash block ---- */}
-        <R><CRow right={{ label: 'کیش۔ دیا', value: fmtMoney(led.balance_cash) }} left={{ label: 'کیش۔ لیا', value: '-' }} /></R>
-        <R><CRow right={null} left={{ label: 'باقی', value: '-' }} /></R>
-        <R><CRow right={{ bare: true, value: fmtMoney(led.balance_cash) }} left={{ label: 'سابقہ کیش بیلنس', value: '-' }} /></R>
-        <R><CRow right={{ bare: true, value: '-' }} left={{ label: 'باقی', value: fmtMoney(led.balance_cash), yellow: true }} /></R>
+        <R><CRow right={{ label: 'کیش۔ دیا', value: cGive ? fmtMoney(cGive) : '-' }} left={{ label: 'کیش۔ لیا', value: cTake ? fmtMoney(cTake) : '-' }} /></R>
+        <R><CRow right={null} left={{ label: 'باقی', value: netCash ? fmtMoney(netCash) : '-' }} /></R>
+        <R><CRow right={{ bare: true, value: fmtMoney(led?.balance_cash) }} left={{ label: 'سابقہ کیش بیلنس', value: fmtMoney(led?.balance_cash) }} /></R>
+        <R><CRow right={null} left={{ label: 'باقی کیش دینا ہے', value: finalCash < 0 ? fmtMoney(Math.abs(finalCash)) : '-', yellow: true }} /></R>
+        <R><CRow right={null} left={{ label: 'باقی کیش لینا ہے', value: finalCash > 0 ? fmtMoney(finalCash) : '-', yellow: true }} /></R>
       </div>
       <ActionBar
-        onWa={() => waOpen(customer.mobile, `ادھار رسید\nنام: ${customer.name}\nباقی سونا: ${fmtNum(led.balance_gold)}\nباقی کیش: ${fmtMoney(led.balance_cash)}`)}
-        onPrint={() => window.print()}
+        onWa={() => waOpen(customer.mobile, `ادھار رسید\nنام: ${customer.name}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
+        onPrint={() => ctx.printSlips()}
       >
+        <SavedChk on={ctx.savedFlags?.udhar} />
         <Btn onClick={() => ctx.refresh()}>Refresh</Btn>
       </ActionBar>
     </div>
@@ -390,11 +488,33 @@ function CreditReceipt({ ctx }) {
 
 /* 4) نقد کی رسید — Cash Receipt (رسید سونا خرید) */
 function CashReceipt({ ctx }) {
-  const { customer, receiptNo, rates } = ctx
+  const { customer, receiptNo, rates, cashSell, cashBuy } = ctx
+  const now = useClock()
+  // Active نقد entry = whichever of فروخت / خرید has a non-zero سونا وزن. Its
+  // figures use the SAME ratti-scale formula as the نقد panel's GoldRow.
+  const active = (Number(cashSell.wazan) > 0) ? { ...cashSell, kind: 'فروخت' }
+               : (Number(cashBuy.wazan) > 0) ? { ...cashBuy, kind: 'خرید' }
+               : null
+
+  let v = null
+  if (active) {
+    const wazan = Number(active.wazan) || 0
+    const point = Number(active.point) || 0
+    const above = point - 100
+    const deduction = (above / 100) * (wazan / GRAMS_PER_TOLA) * GRAMS_PER_RATTI
+    const khalis = round(wazan - deduction, 3)
+    const rate = active.rate === '' ? (Number(rates.rate_tezabi_tola) || 0) : Number(active.rate)
+    const qeemat = round(khalis / GRAMS_PER_TOLA * rate, 0)
+    v = { wazan, point, khalis, rate, qeemat, kind: active.kind,
+          grossTMR: gramsToTMR(wazan), khalisTMR: gramsToTMR(khalis) }
+  }
   // Mini TMR band grid (RTL right->left): پوائنٹ | label | value | رتی | ماشہ | تولہ.
   // columnGap keeps adjacent cells (e.g. پوائنٹ and سونا وزن) from abutting so the
   // Urdu labels don't read as merged. Column widths are unchanged.
-  const tmrGrid = { gridTemplateColumns: '34px 1fr 1fr 22px 22px 26px', columnGap: 6 }
+  // Order (RTL right->left): پوائنٹ | label | value | رتی | ماشہ | تولہ. value is
+  // a fixed 64px (was 1fr, which stole space and spread the receipt), so the
+  // label 1fr absorbs the slack; رتی widened to 34px so "5.76" no longer clips.
+  const tmrGrid = { gridTemplateColumns: '30px 1fr 64px 34px 28px 28px', columnGap: 4 }
   // Each row grows (flex-1) so rows fill the panel evenly instead of bunching at
   // the top, but is capped at a comfortable height so they never over-stretch.
   const R = ({ children }) => (
@@ -403,13 +523,13 @@ function CashReceipt({ ctx }) {
   return (
     <div className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">نقد کی رسید</div>
-      <div className="urdu text-center text-[12px] font-bold py-[2px]">رسید سونا خرید</div>
+      <div className="urdu text-center text-[12px] font-bold py-[2px]">{`رسید سونا ${v ? v.kind : 'خرید'}`}</div>
       <div className="flex-1 px-1 pt-1 flex flex-col" dir="rtl">
         {/* رسید نمبر + تاریخ on one row */}
         <R>
           <FLine
             right={{ label: 'رسید نمبر', value: receiptNo }}
-            left={{ label: 'تاریخ', value: `${time()}  ${dispDate(rates.date)}`, strong: true }}
+            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true }}
           />
         </R>
         {/* نام full width */}
@@ -417,8 +537,8 @@ function CashReceipt({ ctx }) {
         {/* ریٹ فی تولہ + ریٹ فی گرام on one row */}
         <R>
           <FLine
-            right={{ label: 'ریٹ فی تولہ', value: rates.rate_tezabi_tola ?? '-' }}
-            left={{ label: 'ریٹ فی گرام', value: rates.rate_tezabi_gram ?? '-' }}
+            right={{ label: 'ریٹ فی تولہ', value: v ? fmtMoney(v.rate) : (rates.rate_tezabi_tola ?? '-') }}
+            left={{ label: 'ریٹ فی گرام', value: v ? fmtMoney(round(v.rate / GRAMS_PER_TOLA, 0)) : '-' }}
           />
         </R>
 
@@ -438,38 +558,34 @@ function CashReceipt({ ctx }) {
           <div className="grid items-center" style={tmrGrid}>
             <div dir="rtl" className="urdu text-[10px] text-center border-b border-gray-400">پوائنٹ</div>
             <div dir="rtl" className="urdu text-[10px] text-right whitespace-nowrap">سونا وزن :</div>
-            <div className="text-[10px] text-center border-b border-gray-400" dir="ltr">-</div>
-            <div className="text-[10px] text-center">-</div>
-            <div className="text-[10px] text-center">-</div>
-            <div className="text-[10px] text-center">-</div>
+            <div className="text-[10px] text-center border-b border-gray-400" dir="ltr">{v ? fmtNum(v.wazan) : '-'}</div>
+            <div className="text-[10px] text-center whitespace-nowrap">{v ? fmtNum(v.grossTMR.ratti, 2) : '-'}</div>
+            <div className="text-[10px] text-center whitespace-nowrap">{v ? fmtNum(v.grossTMR.masha, 0) : '-'}</div>
+            <div className="text-[10px] text-center whitespace-nowrap">{v ? fmtNum(v.grossTMR.tola, 0) : '-'}</div>
           </div>
         </R>
         {/* خالص وزن row — پوائنٹ value (100) sits on the right */}
         <R>
           <div className="grid items-center" style={tmrGrid}>
-            <div className="text-[10px] text-center font-bold" dir="ltr">{fmtNum(rates.point, 0)}</div>
+            <div className="text-[10px] text-center font-bold" dir="ltr">{v ? fmtNum(v.point, 0) : '-'}</div>
             <div dir="rtl" className="urdu text-[10px] text-right whitespace-nowrap">خالص وزن :</div>
-            <div className="text-[10px] text-center border-b border-gray-400" dir="ltr">-</div>
-            <div className="text-[10px] text-center">-</div>
-            <div className="text-[10px] text-center">-</div>
-            <div className="text-[10px] text-center">-</div>
+            <div className="text-[10px] text-center border-b border-gray-400" dir="ltr">{v ? fmtNum(v.khalis) : '-'}</div>
+            <div className="text-[10px] text-center whitespace-nowrap">{v ? fmtNum(v.khalisTMR.ratti, 2) : '-'}</div>
+            <div className="text-[10px] text-center whitespace-nowrap">{v ? fmtNum(v.khalisTMR.masha, 0) : '-'}</div>
+            <div className="text-[10px] text-center whitespace-nowrap">{v ? fmtNum(v.khalisTMR.tola, 0) : '-'}</div>
           </div>
         </R>
 
         <div className="border-t border-line mt-1" />
-        <R><Fld label="کل قیمت" value="-" /></R>
-        <R><Fld label="رقم دی" value="-" /></R>
-        <div className="border-t border-line" />
-        <R><Fld label="بیلنس" value="-" yellow /></R>
+        <R><Fld label="کل قیمت" value={v ? fmtMoney(v.qeemat) : '-'} /></R>
+        <R><Fld label="رقم دی" value={v ? fmtMoney(v.qeemat) : '-'} /></R>
       </div>
       <div className="flex flex-wrap items-center gap-1 px-1 pb-1">
-        <Btn onClick={() => console.log('نقد رسید: View', { receiptNo, customer: customer.name })}>View</Btn>
-        <Btn variant="red" title="منسوخ" onClick={() => ctx.resetEntry()}>X</Btn>
-        <Btn onClick={() => ctx.saveCustomer()}>Add</Btn>
+        <SavedChk on={ctx.savedFlags?.naqad} />
         <div className="flex-1 min-w-0" />
         <Btn variant="green"
           onClick={() => waOpen(customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.name}`)}>WhatsApp</Btn>
-        <Btn title="پرنٹ" onClick={() => window.print()}>🖨</Btn>
+        <Btn title="پرنٹ" onClick={() => ctx.printSlips()}>🖨</Btn>
       </div>
     </div>
   )

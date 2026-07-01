@@ -41,7 +41,7 @@ const OVR_KEY = {
 // width is given to رتی (which shows values like 1.84 / 7.46) so it no longer
 // truncates. Order:
 // label | khalisSona | milawat/g | tola | masha | ratti | rate | total | labCharges | baqi | parchi
-const GRID = '92px 1.4fr 1.0fr 0.32fr 0.34fr 0.7fr 1.25fr 1.3fr 1.0fr 1.3fr 30px'
+const GRID = '108px 1.4fr 1.0fr 0.32fr 0.34fr 0.7fr 1.25fr 1.3fr 1.0fr 1.3fr 30px'
 
 function Cell({ col, row }) {
   const { overrides, setCell, clearCell, toggleParchi } = useApp()
@@ -50,7 +50,9 @@ function Cell({ col, row }) {
   const isOverridden = ovrKey && rowOvr[ovrKey] !== undefined && rowOvr[ovrKey] !== ''
 
   if (col.kind === 'rowlabel') {
-    return <div className="hdr justify-end pr-1 text-[11px] whitespace-nowrap min-w-0">{row.label}</div>
+    // Bigger, bold, horizontally centred with balanced padding (hdr already
+    // vertically centres) so the label sits cleanly with no lopsided dead space.
+    return <div className="hdr justify-center px-2 text-[14px] font-bold whitespace-nowrap min-w-0">{row.label}</div>
   }
 
   if (col.kind === 'check') {

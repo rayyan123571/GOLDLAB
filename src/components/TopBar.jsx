@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useApp } from '../state/store.jsx'
 
 function RateField({ label, value, onChange, w = 'w-20', numeric }) {
@@ -10,9 +10,9 @@ function RateField({ label, value, onChange, w = 'w-20', numeric }) {
       : value ?? ''
   return (
     <div className="flex items-stretch">
-      <div className="hdr urdu px-2 whitespace-nowrap">{label}</div>
+      <div className="hdr urdu px-2 whitespace-nowrap text-[15px] font-bold">{label}</div>
       <input
-        className={`inp text-center ${w}`}
+        className={`inp text-center ${w} text-[17px] font-bold leading-none`}
         value={disp}
         onChange={(e) => onChange(numeric ? e.target.value.replace(/,/g, '') : e.target.value)}
       />
@@ -21,7 +21,32 @@ function RateField({ label, value, onChange, w = 'w-20', numeric }) {
 }
 
 export default function TopBar() {
-  const { rates, saveRates, setScreen } = useApp()
+  const { rates, saveRates, setScreen, openUdhar, closeUdhar, openAkhrajat, closeAkhrajat, screen, udharOpen, akhrajatOpen } = useApp()
+
+  // Exactly one tab is active at a time. ادھار / اخراجات are modals, so an open
+  // modal wins the highlight; otherwise لیب = 'main', روزنامچہ = 'daybook'.
+  const anyModal = udharOpen || akhrajatOpen
+  const active = {
+    daybook: screen === 'daybook' && !anyModal,
+    lab: screen === 'main' && !anyModal,
+    udhar: udharOpen,
+    akhrajat: akhrajatOpen
+  }
+  // Active = green (tab-active). Inactive tabs get a subtle, lighter hover tint
+  // (distinct from the active green) so they read as clickable.
+  const tabCls = (isActive) => `tab urdu text-[16px] font-bold ${isActive ? 'tab-active' : 'hover:from-emerald-100 hover:to-emerald-200'}`
+  const goLab = () => { closeUdhar(); closeAkhrajat(); setScreen('main') }
+  const goDaybook = () => { closeUdhar(); closeAkhrajat(); setScreen('daybook') }
+
+  // The تاریخ field stays an editable, persisted receipt date. Default it to
+  // today's live date on mount only when it's empty, so a chosen date is kept.
+  useEffect(() => {
+    if (!rates.date) {
+      const d = new Date()
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      saveRates({ date: iso })
+    }
+  }, [])
 
   const upd = (k) => (v) => saveRates({ [k]: v })
 
@@ -44,25 +69,25 @@ export default function TopBar() {
 
       {/* Tabs (right-most in RTL) */}
       <div className="flex items-stretch">
-        <button className="tab urdu" onClick={() => setScreen('daybook')}>
+        <button className={tabCls(active.daybook)} onClick={goDaybook}>
           روزنامچہ
         </button>
-        <button className="tab tab-active urdu" onClick={() => setScreen('main')}>
+        <button className={tabCls(active.lab)} onClick={goLab}>
           لیب
         </button>
-        <button className="tab urdu" onClick={() => setScreen('udhar')}>
+        <button className={tabCls(active.udhar)} onClick={openUdhar}>
           ادھار
+        </button>
+        <button className={tabCls(active.akhrajat)} onClick={openAkhrajat}>
+          اخراجات
         </button>
       </div>
 
       {/* wide free name box */}
       <input className="inp flex-1 min-w-[120px]" />
 
-      <RateField label="فی گرام چار جز" value={rates.fc_per_gram} onChange={upd('fc_per_gram')} w="w-12" numeric />
-      <RateField label="پرچی چار جز" value={rates.parchi_charges} onChange={upd('parchi_charges')} w="w-12" numeric />
-      <RateField label="ریٹ تیزابی فی گرام" value={rates.rate_tezabi_gram} onChange={upd('rate_tezabi_gram')} w="w-16" numeric />
-      <RateField label="ریٹ تیزابی فی تولہ" value={rates.rate_tezabi_tola} onChange={upd('rate_tezabi_tola')} w="w-20" numeric />
-      <RateField label="تاریخ" value={dispDate} onChange={onDate} w="w-24" />
+      <RateField label="ریٹ تیزابی فی تولہ" value={rates.rate_tezabi_tola} onChange={upd('rate_tezabi_tola')} w="w-28" numeric />
+      <RateField label="تاریخ" value={dispDate} onChange={onDate} w="w-32" />
 
       <button className="bg-redX text-white font-bold w-7 flex items-center justify-center border border-line">
         X

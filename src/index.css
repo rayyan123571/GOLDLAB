@@ -325,3 +325,66 @@ input[type='number'] {
 .receipt-panel .laib-baqaya-row .bg-yellowCell {
   padding: 0 6px !important;
 }
+
+/* ── Print / PDF: show ONLY the current report (.print-area), exclude app chrome.
+   Drives both window.print() and Electron webContents.printToPDF (print media).
+   RTL/Urdu is preserved because we print the already-rendered report DOM. ── */
+@media print {
+  @page { margin: 10mm; }
+  html, body {
+    background: #fff !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  body * { visibility: hidden !important; }
+  .print-area, .print-area * { visibility: visible !important; }
+  .no-print { display: none !important; }
+  /* let the report escape the modal's fixed overlay / clipping / dark backdrop */
+  .print-overlay {
+    position: static !important;
+    inset: auto !important;
+    background: none !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+  .print-root {
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+  .print-area {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  /* Clean, paginating tables: repeat the header on every page, never split a row. */
+  .print-area table { width: 100% !important; border-collapse: collapse !important; }
+  .print-area thead { display: table-header-group !important; }
+  .print-area tr, .print-area td, .print-area th { break-inside: avoid !important; }
+}
+
+/* ── Thermal receipt printing (Udhar). Toggled by adding `thermal-print` to
+   <body> just before window.print()/printToPDF; the width comes from the
+   --thermal-w custom property (default 80mm). Monochrome-friendly: forces black
+   text, drops grey fills/shadows, and uses simple 1px borders that thermal
+   heads render cleanly. Width/@page (size:<w>mm auto) is injected from JS. ── */
+@media print {
+  body.thermal-print .print-area {
+    width: var(--thermal-w, 80mm) !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+  }
+  body.thermal-print .print-area * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  body.thermal-print .print-area table { width: 100% !important; border-collapse: collapse !important; }
+  body.thermal-print .print-area th,
+  body.thermal-print .print-area td { border: 1px solid #000 !important; padding: 1px 3px !important; }
+}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useApp } from '../state/store.jsx'
-import { fmtMoney, fmtNum, GRAMS_PER_TOLA, round } from '../logic/units.js'
+import { fmtMoney, fmtNum, GRAMS_PER_TOLA, GRAMS_PER_RATTI, round } from '../logic/units.js'
 
 // qeemat (PKR) from pure-gold grams using the per-tola rate.
 const qeemat = (khalisGrams, rateTola) =>
@@ -21,24 +21,35 @@ const gridStyle = {
   gridTemplateColumns: `${LABEL_W} ${WAZAN_W} ${POINT_W} ${KHALIS_W} ${RATE_W} ${QEEMAT_W}`
 }
 
-// One gold line: label (right) + سونا وزن | پوائنٹ | خالص سونا | ریٹ | قیمت
-function GoldRow({ label, st, set, rateTola }) {
+// A gold row counts as "active" only when its سونا وزن (wazan) holds a non-zero
+// number — point defaults to '100', so it alone doesn't make a row active.
+const hasData = (st) => String(st.wazan).trim() !== '' && Number(st.wazan) > 0
+
+// One gold line: label (right) + سونا وزن | پوائنٹ | خالص سونا | ریٹ | قیمت.
+// `disabled` locks/greys all three inputs (used for نقد mutual exclusion).
+function GoldRow({ label, st, set, rateTola, disabled = false }) {
   const wazan = Number(st.wazan) || 0
   const point = Number(st.point) || 0
-  const khalis = round((wazan * point) / 100, 3)
+  // "point" is a purity reading where 100 = maiyar/standard. It adjusts gold on
+  // the ratti scale (96 ratti per tola): point>100 deducts, point<100 adds,
+  // point=100 leaves wazan unchanged. Symmetric via (point - 100).
+  const above = point - 100
+  const deduction = (above / 100) * (wazan / GRAMS_PER_TOLA) * GRAMS_PER_RATTI
+  const khalis = round(wazan - deduction, 3)
   const rate = st.rate === '' ? rateTola : Number(st.rate)
   const q = qeemat(khalis, rate)
+  const lock = disabled ? ' opacity-50 cursor-not-allowed bg-gray-100' : ''
   return (
     <div className="grid flex-1 min-h-0" style={gridStyle}>
-      <div className="cell justify-end pr-1 urdu text-[10px] text-right leading-tight bg-white">
+      <div className="cell justify-end pr-1 urdu text-[12px] font-bold text-right leading-tight bg-white">
         {label}
       </div>
-      <input className="inp-g text-center" value={st.wazan}
+      <input className={`inp-g text-center${lock}`} value={st.wazan} disabled={disabled}
         onChange={(e) => set({ ...st, wazan: e.target.value })} placeholder="-" />
-      <input className="inp text-center" value={st.point}
+      <input className={`inp text-center${lock}`} value={st.point} disabled={disabled}
         onChange={(e) => set({ ...st, point: e.target.value })} />
       <div className="cell cell-c">{khalis ? fmtNum(khalis) : '-'}</div>
-      <input className="inp text-center" value={st.rate}
+      <input className={`inp text-center${lock}`} value={st.rate} disabled={disabled}
         onChange={(e) => set({ ...st, rate: e.target.value })} placeholder={fmtMoney(rateTola)} />
       <div className="cell cell-c">{q ? fmtMoney(q) : '-'}</div>
     </div>
@@ -50,7 +61,7 @@ function GoldRow({ label, st, set, rateTola }) {
 function CashRow({ label, st, set }) {
   return (
     <div className="grid flex-1 min-h-0" style={gridStyle}>
-      <div className="cell justify-end pr-1 urdu text-[10px] text-right leading-tight bg-white">
+      <div className="cell justify-end pr-1 urdu text-[12px] font-bold text-right leading-tight bg-white">
         {label}
       </div>
       {/* merged empty cell spanning سونا وزن + پوائنٹ + خالص سونا + ریٹ */}
@@ -76,15 +87,14 @@ function Header({ title }) {
 }
 
 export default function CashUdharPanel() {
-  const { rates, customer, bump, hasApi } = useApp()
+  const {
+    rates, customer, bump, hasApi,
+    cashSell, setCashSell, cashBuy, setCashBuy,
+    udharGive, setUdharGive, udharTake, setUdharTake,
+    udharCashGive, setUdharCashGive, udharCashTake, setUdharCashTake
+  } = useApp()
   const rateTola = Number(rates.rate_tezabi_tola) || 0
 
-  const [sell, setSell] = useState(blankGold())
-  const [buy, setBuy] = useState(blankGold())
-  const [give, setGive] = useState(blankGold())
-  const [take, setTake] = useState(blankGold())
-  const [cashGive, setCashGive] = useState('')
-  const [cashTake, setCashTake] = useState('')
   const [ledger, setLedger] = useState({ balance_gold: 0, balance_cash: 0 })
 
   useEffect(() => {
@@ -95,6 +105,8 @@ export default function CashUdharPanel() {
     }
   }, [customer.id, bump, hasApi])
 
+  // نقد mutual exclusion: filling فروخت (sell) or خرید (buy) locks the other.
+  // The ادھار rows (give/take) are independent and never locked.
   return (
     <div
       dir="rtl"
@@ -103,17 +115,17 @@ export default function CashUdharPanel() {
       {/* نقد (Cash) */}
       <div className="flex flex-col border border-line bg-white overflow-hidden flex-[3]">
         <Header title="نقد" />
-        <GoldRow label="خالص سونا نقد فروخت کیا :" st={sell} set={setSell} rateTola={rateTola} />
-        <GoldRow label="خالص سونا نقد خریدا :" st={buy} set={setBuy} rateTola={rateTola} />
+        <GoldRow label="فروخت" st={cashSell} set={setCashSell} rateTola={rateTola} disabled={hasData(cashBuy)} />
+        <GoldRow label="نقد خریدا" st={cashBuy} set={setCashBuy} rateTola={rateTola} disabled={hasData(cashSell)} />
       </div>
 
       {/* ادھار (Credit) */}
       <div className="flex flex-col border border-line bg-white overflow-hidden flex-[6]">
         <Header title="ادھار" />
-        <GoldRow label="خالص سونا. دیا :" st={give} set={setGive} rateTola={rateTola} />
-        <GoldRow label="خالص سونا. لیا :" st={take} set={setTake} rateTola={rateTola} />
-        <CashRow label="کیش دیا :" st={cashGive} set={setCashGive} />
-        <CashRow label="کیش لیا :" st={cashTake} set={setCashTake} />
+        <GoldRow label="تیزابی دیا" st={udharGive} set={setUdharGive} rateTola={rateTola} />
+        <GoldRow label="تیزابی لیا" st={udharTake} set={setUdharTake} rateTola={rateTola} />
+        <CashRow label="ادھار کیش دیا" st={udharCashGive} set={setUdharCashGive} />
+        <CashRow label="ادھار کیش لیا" st={udharCashTake} set={setUdharCashTake} />
 
         {/* Bottom band: ٹوٹل | empty | سونا لین دین | yellow | کیش لین دین | yellow */}
         <div className="grid flex-1 min-h-0" style={gridStyle}>

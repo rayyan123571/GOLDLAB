@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
+const fs = require('fs')
 const db = require('./db.cjs')
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -11,7 +12,7 @@ function createWindow() {
     height: 840,
     minWidth: 1200,
     minHeight: 720,
-    title: 'گولڈ لیب — Gold Laboratory',
+    title: 'چوہدری گولڈ لیبارٹری — Chaudhry Gold Laboratory',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -33,6 +34,28 @@ ipcMain.handle('db', async (_evt, { fn, args }) => {
     throw new Error(`Unknown db function: ${fn}`)
   }
   return db.api[fn](...(args || []))
+})
+
+// Export the CURRENT report to PDF (Part 3). The renderer flips a body class so
+// only the report (`.print-area`) is visible; @media print CSS drives both the
+// print dialog and printToPDF, so the PDF contains only the filtered report +
+// totals with Urdu/RTL intact. Returns { ok, path? , canceled? }.
+ipcMain.handle('export-pdf', async (_evt, { defaultName, cssPageSize } = {}) => {
+  if (!win) return { ok: false }
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'رپورٹ کو PDF میں محفوظ کریں',
+    defaultPath: defaultName || 'report.pdf',
+    filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  })
+  if (canceled || !filePath) return { ok: false, canceled: true }
+  // cssPageSize → honour the CSS @page rule (thermal: narrow width + continuous
+  // height) the renderer injected. Otherwise export a normal A4 sheet.
+  const opts = cssPageSize
+    ? { printBackground: true, preferCSSPageSize: true }
+    : { printBackground: true, pageSize: 'A4', margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 } }
+  const data = await win.webContents.printToPDF(opts)
+  fs.writeFileSync(filePath, data)
+  return { ok: true, path: filePath }
 })
 
 app.whenReady().then(async () => {
