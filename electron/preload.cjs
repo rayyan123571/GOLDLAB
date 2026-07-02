@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('api', {
   settleTransaction: (t) => call('settleTransaction', t),
   addExpense: (e) => call('addExpense', e),
   getExpenses: (from, to) => call('getExpenses', from, to),
+  updateExpense: (id, fields) => call('updateExpense', id, fields),
+  deleteExpense: (id) => call('deleteExpense', id),
   resetExpenses: () => call('resetExpenses'),
   getExpensesTotalForDate: (date) => call('getExpensesTotalForDate', date),
   exportPDF: (defaultName, opts) => ipcRenderer.invoke('export-pdf', { defaultName, ...(opts || {}) }),

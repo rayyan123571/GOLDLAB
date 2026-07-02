@@ -206,7 +206,7 @@ function RecoveryReceipt({ row, lab, ctx }) {
             left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true, fit: true }}
           />
         </R>
-        <R><Fld label="نام" value={customer.name || '-'} /></R>
+        <R><Fld label="نام" value={customer.id ? (customer.name || '-') : '-'} /></R>
 
         <R>
           <FLine
@@ -350,7 +350,7 @@ function LabReceipt({ row, lab, ctx }) {
         <Row>
           <C>{fmtNum(lab?.point, 4)}</C>
           <Lb>پوائنٹ</Lb>
-          <C span={3} cls="border-b border-gray-400">{customer.name || ' '}</C>
+          <C span={3} cls="border-b border-gray-400">{customer.id ? (customer.name || ' ') : ' '}</C>
           <Lb>نام</Lb>
         </Row>
         {/* تاریخ row (RTL): تاریخ · date · وقت · time · رتی · ratti — spread evenly
@@ -399,7 +399,7 @@ function CRow({ right, left }) {
 
 /* 3) ادھار کی رسید — Credit Receipt */
 function CreditReceipt({ ctx }) {
-  const { customer, receiptNo, rates, bump, hasApi,
+  const { customer, receiptNo, rates, bump, hasApi, openReceiptNo,
     udharGive, udharTake, udharCashGive, udharCashTake } = ctx
   const now = useClock()
   const [led, setLed] = useState({ balance_gold: 0, balance_cash: 0 })
@@ -434,13 +434,19 @@ function CreditReceipt({ ctx }) {
   // This transaction's net (give − take); previous ledger balance + net = new باقی.
   const netGold = (gGive?.khalis || 0) - (gTake?.khalis || 0)
   const netCash = cGive - cTake
-  // Final gold balance = previous ledger balance + this transaction's net.
+  // Add the LIVE form entries on top of the ledger balance ONLY while composing a
+  // brand-new, unsaved parchi (openReceiptNo == null). Once the parchi is saved —
+  // or when an already-saved parchi is re-opened/navigated to — those same entries
+  // are ALREADY part of the ledger balance, so adding them again is what made the
+  // receipt value DOUBLE after Save. In that case the balance alone is the total.
+  const composingNew = openReceiptNo == null
+  // Final gold balance = previous ledger balance (+ this transaction's net when new).
   // Shop convention: give MORE than you take (net > 0) -> the customer owes YOU
   // that gold -> "لینا" (to take). Net < 0 -> you owe them -> "دینا".
-  const finalGold = (led?.balance_gold || 0) + netGold
-  // Same orientation for cash: previous balance + this transaction's net.
+  const finalGold = (led?.balance_gold || 0) + (composingNew ? netGold : 0)
+  // Same orientation for cash: previous balance + this transaction's net (when new).
   // net > 0 -> customer owes YOU -> "لینا"; net < 0 -> you owe them -> "دینا".
-  const finalCash = (led?.balance_cash || 0) + netCash
+  const finalCash = (led?.balance_cash || 0) + (composingNew ? netCash : 0)
   // Each row grows (flex-1) so rows fill the panel evenly instead of bunching at
   // the top, but is capped at a comfortable height so they never over-stretch.
   const R = ({ children }) => (
@@ -457,7 +463,7 @@ function CreditReceipt({ ctx }) {
             left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true, fit: true }}
           />
         </R>
-        <R><Fld label="نام" value={customer.name || '-'} /></R>
+        <R><Fld label="نام" value={customer.id ? (customer.name || '-') : '-'} /></R>
 
         {/* ---- Gold block ---- */}
         <R><CRow right={{ label: 'تیزابی دیا', value: gGive ? fmtNum(gGive.wazan) : '-' }} left={{ label: 'خالص وزن', value: gGive ? fmtNum(gGive.khalis) : '-' }} /></R>
@@ -479,7 +485,7 @@ function CreditReceipt({ ctx }) {
         <R><CRow right={null} left={{ label: 'باقی کیش لینا ہے', value: finalCash > 0 ? fmtMoney(finalCash) : '-', yellow: true }} /></R>
       </div>
       <ActionBar
-        onWa={() => waOpen(customer.mobile, `ادھار رسید\nنام: ${customer.name}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
+        onWa={() => waOpen(customer.mobile, `ادھار رسید\nنام: ${customer.id ? customer.name : ''}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
         onPrint={() => ctx.printSlips()}
       >
         <SavedChk on={ctx.savedFlags?.udhar} />
@@ -536,7 +542,7 @@ function CashReceipt({ ctx }) {
           />
         </R>
         {/* نام full width */}
-        <R><Fld label="نام" value={customer.name || '-'} /></R>
+        <R><Fld label="نام" value={customer.id ? (customer.name || '-') : '-'} /></R>
         {/* ریٹ فی تولہ + ریٹ فی گرام on one row */}
         <R>
           <FLine
@@ -587,7 +593,7 @@ function CashReceipt({ ctx }) {
         <SavedChk on={ctx.savedFlags?.naqad} />
         <div className="flex-1 min-w-0" />
         <Btn variant="green"
-          onClick={() => waOpen(customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.name}`)}>WhatsApp</Btn>
+          onClick={() => waOpen(customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.id ? customer.name : ''}`)}>WhatsApp</Btn>
         <Btn title="پرنٹ" onClick={() => ctx.printSlips()}>🖨</Btn>
       </div>
     </div>

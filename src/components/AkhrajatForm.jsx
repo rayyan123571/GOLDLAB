@@ -63,6 +63,7 @@ export default function AkhrajatForm({ open, onClose }) {
   const [to, setTo] = useState('')
   const [view, setView] = useState('menu') // 'menu' | 'report'
   const [report, setReport] = useState(null)
+  const [reportKey, setReportKey] = useState(null) // which report is open (for reloads)
   const [entryOpen, setEntryOpen] = useState(false)
   const [msg, setMsg] = useState(null)
 
@@ -83,6 +84,7 @@ export default function AkhrajatForm({ open, onClose }) {
     const cfg = REPORTS[key]
     const total = (rows || []).reduce((s, r) => s + (Number(r.amount) || 0), 0)
     setReport({ label: cfg.label, columns: cfg.columns, rows: rows || [], total, from, to })
+    setReportKey(key)
     setView('report')
   }
 
@@ -95,7 +97,7 @@ export default function AkhrajatForm({ open, onClose }) {
         </div>
 
         {view === 'report' ? (
-          <ReportView report={report} onBack={() => setView('menu')} />
+          <ReportView report={report} onBack={() => setView('menu')} onReload={() => reportKey && runReport(reportKey)} />
         ) : (
           <div className="flex-1 min-h-0 overflow-auto p-4 flex flex-col gap-4">
             {/* Date filter */}
@@ -122,8 +124,10 @@ export default function AkhrajatForm({ open, onClose }) {
 }
 
 // ── Report view: per-entry rows + bold کل رقم total ──────────────────────────
-function ReportView({ report, onBack }) {
+function ReportView({ report, onBack, onReload }) {
+  const { editExpense, removeExpense } = useApp()
   const [note, setNote] = useState('')
+  const [editRow, setEditRow] = useState(null)
   if (!report) return null
   const { columns, rows, total, label, from, to } = report
   const totalIdx = columns.findIndex((c) => c.total)
@@ -143,6 +147,20 @@ function ReportView({ report, onBack }) {
     if (res && res.ok) setNote('PDF محفوظ ہو گیا ✓')
     else if (!(res && res.canceled)) setNote('محفوظ نہیں ہو سکا')
     setTimeout(() => setNote(''), 2500)
+  }
+
+  // Edit / delete a single expense row. Both write to the DB (via the store, which
+  // also refreshes the bottom-bar cash display) and then reload this report so the
+  // table + total update on screen immediately.
+  const onDelete = async (r) => {
+    if (!window.confirm('کیا آپ واقعی یہ کھرچہ حذف کرنا چاہتے ہیں؟')) return
+    await removeExpense(r.id)
+    if (onReload) onReload()
+  }
+  const onSaveEdit = async (id, fields) => {
+    await editExpense(id, fields)
+    setEditRow(null)
+    if (onReload) onReload()
   }
 
   return (
@@ -175,6 +193,7 @@ function ReportView({ report, onBack }) {
                   {columns.map((c) => (
                     <th key={c.label} className={`border border-gray-600 px-3 py-2 font-bold urdu text-[15px] text-black ${c.total ? 'text-right' : c.num ? 'text-center' : 'text-right'}`}>{c.label}</th>
                   ))}
+                  <th className="no-print border border-gray-600 px-2 py-2 font-bold urdu text-[13px] text-black w-[90px] text-center">ایکشن</th>
                 </tr>
               </thead>
               <tbody>
@@ -183,6 +202,10 @@ function ReportView({ report, onBack }) {
                     {columns.map((c) => (
                       <td key={c.label} className={`border border-gray-400 px-3 py-1.5 font-semibold text-black ${cellCls(c)}`} dir={dirOf(c)}>{c.get(r)}</td>
                     ))}
+                    <td className="no-print border border-gray-400 px-2 py-1 text-center whitespace-nowrap">
+                      <button type="button" title="ترمیم" onClick={() => setEditRow(r)} className="w-7 h-7 rounded hover:bg-blue-100 text-blue-700 text-[15px]">✏️</button>
+                      <button type="button" title="حذف" onClick={() => onDelete(r)} className="w-7 h-7 rounded hover:bg-red-100 text-red-600 text-[15px]">🗑</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -194,10 +217,64 @@ function ReportView({ report, onBack }) {
                     if (i === totalIdx + 1) return <td key={c.label} className="border border-gray-800 border-t-2 px-3 py-2.5 text-right urdu text-black">کل رقم :</td>
                     return <td key={c.label} className="border border-gray-800 border-t-2 px-3 py-2.5" />
                   })}
+                  <td className="no-print border border-gray-800 border-t-2 px-3 py-2.5" />
                 </tr>
               </tfoot>
             </table>
           )}
+        </div>
+      </div>
+
+      {editRow && <ExpenseEditModal row={editRow} onSave={onSaveEdit} onClose={() => setEditRow(null)} />}
+    </div>
+  )
+}
+
+// ── کھرچہ میں ترمیم — edit an existing expense (amount + comment) ──────────────
+function ExpenseEditModal({ row, onSave, onClose }) {
+  const [amount, setAmount] = useState(String(row.amount ?? ''))
+  const [comment, setComment] = useState(row.comment || '')
+  const [err, setErr] = useState('')
+  const amtRef = useRef(null)
+  useEffect(() => { requestAnimationFrame(() => amtRef.current && amtRef.current.focus()) }, [])
+
+  const onAmount = (e) => {
+    const raw = e.target.value
+    const cleaned = raw.replace(/[^\d.]/g, '')
+    setAmount(cleaned)
+    setErr(cleaned !== raw ? 'رقم میں صرف نمبر لکھیں' : '')
+  }
+  const save = () => {
+    const amt = Number(amount) || 0
+    if (!(amt > 0)) { setErr('رقم درج کریں'); amtRef.current && amtRef.current.focus(); return }
+    if (!comment.trim()) { setErr('تبصرہ لکھیں'); return }
+    onSave(row.id, { amount: amt, comment: comment.trim() })
+  }
+  const INP = 'w-full border border-gray-400 bg-white text-[16px] font-bold px-2 py-2 rounded-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-500'
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div dir="rtl" className="bg-white rounded-lg shadow-2xl w-[400px] max-w-[95vw] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between bg-gradient-to-b from-slate-700 to-slate-800 text-white px-4 py-2.5">
+          <h3 className="urdu font-bold text-[16px]">کھرچہ میں ترمیم</h3>
+          <button onClick={onClose} className="w-7 h-7 rounded hover:bg-white/20">✕</button>
+        </div>
+        <div className="p-4 flex flex-col gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="urdu text-[14px] font-bold text-black">رقم</span>
+            <input ref={amtRef} dir="rtl" className={INP} value={amount} onChange={onAmount}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save() } }}
+              inputMode="decimal" placeholder="0" />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="urdu text-[14px] font-bold text-black">تبصرہ</span>
+            <textarea dir="rtl" className={`${INP} h-20 resize-none`} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="تبصرہ لکھیں (لازمی)" />
+          </label>
+          {err && <div className="urdu text-[13px] font-bold text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</div>}
+        </div>
+        <div className="flex gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50">
+          <button onClick={save} className="urdu flex-1 rounded-md bg-blue-600 text-white text-[15px] font-bold py-2 hover:bg-blue-700">محفوظ کریں</button>
+          <button onClick={onClose} className="urdu rounded-md border border-gray-300 bg-white text-gray-700 text-[14px] font-bold px-4 hover:bg-gray-100">بند</button>
         </div>
       </div>
     </div>

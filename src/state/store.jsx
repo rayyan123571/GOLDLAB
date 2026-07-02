@@ -444,15 +444,24 @@ export function AppProvider({ children }) {
     return txn
   }, [receiptNo, customer.id, rates.date, refresh])
 
-  // A customer/name is mandatory for any cash/udhar (ledger) save. Returns the
-  // customer with a real id (creating it if the operator only typed a name), or
-  // null when nothing is selected/typed.
+  // A customer is mandatory for any cash/udhar (ledger) save. Returns the customer
+  // with a REAL id, or null when none is selected. IMPORTANT: a typed name is NOT
+  // auto-created any more — a receipt may only carry an ALREADY-SAVED customer. If
+  // the operator typed a name without picking from the list, we try to resolve it
+  // to an EXACT saved-customer match (findCustomers does a contains-search, so we
+  // keep only exact, case-insensitive name matches). Exactly one match → adopt it;
+  // unknown name or an ambiguous duplicate → null, so the caller blocks the save.
+  // New customers must be added deliberately (the "+" customer form, or Save with
+  // just a name and no entries).
   const ensureCustomer = useCallback(async () => {
     if (customer.id) return customer
-    if (!(customer.name && customer.name.trim())) return null
-    if (!hasApi) return customer
-    return await saveCustomer(customer)
-  }, [customer, saveCustomer])
+    const name = (customer.name || '').trim()
+    if (!name || !hasApi) return null
+    const hits = (await window.api.findCustomers(name)) || []
+    const exact = hits.filter((c) => (c.name || '').trim().toLowerCase() === name.toLowerCase())
+    if (exact.length === 1) { setCustomer(exact[0]); return exact[0] }
+    return null
+  }, [customer])
 
   // Stage 2 — Save the current نقد + ادھار entries as transactions under the
   // current receipt_no, then auto-tick the matching "Saved" boxes and advance to
@@ -547,8 +556,17 @@ export function AppProvider({ children }) {
     }
 
     // Name mandatory for any parchi save (ledger + snapshot are keyed to a customer).
+    // The customer must ALREADY be saved — ensureCustomer never creates one now.
     const cust = await ensureCustomer()
-    if (!cust || !cust.id) return { ok: false, message: 'پہلے کسٹمر کا نام منتخب کریں / درج کریں' }
+    if (!cust || !cust.id) {
+      const typed = (customer.name || '').trim()
+      return {
+        ok: false,
+        message: typed
+          ? 'یہ کسٹمر محفوظ نہیں — فہرست سے منتخب کریں یا "+" سے نیا کسٹمر شامل کریں'
+          : 'پہلے کسٹمر منتخب کریں'
+      }
+    }
 
     // Current line-items for this receipt (strip the UI-only `section` tag).
     const rows = txns.map(({ section, ...row }) => ({ customer_id: cust.id, date: rates.date, ...row }))
@@ -591,27 +609,47 @@ export function AppProvider({ children }) {
       naqad: txns.some((t) => t.section === 'naqad') || f.naqad,
       udhar: txns.some((t) => t.section === 'udhar') || f.udhar
     }))
-    // The just-saved parchi is now the "current open" one for Next/Prev nav.
-    setOpenReceiptNo(rno)
     refresh()
 
     // Bottom-bar کچا سونا (DISPLAY-ONLY): when the sidebar "پرچوں لیا" checkbox is
     // ticked, add this parchi's وزن کانٹے پر (input.wazan) — and ONLY that — to the
-    // on-screen counter. This touches no transaction/receipt/report.
+    // on-screen counter. This touches no transaction/receipt/report. Read BEFORE
+    // the entry fields are cleared below.
     if (parchunLiya) {
       const w = Number(input.wazan) || 0
       if (w > 0) setKachaDisplay((v) => v + w)
     }
 
-    // Only a BRAND-NEW parchi advances to the next number; editing keeps #rno so
-    // the screen stays on it and re-saving overwrites the same receipt again.
     if (!isEdit) {
+      // Brand-new parchi: it is now recorded in the ledger. CLEAR the entry fields
+      // and advance to a fresh blank parchi. This is what fixes the "doubling": the
+      // live receipt previews compute باقی = (ledger balance) + (current form
+      // entries). After saving, the ledger ALREADY includes these amounts, so
+      // leaving them in the form would count them a SECOND time on screen — and a
+      // second Save would record them again. The customer stays selected so more
+      // entries for the same person can follow.
+      setCashSell({ wazan: '', point: '100', rate: '' })
+      setCashBuy({ wazan: '', point: '100', rate: '' })
+      setUdharGive({ wazan: '', point: '100', rate: '' })
+      setUdharTake({ wazan: '', point: '100', rate: '' })
+      setUdharCashGive('')
+      setUdharCashTake('')
+      setInput({ wazan: '', malawat: '' })
+      setOverrides({})
+      setSonaDiya('')
+      setCashDiya('')
+      setSavedFlags(NO_SAVED)
+      setOpenReceiptNo(null)
       if (hasApi) {
         const n = await window.api.nextReceiptNo()
         if (n) setReceiptNo(n)
       } else {
         setReceiptNo((r) => r + 1)
       }
+    } else {
+      // Editing an already-open parchi: keep it on screen (entries intact) so a
+      // re-save overwrites the same receipt.
+      setOpenReceiptNo(rno)
     }
     return { ok: true, receipt_no: rno, saved: rows.length, edited: isEdit }
   }, [rates, cashSell, cashBuy, udharGive, udharTake, udharCashGive, udharCashTake, input, overrides, computedRows, ujratKaSona, parchunLiya, sonaDiya, cashDiya, receiptNo, openReceiptNo, customer, ensureCustomer, refresh])
@@ -689,6 +727,21 @@ export function AppProvider({ children }) {
     return { ok: true }
   }, [refresh])
 
+  // Edit / delete a single expense (from the اخراجات reports). Both refresh() so
+  // the bottom-bar cash DISPLAY re-derives immediately: if an expense dated today
+  // is increased, today's cash shown drops by that much; delete restores it.
+  const editExpense = useCallback(async (id, fields) => {
+    if (hasApi) await window.api.updateExpense(id, fields)
+    refresh()
+    return { ok: true }
+  }, [refresh])
+
+  const removeExpense = useCallback(async (id) => {
+    if (hasApi) await window.api.deleteExpense(id)
+    refresh()
+    return { ok: true }
+  }, [refresh])
+
   // Delete ALL expenses (fresh start). Reports go empty; refresh() re-derives the
   // cash display (today's expenses → 0). Only the expenses table is cleared.
   const resetExpensesData = useCallback(async () => {
@@ -762,7 +815,7 @@ export function AppProvider({ children }) {
     customer, setCustomer, newCustomer, saveCustomer,
     totals, refresh, bump,
     kachaDisplay, resetKachaDisplay,
-    cashDisplay, addExpense, resetExpensesData,
+    cashDisplay, addExpense, editExpense, removeExpense, resetExpensesData,
     input, setInput, setWeight,
     overrides, setCell, clearCell, toggleParchi, resetEntry,
     ujratKaSona, toggleUjratKaSona,

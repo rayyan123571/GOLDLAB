@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useApp } from '../state/store.jsx'
 import CustomerForm from './CustomerForm.jsx'
 import CustomerListModal from './CustomerListModal.jsx'
@@ -16,6 +16,7 @@ function Combo({
   placeholder,
   ghost,
   hasApi,
+  inputRef,
   inputClassName = 'inp-g border-l-0',
   arrowClassName = 'w-4 text-[8px]'
 }) {
@@ -43,6 +44,7 @@ function Combo({
         />
       ) : (
         <input
+          ref={inputRef}
           className={`${inputClassName} flex-1 min-w-0`}
           value={value}
           onChange={onChange}
@@ -57,7 +59,7 @@ function Combo({
 
 export default function CustomerEntry() {
   const {
-    customer, setCustomer, newCustomer, saveCustomer, saveParchi, newParchi, receiptNo, hasApi,
+    customer, setCustomer, newCustomer, saveCustomer, saveParchi, newParchi, receiptNo, hasApi, bump,
     gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt
   } = useApp()
   const [matches, setMatches] = useState([])
@@ -67,6 +69,28 @@ export default function CustomerEntry() {
   const [showList, setShowList] = useState(false)
   const [saveMsg, setSaveMsg] = useState(null) // { ok, text }
   const nameTimer = useRef(null)
+
+  // Strict autocomplete: the name box may ONLY hold a SAVED customer name. We keep
+  // a cached list of saved customers (refreshed on every DB write via `bump`) so we
+  // can prefix-match synchronously as the user types. `committedRef` is the exact
+  // prefix the user has actually typed (the part before the auto-completed, selected
+  // remainder). `nameInputRef` lets us set the caret/selection imperatively.
+  const [savedCustomers, setSavedCustomers] = useState([])
+  const committedRef = useRef('')
+  const nameInputRef = useRef(null)
+
+  useEffect(() => {
+    if (!hasApi) return
+    // findCustomers('') returns saved customers ordered by name (up to 50).
+    window.api.findCustomers('').then((list) => setSavedCustomers(list || []))
+  }, [bump])
+
+  // First saved customer whose name starts with `text` (case-insensitive, trimmed).
+  const firstPrefix = (text) => {
+    const t = (text || '').trim().toLowerCase()
+    if (!t) return null
+    return savedCustomers.find((c) => (c.name || '').trim().toLowerCase().startsWith(t)) || null
+  }
 
   // Stage 2 — Save the current parchi (نقد + ادھار entries) to the DB. Name is
   // mandatory for a ledger save; with no entries at all, just save the customer.
@@ -78,10 +102,15 @@ export default function CustomerEntry() {
     } else if (res.ok) {
       setSaveMsg({ ok: true, text: `محفوظ ✓ — پرچی نمبر ${res.receipt_no}` })
     } else if (res.message && res.message.startsWith('کوئی اندراج')) {
-      // No cash/udhar entries — fall back to saving just the customer name.
-      if (customer.name && customer.name.trim()) {
+      // No cash/udhar entries. Only an ALREADY-SAVED customer (has id) may be
+      // (re)saved here — NEVER auto-create a customer from a typed name. A typed
+      // but unsaved name is blocked with a prompt; new customers are added only
+      // via the "+" form.
+      if (customer.id) {
         await saveCustomer()
         setSaveMsg({ ok: true, text: 'کسٹمر محفوظ ✓' })
+      } else if (customer.name && customer.name.trim()) {
+        setSaveMsg({ ok: false, text: 'یہ کسٹمر محفوظ نہیں — فہرست سے منتخب کریں یا "+" سے نیا کسٹمر شامل کریں' })
       } else {
         setSaveMsg({ ok: false, text: 'پہلے کسٹمر منتخب کریں / نام درج کریں' })
       }
@@ -109,29 +138,83 @@ export default function CustomerEntry() {
     }
   }
 
-  // Live name suggestions: query as the user types the name, debounced.
+  // STRICT autocomplete. The box may only ever hold a SAVED customer name:
+  //  • typing a prefix auto-fills the first matching saved name and selects the
+  //    remainder (type "ta" → "taha" with "ha" highlighted);
+  //  • a keystroke that leaves NO saved-name prefix is rejected (reverted);
+  //  • an unknown name can never be typed in, so a receipt only ever carries a
+  //    saved customer.
+  const showMatches = (lower) => {
+    setMatches(savedCustomers.filter((c) => (c.name || '').toLowerCase().startsWith(lower)))
+    setActiveIndex(-1)
+    setOpen(true)
+  }
+  const selectTail = (start, end) => {
+    // eslint-disable-next-line no-undef
+    requestAnimationFrame(() => {
+      const el = nameInputRef.current
+      if (el && end > start) { try { el.setSelectionRange(start, end) } catch (_) { /* noop */ } }
+    })
+  }
+
   const onNameChange = (e) => {
+    const el = nameInputRef.current
+    const inputType = (e.nativeEvent && e.nativeEvent.inputType) || ''
+    const deleting = inputType.indexOf('delete') === 0
     const value = e.target.value
+
     if (nameTimer.current) clearTimeout(nameTimer.current)
+
+    // Empty → fully de-select the customer (id/name/mobile), so no stale ledger.
     if (!value.trim()) {
-      // Name cleared → FULLY de-select the customer (id, name, mobile, …), not
-      // just the visible text. Otherwise the old customer.id lingers and the
-      // receipt panels keep pulling that customer's ledger (سابقہ سونا/کیش). A
-      // blank name must leave NO customer selected → no previous balances.
+      committedRef.current = ''
       newCustomer()
-      setOpen(false)
-      setMatches([])
-      setActiveIndex(-1)
+      setOpen(false); setMatches([]); setActiveIndex(-1)
       return
     }
-    setCustomer((c) => ({ ...c, name: value }))
-    if (!hasApi) return
-    nameTimer.current = setTimeout(async () => {
-      const res = await window.api.findCustomers(value)
-      setMatches(res || [])
-      setActiveIndex(-1) // nothing highlighted until the user arrows down
-      setOpen(true)
-    }, 200)
+
+    // Re-sync the committed prefix if the customer was loaded externally (nav/pick).
+    if (customer.id && !(customer.name || '').toLowerCase().startsWith(committedRef.current.toLowerCase())) {
+      committedRef.current = customer.name || ''
+    }
+
+    const lower = value.toLowerCase()
+
+    // Deleting: let the value shrink; adopt the customer only on an EXACT saved
+    // match, else keep it as a partial (no id → receipt hides the name).
+    if (deleting) {
+      committedRef.current = value
+      const exact = savedCustomers.find((c) => (c.name || '').trim().toLowerCase() === value.trim().toLowerCase())
+      if (exact) setCustomer(exact)
+      else setCustomer((c) => ({ ...c, id: null, name: value }))
+      showMatches(lower)
+      return
+    }
+
+    // Inserting: the typed text must be a PREFIX of some saved name.
+    const match = firstPrefix(value)
+    if (!match) {
+      // Reject the keystroke — snap the box back to the last valid state.
+      const base = committedRef.current
+      const bm = firstPrefix(base)
+      if (bm) {
+        if (el) { el.value = bm.name } // imperative revert (value prop may be unchanged)
+        setCustomer(bm)
+        selectTail(base.length, bm.name.length)
+      } else if (customer.id) {
+        if (el) el.value = customer.name || ''
+      } else {
+        committedRef.current = ''
+        newCustomer()
+      }
+      return
+    }
+
+    // Accept: auto-fill the saved name and select the completed remainder.
+    committedRef.current = value
+    setCustomer(match)
+    showMatches(lower)
+    selectTail(value.length, match.name.length)
   }
 
   // Pick a suggestion: FULL selection. findCustomers returns SELECT *, so `c`
@@ -139,16 +222,35 @@ export default function CustomerEntry() {
   // everywhere (same effect as picking from the customer list), then close.
   const pick = (c) => {
     setCustomer(c)
+    committedRef.current = c.name || ''
     setOpen(false)
     setMatches([])
     setActiveIndex(-1)
   }
 
-  // Keyboard navigation over the suggestion dropdown: ↓/↑ highlight, Enter selects
-  // the highlighted match (same full setCustomer as a click), Esc closes. Tab and
-  // ArrowRight are consumed earlier by GhostNameInput for ghost-accept, so they
-  // never reach here.
+  // Keyboard: ↓/↑ highlight a dropdown row, Enter CONFIRMS (the arrow-highlighted
+  // row if any, otherwise the currently auto-filled suggestion — locking in its id
+  // and collapsing the highlighted completion), Esc closes.
   const onNameKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      // Arrowed into the dropdown → take that row.
+      if (open && activeIndex >= 0 && activeIndex < matches.length) { pick(matches[activeIndex]); return }
+      // Otherwise confirm the auto-filled suggestion (exact name shown, else its
+      // first-prefix match, else the top of the list).
+      const shown = customer.name || ''
+      const chosen =
+        savedCustomers.find((c) => (c.name || '').trim().toLowerCase() === shown.trim().toLowerCase()) ||
+        firstPrefix(shown) ||
+        (matches.length ? matches[0] : null)
+      if (chosen) {
+        pick(chosen)
+        const n = (chosen.name || '').length
+        // eslint-disable-next-line no-undef
+        requestAnimationFrame(() => { const el = nameInputRef.current; if (el) { try { el.setSelectionRange(n, n) } catch (_) { /* noop */ } } })
+      }
+      return
+    }
     if (!open || matches.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -156,11 +258,6 @@ export default function CustomerEntry() {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActiveIndex((i) => (i <= 0 ? matches.length - 1 : i - 1))
-    } else if (e.key === 'Enter') {
-      if (activeIndex >= 0 && activeIndex < matches.length) {
-        e.preventDefault()
-        pick(matches[activeIndex])
-      }
     } else if (e.key === 'Escape') {
       setOpen(false)
       setActiveIndex(-1)
@@ -173,6 +270,7 @@ export default function CustomerEntry() {
   const openFromList = async (row) => {
     const full = (hasApi && (await window.api.getCustomer(row.id))) || row
     setCustomer(full)
+    committedRef.current = full.name || ''
     setShowList(false)
   }
 
@@ -191,8 +289,8 @@ export default function CustomerEntry() {
           onBlur={() => setTimeout(() => { setOpen(false); setActiveIndex(-1) }, 150)}
           onKeyDown={onNameKeyDown}
           placeholder="نام"
-          ghost
           hasApi={hasApi}
+          inputRef={nameInputRef}
           inputClassName="inp-g border-l-0 px-3 py-2 text-[18px] font-bold"
           arrowClassName="w-7 text-[12px]"
         />

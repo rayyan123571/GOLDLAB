@@ -4,10 +4,10 @@ import { fmtMoney, fmtNum, gramsToTMR } from '../logic/units.js'
 
 // ─── Report buttons, three groups. flow 'in' = INTO shop (green), 'out' = OUT (red)
 const GROUP1 = [
-  { label: 'تیزابی لینا ہے', flow: 'in', category: 'gold_take', kind: 'gold' },
-  { label: 'تیزابی دینا ہے', flow: 'out', category: 'gold_give', kind: 'gold' },
-  { label: 'رقم لینی ہے', flow: 'in', category: 'cash_take', kind: 'cash' },
-  { label: 'رقم دینی ہے', flow: 'out', category: 'cash_give', kind: 'cash' }
+  { label: 'تیزابی لینا ہے', flow: 'out', category: 'gold_give', kind: 'gold' },
+  { label: 'تیزابی دینا ہے', flow: 'in', category: 'gold_take', kind: 'gold' },
+  { label: 'رقم لینی ہے', flow: 'out', category: 'cash_give', kind: 'cash' },
+  { label: 'رقم دینی ہے', flow: 'in', category: 'cash_take', kind: 'cash' }
 ]
 const GROUP2 = [
   { label: 'آج کی ادھار رقم دی', flow: 'out', category: 'cash_give', kind: 'cash' },
@@ -28,7 +28,10 @@ const CAT_LABEL = {
 const isGoldCat = (c) => c === 'gold_take' || c === 'gold_give'
 
 const goldVal = (r) => Number(r.total_khalis ?? r.khalis_sona) || 0
-const wazanVal = (r) => Number(r.sona_wazan) || goldVal(r)
+// وزن: prefer the aggregated group-1 sum (total_wazan) when present, else the
+// single row's sona_wazan, else fall back to the khalis figure. For ادھار gold
+// entries point is always 100, so wazan == khalis and this matches the old display.
+const wazanVal = (r) => Number(r.total_wazan ?? r.sona_wazan) || goldVal(r)
 const cashVal = (r) => Number(r.total_cash ?? r.cash_amount) || 0
 
 // ═══ REPORT COLUMN CONFIG — edit here to change columns per report. ═══
@@ -53,6 +56,20 @@ const cashColumns = ({ parchi = false, date = false } = {}) => {
   c.push({ label: 'رقم', get: (r) => fmtMoney(cashVal(r)), num: true, total: true, raw: (r) => cashVal(r) })
   return c
 }
+// Columns for ONLY the "تیزابی لینا ہے" / "تیزابی دینا ہے" balance reports (g1).
+// Like goldColumns but WITHOUT رتی and خالص سونا, WITH a تاریخ column showing when
+// the row's wazan was LAST UPDATED (updated_at, DD/MM/YYYY via isoToDisp; falls
+// back to the entry date for rows not edited since updated_at was added). The
+// total row is kept on گرام (for aggregate rows wazanVal === the khalis grams, so
+// the total matches the old خالص total). goldColumns() is left untouched for the
+// other gold reports (آج کا تیزابی ادھار …).
+const goldBalanceColumns = () => [
+  { label: 'نام', get: (r) => r.customer_name || '-' },
+  { label: 'تولہ', get: (r) => gramsToTMR(goldVal(r)).tola, num: true },
+  { label: 'ماشہ', get: (r) => gramsToTMR(goldVal(r)).masha, num: true },
+  { label: 'گرام', get: (r) => fmtNum(wazanVal(r)), num: true, total: true, raw: (r) => wazanVal(r) },
+  { label: 'تاریخ', get: (r) => isoToDisp(r.updated_at || r.date), num: true }
+]
 
 const INP = 'w-full bg-white border border-gray-300 rounded-md text-[13px] px-2 py-1.5 text-start tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500'
 const hasApiFn = () => typeof window !== 'undefined' && window.api
@@ -131,7 +148,7 @@ export default function UdharForm({ open, onClose }) {
     if (!open) return
     setCustCode(''); setCustName(''); setNameHits([]); setMsg(null)
     setReport(null); setDesc(null); setView('menu'); setEditRow(null)
-    setFrom(todayISO); setTo(todayISO)
+    setFrom(''); setTo('') // default to ALL dates — a customer filter shows full history
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
@@ -163,13 +180,15 @@ export default function UdharForm({ open, onClose }) {
     if (d.type === 'g1') {
       const a = d.a
       const res = await getReportGroup1({ category: a.category, ...customerFilter() })
-      setReport({ group: 1, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldColumns({}) : cashColumns({}), title: a.label, meta: { customer: customerLabel(), dateNote: 'تمام تواریخ (بیلنس)' } })
+      setReport({ group: 1, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldBalanceColumns() : cashColumns({}), title: a.label, meta: { customer: customerLabel(), dateNote: 'تمام تواریخ (بیلنس)' } })
     } else if (d.type === 'g2') {
       const a = d.a
-      if (!from || !to) { if (!silent) setMsg({ ok: false, text: 'پہلے تاریخ منتخب کریں' }); return }
-      if (from !== to) { if (!silent) setMsg({ ok: false, text: 'اس رپورٹ کے لیے فرام اور ٹو ڈیٹ ایک ہی دن ہونی چاہیے' }); return }
-      const res = await getReport({ category: a.category, from, to, ...customerFilter() })
-      setReport({ group: 2, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldColumns({ parchi: true, date: true }) : cashColumns({ parchi: true, date: true }), title: a.label, meta: { customer: customerLabel(), dateNote: from } })
+      // Single-day report ("آج کی…") — the shared date fields now default to blank
+      // (all-dates) for the other reports, so here fall back to TODAY when blank.
+      const day = from || to || todayISO
+      if (from && to && from !== to) { if (!silent) setMsg({ ok: false, text: 'اس رپورٹ کے لیے فرام اور ٹو ڈیٹ ایک ہی دن ہونی چاہیے' }); return }
+      const res = await getReport({ category: a.category, from: day, to: day, ...customerFilter() })
+      setReport({ group: 2, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldColumns({ parchi: true, date: true }) : cashColumns({ parchi: true, date: true }), title: a.label, meta: { customer: customerLabel(), dateNote: day } })
     } else if (d.type === 'g3') {
       if (!(custCode.trim() || custName.trim())) { if (!silent) setMsg({ ok: false, text: 'پہلے کسٹمر منتخب کریں / نام درج کریں' }); return }
       if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
@@ -288,17 +307,24 @@ export default function UdharForm({ open, onClose }) {
 // ═══ THERMAL RECEIPT (Udhar). Default 80mm roll — change to 58 for the small one.
 const THERMAL_WIDTH_MM = 80
 
+// Which date to show in the تاریخ column: the last time this row was touched.
+// Group-1 rows carry a pre-computed last_updated (MAX over the customer's
+// entries). Per-parchi rows carry updated_at (full ISO) → take its date part.
+// Everything falls back to the transaction date for rows predating updated_at.
+const rowDate = (r) => r.last_updated || (r.updated_at ? String(r.updated_at).slice(0, 10) : r.date)
+
 // Compact columns for the narrow roll — essentials only so nothing runs off edge.
+// Gold slip: نام | وزن | تاریخ. وزن carries the total (کل وزن) since خالص was
+// dropped; for ادھار gold entries point is 100 so وزن == خالص anyway.
 const thermalColumns = (report) => report.gold
   ? [
       { label: 'نام', get: (r) => r.customer_name || '-' },
-      { label: 'وزن', get: (r) => fmtNum(wazanVal(r)), num: true },
-      { label: 'رتی', get: (r) => fmtNum(gramsToTMR(goldVal(r)).ratti, 2), num: true },
-      { label: 'خالص', get: (r) => fmtNum(goldVal(r)), num: true, total: true, raw: (r) => goldVal(r) }
+      { label: 'وزن', get: (r) => fmtNum(wazanVal(r)), num: true, total: true, raw: (r) => wazanVal(r) },
+      { label: 'تاریخ', get: (r) => isoToDisp(rowDate(r)), num: true }
     ]
   : [
       { label: 'نام', get: (r) => r.customer_name || '-' },
-      { label: 'تاریخ', get: (r) => isoToDisp(r.date), num: true },
+      { label: 'تاریخ', get: (r) => isoToDisp(rowDate(r)), num: true },
       { label: 'رقم', get: (r) => fmtMoney(cashVal(r)), num: true, total: true, raw: (r) => cashVal(r) }
     ]
 
@@ -336,8 +362,14 @@ function ThermalTable({ report, rows }) {
       </tbody>
       <tfoot>
         <tr className="font-bold">
-          <td className="border border-black px-1 py-0.5 urdu text-right" colSpan={cols.length - 1}>{report.gold ? 'کل خالص' : 'کل رقم'}</td>
-          <td className="border border-black px-1 py-0.5 text-center tabular-nums" dir="ltr">{report.gold ? fmtNum(total) : fmtMoney(total)}</td>
+          {/* Total column can sit anywhere now (وزن is in the middle), so render a
+              cell per column: the total under its own column, the label in the
+              first non-total column, blanks elsewhere — keeps them aligned. */}
+          {(() => { const labelIdx = cols.findIndex((c) => !c.total); return cols.map((c, i) => (
+            c.total
+              ? <td key={c.label} className="border border-black px-1 py-0.5 text-center tabular-nums" dir="ltr">{report.gold ? fmtNum(total) : fmtMoney(total)}</td>
+              : <td key={c.label} className="border border-black px-1 py-0.5 urdu text-right">{i === labelIdx ? (report.gold ? 'کل وزن' : 'کل رقم') : ''}</td>
+          )) })()}
         </tr>
       </tfoot>
     </table>

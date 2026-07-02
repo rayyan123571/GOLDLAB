@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   cash_amount REAL,
   sona_diya REAL,   -- کچا سونا لیا: gold given, stored on the kacha record
   cash_diya REAL,   -- کچا سونا لیا: cash given, stored on the kacha record
+  updated_at TEXT,  -- ISO date (yyyy-mm-dd) the row was last inserted/edited
   note TEXT,
   meta TEXT
 );
@@ -123,6 +124,11 @@ function migrateSchema() {
   const tCols = query('PRAGMA table_info(transactions)').map((r) => r.name)
   if (!tCols.includes('sona_diya')) db.run('ALTER TABLE transactions ADD COLUMN sona_diya REAL')
   if (!tCols.includes('cash_diya')) db.run('ALTER TABLE transactions ADD COLUMN cash_diya REAL')
+  // updated_at — ISO date a transaction was last inserted/edited (for the balance
+  // report's تاریخ column). try/catch swallows the duplicate-column error too.
+  if (!tCols.includes('updated_at')) {
+    try { db.run('ALTER TABLE transactions ADD COLUMN updated_at TEXT') } catch (e) { /* already exists */ }
+  }
 }
 
 function seedSettings() {
@@ -172,6 +178,13 @@ function query(sql, params = []) {
   while (stmt.step()) out.push(stmt.getAsObject())
   stmt.free()
   return out
+}
+
+// Today's LOCAL date as yyyy-mm-dd — matches how the app stores dates elsewhere.
+function todayISO() {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
 function run(sql, params = []) {
@@ -461,6 +474,8 @@ const api = {
       `SELECT t.customer_id, c.name AS customer_name,
               SUM(COALESCE(t.khalis_sona, 0)) AS total_khalis,
               SUM(COALESCE(t.cash_amount, 0)) AS total_cash,
+              MAX(t.date) AS date,
+              MAX(t.updated_at) AS updated_at,
               COUNT(*) AS cnt
        FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id
        WHERE ${where.join(' AND ')}
@@ -574,8 +589,8 @@ const api = {
     run(
       `INSERT INTO transactions
         (receipt_no, customer_id, date, ts, kind, direction, category,
-         sona_wazan, point, khalis_sona, rate, qeemat, cash_amount, sona_diya, cash_diya, note, meta)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         sona_wazan, point, khalis_sona, rate, qeemat, cash_amount, sona_diya, cash_diya, updated_at, note, meta)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         t.receipt_no,
         t.customer_id || null,
@@ -592,6 +607,7 @@ const api = {
         t.cash_amount || 0,
         t.sona_diya || 0,
         t.cash_diya || 0,
+        t.updated_at || t.date || todayISO(), // fresh rows carry their entry date
         t.note || '',
         t.meta ? JSON.stringify(t.meta) : null
       ]
@@ -612,6 +628,9 @@ const api = {
     }
     if (fields.meta !== undefined) { sets.push('meta = ?'); params.push(fields.meta ? JSON.stringify(fields.meta) : null) }
     if (!sets.length) return { ok: true, unchanged: true }
+    // Stamp the last-edit date (yyyy-mm-dd) so the balance report's تاریخ column
+    // shows when the row was last updated.
+    sets.push('updated_at = ?'); params.push(todayISO())
     params.push(id)
     run(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`, params)
     return { ok: true, id }
@@ -636,6 +655,35 @@ const api = {
       ts
     ])
     return { id: lastInsertId(), ts }
+  },
+
+  // Edit a single expense by id. Only amount / comment / date may change; ts (the
+  // originally recorded time) is left untouched. Flushed so it persists. Missing
+  // id is a graceful no-op.
+  updateExpense(id, fields = {}) {
+    if (id == null) return { ok: false }
+    const allowed = ['amount', 'comment', 'date']
+    const sets = []
+    const params = []
+    for (const k of allowed) {
+      if (Object.prototype.hasOwnProperty.call(fields, k)) {
+        sets.push(`${k} = ?`)
+        params.push(k === 'amount' ? (Number(fields[k]) || 0) : fields[k])
+      }
+    }
+    if (!sets.length) return { ok: true, unchanged: true }
+    params.push(id)
+    run(`UPDATE expenses SET ${sets.join(', ')} WHERE id = ?`, params)
+    flush()
+    return { ok: true, id }
+  },
+
+  // Delete a single expense by id. Flushed so it persists. Missing id = no-op.
+  deleteExpense(id) {
+    if (id == null) return { ok: false }
+    run('DELETE FROM expenses WHERE id = ?', [id])
+    flush()
+    return { ok: true, id }
   },
 
   // Delete ALL expenses (fresh start) and reset the id sequence so ids restart at
@@ -733,8 +781,8 @@ const api = {
         db.run(
           `INSERT INTO transactions
             (receipt_no, customer_id, date, ts, kind, direction, category,
-             sona_wazan, point, khalis_sona, rate, qeemat, cash_amount, sona_diya, cash_diya, note, meta)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             sona_wazan, point, khalis_sona, rate, qeemat, cash_amount, sona_diya, cash_diya, updated_at, note, meta)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             rno,
             t.customer_id || null,
@@ -751,6 +799,7 @@ const api = {
             t.cash_amount || 0,
             t.sona_diya || 0,
             t.cash_diya || 0,
+            t.updated_at || t.date || r.date || todayISO(),
             t.note || '',
             t.meta ? JSON.stringify(t.meta) : null
           ]
