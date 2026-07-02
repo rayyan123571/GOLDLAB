@@ -20,10 +20,10 @@ function WeightRow({ label, grams, onGrams, inputRef, onEnter }) {
   }
   return (
     <div className="flex" dir="ltr">
-      <div className="hdr urdu w-28 justify-end pr-1 text-[11px]">{label}</div>
+      <div className="hdr urdu w-28 justify-end pr-1 text-[15px] font-bold">{label}</div>
       <input
         ref={inputRef}
-        className="inp text-center w-24 bg-mint font-bold"
+        className="inp text-center w-24 bg-mint font-bold text-[15px]"
         value={grams ?? ''}
         onChange={(e) => onGrams(e.target.value)}
         onBlur={(e) => normalize(e.target.value)}
@@ -37,9 +37,9 @@ function WeightRow({ label, grams, onGrams, inputRef, onEnter }) {
         }}
         placeholder="0"
       />
-      <div className="cell cell-c w-12 font-bold">{fmtNum(tmr.tola, 0)}</div>
-      <div className="cell cell-c w-12 font-bold">{fmtNum(tmr.masha, 0)}</div>
-      <div className="cell cell-c w-12 font-bold">{fmtNum(tmr.ratti, 2)}</div>
+      <div className="cell cell-c w-12 font-bold text-[15px]">{fmtNum(tmr.tola, 0)}</div>
+      <div className="cell cell-c w-12 font-bold text-[15px]">{fmtNum(tmr.masha, 0)}</div>
+      <div className="cell cell-c w-12 font-bold text-[15px]">{fmtNum(tmr.ratti, 2)}</div>
     </div>
   )
 }
@@ -53,10 +53,10 @@ export default function WeightBox() {
     <div dir="ltr" className="border border-line bg-white self-start">
       <div className="flex">
         <div className="hdr w-28"> </div>
-        <div className="hdr urdu w-24">(گرام)</div>
-        <div className="hdr urdu w-12">تولہ</div>
-        <div className="hdr urdu w-12">ماشہ</div>
-        <div className="hdr urdu w-12">رتی</div>
+        <div className="hdr urdu w-24 font-bold text-[14px]">(گرام)</div>
+        <div className="hdr urdu w-12 font-bold text-[14px]">تولہ</div>
+        <div className="hdr urdu w-12 font-bold text-[14px]">ماشہ</div>
+        <div className="hdr urdu w-12 font-bold text-[14px]">رتی</div>
       </div>
       <WeightRow
         label="وزن کنڈے پر"

@@ -63,33 +63,36 @@ function RateRow({ rates }) {
 // and we shrink until scrollWidth ≤ clientWidth. Because the design canvas is a
 // fixed size that FitScreen only CSS-transforms, these measurements are stable
 // regardless of window size, so a single layout pass on value change suffices.
-function FitValue({ value, align = 'right', strong, red, min = 6 }) {
+function FitValue({ value, align = 'right', strong, red, min = 6, fit = false }) {
   const ref = useRef(null)
   const raw = value === null || value === undefined || value === '' ? '-' : String(value)
   // Digits plus number/date punctuation only → treat as numeric (shrink, keep all
   // digits). Anything with letters (names) → text (ellipsis is acceptable there).
+  // `fit` forces shrink-to-fit even when letters are present (e.g. a date that
+  // carries an AM/PM time), so nothing is ever ellipsised away.
   const numeric = /\d/.test(raw) && /^[\d.,:\-−()%/\s]+$/.test(raw)
+  const doFit = fit || numeric
 
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     el.style.fontSize = '' // reset to the inherited size before measuring
-    if (!numeric || !el.clientWidth) return
+    if (!doFit || !el.clientWidth) return
     let size = parseFloat(getComputedStyle(el).fontSize) || 10
     let guard = 0
-    while (el.scrollWidth > el.clientWidth && size > min && guard < 30) {
+    while (el.scrollWidth > el.clientWidth && size > min && guard < 40) {
       size -= 0.5
       el.style.fontSize = `${size}px`
       guard++
     }
-  }, [raw, numeric, min])
+  }, [raw, doFit, min])
 
   const alignCls = align === 'center' ? 'text-center' : align === 'left' ? 'text-left' : 'text-right'
   return (
     <span
       ref={ref}
       dir="ltr"
-      className={`block w-full whitespace-nowrap overflow-hidden ${numeric ? '' : 'text-ellipsis'} ${alignCls} ${strong ? 'font-bold' : ''} ${red ? 'text-red-600' : ''}`}
+      className={`block w-full whitespace-nowrap overflow-hidden ${doFit ? '' : 'text-ellipsis'} ${alignCls} ${strong ? 'font-bold' : ''} ${red ? 'text-red-600' : ''}`}
     >
       {raw}
     </span>
@@ -101,7 +104,7 @@ function FitValue({ value, align = 'right', strong, red, min = 6 }) {
 // right-aligned against the label. Values can never spill the panel border:
 // min-w-0 lets the value box shrink, overflow-hidden clips, and FitValue keeps
 // numbers readable (shrink-to-fit) and text tidy (ellipsis).
-function Fld({ label, value, yellow, red, strong }) {
+function Fld({ label, value, yellow, red, strong, fit }) {
   return (
     <div className="flex items-center gap-1 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px]">
       <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
@@ -109,11 +112,11 @@ function Fld({ label, value, yellow, red, strong }) {
       </span>
       {yellow ? (
         <div className="bg-yellowCell border border-line text-[9px] leading-tight px-2 py-[1px] flex-1 min-w-0 overflow-hidden box-border">
-          <FitValue value={value} align="right" />
+          <FitValue value={value} align="right" fit={fit} />
         </div>
       ) : (
         <div className={`text-[10px] flex-1 min-w-0 overflow-hidden ${red ? 'text-red-600' : ''}`}>
-          <FitValue value={value} align="right" strong={strong} red={red} />
+          <FitValue value={value} align="right" strong={strong} red={red} fit={fit} />
         </div>
       )}
     </div>
@@ -200,7 +203,7 @@ function RecoveryReceipt({ row, lab, ctx }) {
         <R>
           <FLine
             right={{ label: 'رسید نمبر', value: receiptNo, strong: true }}
-            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true }}
+            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true, fit: true }}
           />
         </R>
         <R><Fld label="نام" value={customer.name || '-'} /></R>
@@ -451,7 +454,7 @@ function CreditReceipt({ ctx }) {
         <R>
           <FLine
             right={{ label: 'رسید نمبر', value: receiptNo }}
-            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true }}
+            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true, fit: true }}
           />
         </R>
         <R><Fld label="نام" value={customer.name || '-'} /></R>
@@ -462,7 +465,7 @@ function CreditReceipt({ ctx }) {
         {/* پوائنٹ on its own line in the empty space below تیزابی لیا. */}
         <R><CRow right={{ label: 'پوائنٹ', value: activePoint != null ? fmtNum(Number(activePoint), 0) : '-' }} left={null} /></R>
         <R><CRow right={null} left={{ label: 'باقی', value: netGold ? fmtNum(netGold) : '-' }} /></R>
-        <R><CRow right={{ bare: true, value: fmtNum(led?.balance_gold) }} left={{ label: 'سابقہ سونا بیلنس', value: fmtNum(led?.balance_gold) }} /></R>
+        <R><CRow right={{ bare: true, value: customer.id ? fmtNum(led?.balance_gold) : '-' }} left={{ label: 'سابقہ سونا بیلنس', value: customer.id ? fmtNum(led?.balance_gold) : '-' }} /></R>
         <R><CRow right={null} left={{ label: 'باقی تیزابی دینا ہے', value: finalGold < 0 ? fmtNum(Math.abs(finalGold)) : '-', yellow: true }} /></R>
         <R><CRow right={null} left={{ label: 'باقی تیزابی لینا ہے', value: finalGold > 0 ? fmtNum(finalGold) : '-', yellow: true }} /></R>
 
@@ -471,7 +474,7 @@ function CreditReceipt({ ctx }) {
         {/* ---- Cash block ---- */}
         <R><CRow right={{ label: 'کیش۔ دیا', value: cGive ? fmtMoney(cGive) : '-' }} left={{ label: 'کیش۔ لیا', value: cTake ? fmtMoney(cTake) : '-' }} /></R>
         <R><CRow right={null} left={{ label: 'باقی', value: netCash ? fmtMoney(netCash) : '-' }} /></R>
-        <R><CRow right={{ bare: true, value: fmtMoney(led?.balance_cash) }} left={{ label: 'سابقہ کیش بیلنس', value: fmtMoney(led?.balance_cash) }} /></R>
+        <R><CRow right={{ bare: true, value: customer.id ? fmtMoney(led?.balance_cash) : '-' }} left={{ label: 'سابقہ کیش بیلنس', value: customer.id ? fmtMoney(led?.balance_cash) : '-' }} /></R>
         <R><CRow right={null} left={{ label: 'باقی کیش دینا ہے', value: finalCash < 0 ? fmtMoney(Math.abs(finalCash)) : '-', yellow: true }} /></R>
         <R><CRow right={null} left={{ label: 'باقی کیش لینا ہے', value: finalCash > 0 ? fmtMoney(finalCash) : '-', yellow: true }} /></R>
       </div>
@@ -529,7 +532,7 @@ function CashReceipt({ ctx }) {
         <R>
           <FLine
             right={{ label: 'رسید نمبر', value: receiptNo }}
-            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true }}
+            left={{ label: 'تاریخ', value: `${fmtTime(now)}  ${showDate(rates, now)}`, strong: true, fit: true }}
           />
         </R>
         {/* نام full width */}

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { fmtMoney } from '../logic/units.js'
+import { useApp } from '../state/store.jsx'
 
 const hasApi = () => typeof window !== 'undefined' && window.api
 
@@ -205,6 +206,7 @@ function ReportView({ report, onBack }) {
 
 // ── کھرچہ ڈالیں — entry form (amount + comment; date+time saved automatically) ──
 function EntryModal({ todayISO, onClose }) {
+  const { addExpense } = useApp()
   const [amount, setAmount] = useState('')
   const [comment, setComment] = useState('')
   const [err, setErr] = useState('')
@@ -231,7 +233,9 @@ function EntryModal({ todayISO, onClose }) {
     if (!(amt > 0)) { setErr('رقم درج کریں'); amtRef.current && amtRef.current.focus(); return }
     if (!comment.trim()) { setErr('محفوظ کرنے سے پہلے تبصرہ لکھیں'); commentRef.current && commentRef.current.focus(); return }
     setErr('')
-    if (hasApi()) await window.api.addExpense({ amount: amt, comment: comment.trim(), date: todayISO })
+    // Route through the store so the bottom-bar cash DISPLAY re-derives (cash −
+    // today's expenses). This writes the expense to the DB but touches no ledger.
+    await addExpense({ amount: amt, comment: comment.trim(), date: todayISO })
     setSaved(true)
     if (savedTimer.current) clearTimeout(savedTimer.current)
     savedTimer.current = setTimeout(() => setSaved(false), 1000)

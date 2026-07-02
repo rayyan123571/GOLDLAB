@@ -4,10 +4,11 @@ import { fmtMoney, fmtNum } from '../logic/units.js'
 import DefaultsForm from './DefaultsForm.jsx'
 
 export default function StatusBar() {
-  const { totals, resetEntry, loadReceipt } = useApp()
+  const { totals, resetEntry, loadReceipt, kachaDisplay, resetKachaDisplay, cashDisplay } = useApp()
   const [search, setSearch] = useState('')
   const [searchMsg, setSearchMsg] = useState('')
   const [showDefaults, setShowDefaults] = useState(false)
+  const [showKachaConfirm, setShowKachaConfirm] = useState(false) // کچا سونا reset gate
 
   // Look up a saved receipt by its number. Wired defensively: if the Electron
   // backend hasn't added a getReceiptByNo handler yet, warn (console) and show a
@@ -35,22 +36,33 @@ export default function StatusBar() {
   }
 
   return (
-    <div dir="rtl" className="flex items-stretch gap-1 px-1 py-1 bg-panel border-t border-line h-[34px]">
+    <div dir="rtl" className="flex items-stretch gap-1 px-1 py-1 bg-panel border-t border-line h-[40px]">
       {/* live shop totals on the RIGHT — 3 boxes: کیش | کچا سونا | تیزابی */}
       <div className="flex items-stretch gap-3">
         <div className="flex items-stretch gap-2">
-          <div className="urdu flex items-center px-1 text-[12px] font-bold">کیش</div>
-          <div className="status-green px-3 min-w-[160px] text-[13px] font-bold">{fmtMoney(totals.cash)}</div>
+          <div className="urdu flex items-center px-1 text-[15px] font-bold">کیش</div>
+          {/* dir=ltr so a negative renders standard "-25,000" (minus on the LEFT). */}
+          <div dir="ltr" className="status-green flex items-center justify-center px-3 min-w-[175px] text-[18px] font-bold whitespace-nowrap">{fmtMoney(cashDisplay)}</div>
+        </div>
+
+        <div className="flex items-stretch gap-1">
+          <div className="urdu flex items-center px-1 text-[15px] font-bold">کچا سونا</div>
+          <div className="status-green flex items-center justify-center px-3 min-w-[120px] text-[18px] font-bold whitespace-nowrap">{fmtNum(kachaDisplay, 3)}</div>
+          {/* DISPLAY-ONLY reset: asks to confirm first, then zeros the on-screen
+              number only; DB/report untouched. */}
+          <button
+            type="button"
+            onClick={() => setShowKachaConfirm(true)}
+            title="صرف اسکرین پر صفر — ریکارڈ محفوظ رہے گا (screen reset only, record stays safe)"
+            className="self-center flex items-center justify-center w-6 h-[26px] rounded border border-gray-300 bg-white text-gray-600 text-[14px] leading-none hover:bg-gray-100 active:bg-gray-200 transition-colors"
+          >
+            ↺
+          </button>
         </div>
 
         <div className="flex items-stretch gap-2">
-          <div className="urdu flex items-center px-1 text-[12px] font-bold">کچا سونا</div>
-          <div className="status-green px-3 min-w-[120px] text-[13px] font-bold">{fmtNum(totals.parchun, 3)}</div>
-        </div>
-
-        <div className="flex items-stretch gap-2">
-          <div className="urdu flex items-center px-1 text-[12px] font-bold">تیزابی</div>
-          <div className="status-green px-3 min-w-[120px] text-[13px] font-bold">{fmtNum(totals.tezabi_sona, 3)}</div>
+          <div className="urdu flex items-center px-1 text-[15px] font-bold">تیزابی</div>
+          <div className="status-green flex items-center justify-center px-3 min-w-[130px] text-[18px] font-bold whitespace-nowrap">{fmtNum(totals.tezabi_sona, 3)}</div>
         </div>
       </div>
 
@@ -90,6 +102,46 @@ export default function StatusBar() {
       </button>
 
       <DefaultsForm open={showDefaults} onClose={() => setShowDefaults(false)} />
+
+      {/* کچا سونا reset confirmation — display-only; gates the click. */}
+      {showKachaConfirm && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setShowKachaConfirm(false)}
+        >
+          <div
+            dir="rtl"
+            className="bg-white rounded-lg shadow-2xl w-[360px] max-w-[92vw] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="urdu font-bold text-[15px] text-gray-800 bg-slate-100 border-b border-gray-200 px-4 py-2.5">
+              کچا سونا صفر کریں؟
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-2">
+              <p className="urdu text-[14px] text-gray-800">کیا آپ کچا سونا کاؤنٹر صفر کرنا چاہتے ہیں؟</p>
+              <p className="urdu text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
+                یہ صرف اسکرین کا نمبر صفر کرے گا — ریکارڈ محفوظ رہے گا
+              </p>
+            </div>
+            <div className="flex gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => { resetKachaDisplay(); setShowKachaConfirm(false) }}
+                className="urdu flex-1 rounded-md bg-rose-600 text-white text-[14px] font-bold py-2 hover:bg-rose-700 active:bg-rose-800 transition-colors"
+              >
+                ہاں
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowKachaConfirm(false)}
+                className="urdu rounded-md border border-gray-300 bg-white text-gray-700 text-[14px] font-bold px-5 py-2 hover:bg-gray-100 transition-colors"
+              >
+                نہیں
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

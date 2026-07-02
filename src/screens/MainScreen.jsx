@@ -15,13 +15,17 @@ import StatusBar from '../components/StatusBar.jsx'
 const CANVAS_W = 1460
 const CANVAS_H = 820
 const TOPBAR_H = 40
-const STATUS_H = 34
+const STATUS_H = 40
 // The center divider is shifted right of center so the LEFT section (purity
 // table + وصولی/لیب receipts) gets extra room for very large amounts (e.g.
 // 10,360,752) without truncation; the RIGHT section (نقد/ادھار) is the rest.
 const LEFT_W = 790
 const RIGHT_W = CANVAS_W - LEFT_W // 670
-const UPPER_H = 258 // height of the data-entry band (both halves)
+// Height of the data-entry band (both halves). Sized to fit the full purity
+// table (header + all 5 rows: Local, Copper, Standard, Silver, Pure Silver)
+// beneath the customer/receipt entry block — including the taller, padded Save
+// button row — so the last row is never clipped by this band's overflow-hidden.
+const UPPER_H = 280
 
 export default function MainScreen() {
   return (

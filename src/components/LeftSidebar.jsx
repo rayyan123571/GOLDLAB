@@ -10,11 +10,11 @@ import { GRAMS_PER_TOLA, fmtNum, fmtMoney } from '../logic/units.js'
 // PKR value of the leftover gold not handed over.
 const ITEMS = [
   { key: 'parchunLiya', label: 'پرچوں لیا', check: true, flag: 'parchunLiya' },
-  { key: 'kulUjrat', label: 'کل اجرت لینی ہے' },
+  { key: 'kulUjrat', label: 'اجرت لینی ہے' },
   { key: 'ujratKaSona', label: 'اجرت کا سونا', check: true, flag: 'ujratKaSona' },
   { key: 'ujratKiRaqam', label: 'اجرت کی رقم' },
   { key: 'sonaDena', label: 'سونا دینا ہے' },
-  { key: 'cashDiya', label: 'کیش دیا', green: true },
+  { key: 'cashDiya', label: 'کیش دیا', green: true, edit: true },
   { key: 'sonaDiya', label: 'سونا دیا', green: true, edit: true }
 ]
 
@@ -23,7 +23,7 @@ export default function LeftSidebar() {
     computedRows, input,
     ujratKaSona, toggleUjratKaSona,
     parchunLiya, toggleParchunLiya,
-    sonaDiya, setSonaDiya
+    sonaDiya, cashDiya, setSonaDiyaLinked, setCashDiyaLinked
   } = useApp()
 
   const flags = { ujratKaSona, parchunLiya }
@@ -60,6 +60,8 @@ export default function LeftSidebar() {
         if (ratePerGram <= 0) return '-'
         return fmtNum(goldOwed)
       case 'cashDiya': {
+        // Gated by "پرچوں لیا": when unticked, کیش دیا is locked to dash (no value).
+        if (!parchunLiya) return '-'
         // Cash value of the leftover gold not handed over: the less gold given,
         // the more leftover, the higher the cash. Give it all -> '-'.
         if (ratePerGram <= 0) return '-'
@@ -76,8 +78,8 @@ export default function LeftSidebar() {
       {ITEMS.map((it, i) => (
         <React.Fragment key={i}>
           {/* label cell (grey) — checkbox items show a bold/larger label + a box on one line */}
-          <div className="flex-1 flex items-center justify-center gap-[2px] border-b border-line bg-header px-[2px]" style={{ maxHeight: 30 }}>
-            <span className="urdu leading-tight text-center text-[11px] font-bold">{it.label}</span>
+          <div className="flex-1 flex items-center justify-center gap-[2px] border-b border-line bg-header px-[2px]" style={{ maxHeight: 40 }}>
+            <span className="urdu leading-tight text-center text-[14px] font-bold">{it.label}</span>
             {it.check && (
               <input
                 type="checkbox"
@@ -88,18 +90,24 @@ export default function LeftSidebar() {
             )}
           </div>
           {/* value cell (white, or green for highlighted rows) */}
-          <div className={`flex-1 flex items-center justify-center border-b border-line ${it.green ? 'bg-mint' : 'bg-white'}`} style={{ maxHeight: 30 }}>
+          <div className={`flex-1 flex items-center justify-center border-b border-line ${it.green ? 'bg-mint' : 'bg-white'}`} style={{ maxHeight: 40 }}>
             {it.edit ? (
+              // سونا دیا ↔ کیش دیا — two-way bound via the rate: typing one fills the
+              // other (setSonaDiyaLinked / setCashDiyaLinked). Editable ONLY when
+              // "پرچوں لیا" is ticked; when unticked both are disabled and blank (the
+              // store clears them), so no value can exist while the checkbox is off.
               <input
-                className="w-full h-full bg-transparent text-center text-[13px] font-bold cursor-text outline-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                className={`w-full h-full text-center text-[15px] font-bold outline-none focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  parchunLiya ? 'bg-transparent cursor-text focus:bg-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                 placeholder="-"
                 inputMode="decimal"
-                value={sonaDiya}
-                onChange={(e) => setSonaDiya(e.target.value)}
+                disabled={!parchunLiya}
+                value={parchunLiya ? (it.key === 'cashDiya' ? cashDiya : sonaDiya) : ''}
+                onChange={(e) => (it.key === 'cashDiya' ? setCashDiyaLinked : setSonaDiyaLinked)(e.target.value)}
               />
             ) : (
               <input
-                className="w-full h-full bg-transparent text-center text-[13px] font-bold outline-none"
+                className="w-full h-full bg-transparent text-center text-[15px] font-bold outline-none"
                 placeholder="-"
                 value={valueFor(it.key)}
                 readOnly

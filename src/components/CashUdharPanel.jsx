@@ -41,17 +41,17 @@ function GoldRow({ label, st, set, rateTola, disabled = false }) {
   const lock = disabled ? ' opacity-50 cursor-not-allowed bg-gray-100' : ''
   return (
     <div className="grid flex-1 min-h-0" style={gridStyle}>
-      <div className="cell justify-end pr-1 urdu text-[12px] font-bold text-right leading-tight bg-white">
+      <div className="cell justify-end pr-1 urdu text-[15px] font-bold text-right leading-tight bg-white">
         {label}
       </div>
-      <input className={`inp-g text-center${lock}`} value={st.wazan} disabled={disabled}
+      <input className={`inp-g text-center text-[15px] font-bold${lock}`} value={st.wazan} disabled={disabled}
         onChange={(e) => set({ ...st, wazan: e.target.value })} placeholder="-" />
-      <input className={`inp text-center${lock}`} value={st.point} disabled={disabled}
+      <input className={`inp text-center text-[15px] font-bold${lock}`} value={st.point} disabled={disabled}
         onChange={(e) => set({ ...st, point: e.target.value })} />
-      <div className="cell cell-c">{khalis ? fmtNum(khalis) : '-'}</div>
-      <input className={`inp text-center${lock}`} value={st.rate} disabled={disabled}
+      <div className="cell cell-c text-[15px] font-bold">{khalis ? fmtNum(khalis) : '-'}</div>
+      <input className={`inp text-center text-[15px] font-bold${lock}`} value={st.rate} disabled={disabled}
         onChange={(e) => set({ ...st, rate: e.target.value })} placeholder={fmtMoney(rateTola)} />
-      <div className="cell cell-c">{q ? fmtMoney(q) : '-'}</div>
+      <div className="cell cell-c text-[15px] font-bold">{q ? fmtMoney(q) : '-'}</div>
     </div>
   )
 }
@@ -61,12 +61,12 @@ function GoldRow({ label, st, set, rateTola, disabled = false }) {
 function CashRow({ label, st, set }) {
   return (
     <div className="grid flex-1 min-h-0" style={gridStyle}>
-      <div className="cell justify-end pr-1 urdu text-[12px] font-bold text-right leading-tight bg-white">
+      <div className="cell justify-end pr-1 urdu text-[15px] font-bold text-right leading-tight bg-white">
         {label}
       </div>
       {/* merged empty cell spanning سونا وزن + پوائنٹ + خالص سونا + ریٹ */}
       <div className="cell bg-white" style={{ gridColumn: 'span 4' }}>&nbsp;</div>
-      <input className="inp-g text-center" value={st}
+      <input className="inp-g text-center text-[15px] font-bold" value={st}
         onChange={(e) => set(e.target.value)} placeholder="-" />
     </div>
   )
@@ -76,12 +76,12 @@ function CashRow({ label, st, set }) {
 function Header({ title }) {
   return (
     <div className="grid flex-1 min-h-0" style={gridStyle}>
-      <div className="hdr urdu bg-headerDark font-bold text-[12px]">{title}</div>
-      <div className="hdr urdu">سونا وزن</div>
-      <div className="hdr urdu">پوائنٹ</div>
-      <div className="hdr urdu">خالص سونا</div>
-      <div className="hdr urdu">ریٹ</div>
-      <div className="hdr urdu">قیمت</div>
+      <div className="hdr urdu bg-headerDark font-bold text-[15px]">{title}</div>
+      <div className="hdr urdu font-bold text-[14px]">سونا وزن</div>
+      <div className="hdr urdu font-bold text-[14px]">پوائنٹ</div>
+      <div className="hdr urdu font-bold text-[14px]">خالص سونا</div>
+      <div className="hdr urdu font-bold text-[14px]">ریٹ</div>
+      <div className="hdr urdu font-bold text-[14px]">قیمت</div>
     </div>
   )
 }
@@ -130,23 +130,23 @@ export default function CashUdharPanel() {
         {/* Bottom band: ٹوٹل | empty | سونا لین دین | yellow | کیش لین دین | yellow */}
         <div className="grid flex-1 min-h-0" style={gridStyle}>
           {/* col1 (right): ٹوٹل */}
-          <div className="cell justify-end pr-1 urdu text-[10px] text-right bg-header font-bold">
+          <div className="cell justify-end pr-1 urdu text-[13px] text-right bg-header font-bold">
             ٹوٹل :
           </div>
           {/* col2: khaali grey cell */}
           <div className="cell bg-header">&nbsp;</div>
           {/* col3: سونا لین دین label (right-aligned, allowed to overflow) */}
-          <div className="cell justify-end pr-1 urdu text-[9px] font-semibold whitespace-nowrap overflow-visible bg-header">
+          <div className="cell justify-end pr-1 urdu text-[12px] font-bold whitespace-nowrap overflow-visible bg-header">
             سونا لین دین :
           </div>
-          {/* col4: gold-ledger yellow box */}
-          <input className="inp-y text-center" value={fmtNum(ledger.balance_gold)} readOnly />
+          {/* col4: gold-ledger yellow box — only for a selected customer */}
+          <input className="inp-y text-center text-[14px] font-bold" value={customer.id ? fmtNum(ledger.balance_gold) : '-'} readOnly />
           {/* col5: کیش لین دین label */}
-          <div className="cell justify-end pr-1 urdu text-[9px] font-semibold whitespace-nowrap overflow-visible bg-header">
+          <div className="cell justify-end pr-1 urdu text-[12px] font-bold whitespace-nowrap overflow-visible bg-header">
             کیش لین دین :
           </div>
-          {/* col6 (left): cash-ledger yellow box */}
-          <input className="inp-y text-center" value={fmtMoney(ledger.balance_cash)} readOnly />
+          {/* col6 (left): cash-ledger yellow box — only for a selected customer */}
+          <input className="inp-y text-center text-[14px] font-bold" value={customer.id ? fmtMoney(ledger.balance_cash) : '-'} readOnly />
         </div>
       </div>
     </div>

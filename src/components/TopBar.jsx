@@ -24,18 +24,18 @@ export default function TopBar() {
   const { rates, saveRates, setScreen, openUdhar, closeUdhar, openAkhrajat, closeAkhrajat, screen, udharOpen, akhrajatOpen } = useApp()
 
   // Exactly one tab is active at a time. ادھار / اخراجات are modals, so an open
-  // modal wins the highlight; otherwise لیب = 'main', روزنامچہ = 'daybook'.
+  // modal wins the highlight; otherwise روزنامچہ = 'daybook'. لیب is no longer a
+  // tab — it IS the default main page (screen === 'main'), reachable by closing
+  // any modal or via the روزنامچہ "← واپس" button, so no tab highlights on main.
   const anyModal = udharOpen || akhrajatOpen
   const active = {
     daybook: screen === 'daybook' && !anyModal,
-    lab: screen === 'main' && !anyModal,
     udhar: udharOpen,
     akhrajat: akhrajatOpen
   }
   // Active = green (tab-active). Inactive tabs get a subtle, lighter hover tint
   // (distinct from the active green) so they read as clickable.
   const tabCls = (isActive) => `tab urdu text-[16px] font-bold ${isActive ? 'tab-active' : 'hover:from-emerald-100 hover:to-emerald-200'}`
-  const goLab = () => { closeUdhar(); closeAkhrajat(); setScreen('main') }
   const goDaybook = () => { closeUdhar(); closeAkhrajat(); setScreen('daybook') }
 
   // The تاریخ field stays an editable, persisted receipt date. Default it to
@@ -71,9 +71,6 @@ export default function TopBar() {
       <div className="flex items-stretch">
         <button className={tabCls(active.daybook)} onClick={goDaybook}>
           روزنامچہ
-        </button>
-        <button className={tabCls(active.lab)} onClick={goLab}>
-          لیب
         </button>
         <button className={tabCls(active.udhar)} onClick={openUdhar}>
           ادھار

@@ -19,9 +19,11 @@ function Row({ label, children, alignTop }) {
 // ڈیفالٹ سیٹنگز — rate / charges / parchi / slip-print settings, saved to the
 // settings table via the store's saveRates (which also refreshes the live UI).
 export default function DefaultsForm({ open, onClose }) {
-  const { rates, saveRates, hasApi } = useApp()
+  const { rates, saveRates, resetKachaData, resetExpensesData, hasApi } = useApp()
   const [form, setForm] = useState({ rate_tezabi_tola: '', fc_per_gram: '', parchi_charges: '', slip_count: '1' })
   const [saved, setSaved] = useState(false)
+  const [kachaMsg, setKachaMsg] = useState('')
+  const [expenseMsg, setExpenseMsg] = useState('')
   const savedTimer = useRef(null)
   const saveTimer = useRef(null)
 
@@ -137,6 +139,56 @@ export default function DefaultsForm({ open, onClose }) {
               placeholder="1"
             />
           </Row>
+
+          {/* کچا سونا لیا reset — clears only the kacha data (report → empty, total 0). */}
+          <div className="mt-1 pt-4 border-t border-gray-200 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="urdu font-bold text-[13px] text-gray-700">کچا سونا لیا ری سیٹ</div>
+              {kachaMsg
+                ? <div className="urdu text-[12px] text-emerald-600">{kachaMsg}</div>
+                : <div className="urdu text-[11px] text-gray-500">صرف کچا سونا لیا کا ڈیٹا صفر ہو جائے گا</div>}
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!window.confirm('کیا آپ واقعی تمام کچا سونا لیا اندراج صفر کرنا چاہتے ہیں؟')) return
+                const res = await resetKachaData()
+                setKachaMsg(res && res.ok
+                  ? `صاف ہو گیا ✓ (${res.removedTxns ?? 0} اندراج حذف)`
+                  : 'ری سیٹ نہیں ہو سکا')
+                if (savedTimer.current) clearTimeout(savedTimer.current)
+                savedTimer.current = setTimeout(() => setKachaMsg(''), 2500)
+              }}
+              className="urdu shrink-0 text-[13px] font-bold text-white bg-rose-600 rounded-md px-4 py-2 hover:bg-rose-700 active:bg-rose-800 transition-colors"
+            >
+              ری سیٹ
+            </button>
+          </div>
+
+          {/* اخراجات (کھرچہ) reset — deletes ALL expenses (reports → empty). */}
+          <div className="mt-1 pt-4 border-t border-gray-200 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="urdu font-bold text-[13px] text-gray-700">اخراجات ری سیٹ</div>
+              {expenseMsg
+                ? <div className="urdu text-[12px] text-emerald-600">{expenseMsg}</div>
+                : <div className="urdu text-[11px] text-gray-500">تمام کھرچہ اندراج حذف ہو جائیں گے</div>}
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!window.confirm('کیا آپ واقعی تمام اخراجات (کھرچہ) حذف کرنا چاہتے ہیں؟')) return
+                const res = await resetExpensesData()
+                setExpenseMsg(res && res.ok
+                  ? `صاف ہو گیا ✓ (${res.removed ?? 0} اندراج حذف)`
+                  : 'ری سیٹ نہیں ہو سکا')
+                if (savedTimer.current) clearTimeout(savedTimer.current)
+                savedTimer.current = setTimeout(() => setExpenseMsg(''), 2500)
+              }}
+              className="urdu shrink-0 text-[13px] font-bold text-white bg-rose-600 rounded-md px-4 py-2 hover:bg-rose-700 active:bg-rose-800 transition-colors"
+            >
+              ری سیٹ
+            </button>
+          </div>
         </div>
       </div>
     </div>

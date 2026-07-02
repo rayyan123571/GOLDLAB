@@ -23,7 +23,7 @@ const CATS = [
 ]
 const CAT_LABEL = {
   gold_take: 'تیزابی لیا', gold_give: 'تیزابی دیا', cash_take: 'رقم لی', cash_give: 'رقم دی',
-  gold_sell: 'نقد فروخت', gold_buy: 'نقد خرید', lab_job: 'لیب'
+  gold_sell: 'نقد فروخت', gold_buy: 'نقد خرید', lab_job: 'لیب', kacha_gold_take: 'کچا سونا لیا'
 }
 const isGoldCat = (c) => c === 'gold_take' || c === 'gold_give'
 
@@ -101,7 +101,7 @@ function ActionButton({ a, onClick }) {
 }
 
 export default function UdharForm({ open, onClose }) {
-  const { getReport, getReportGroup1, editTransaction, removeTransaction, resetData, hasApi } = useApp()
+  const { getReport, getReportGroup1, getKachaReport, editTransaction, removeTransaction, resetData, hasApi } = useApp()
 
   const [custCode, setCustCode] = useState('')
   const [custName, setCustName] = useState('')
@@ -175,6 +175,11 @@ export default function UdharForm({ open, onClose }) {
       if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
       const res = await getReport({ ...customerFilter(), from: from || undefined, to: to || undefined })
       setReport({ group: 3, rows: res.rows || [], meta: { customer: customerLabel(), from: from || 'ابتدا', to: to || 'آج تک' } })
+    } else if (d.type === 'kacha') {
+      // کچا سونا لیا — per-customer aggregate (no customer filter = all customers).
+      if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
+      const res = await getKachaReport({ ...customerFilter(), from: from || undefined, to: to || undefined })
+      setReport({ group: 'kacha', rows: res.rows || [], totals: res.totals || { kacha_sona: 0, khalis_sona: 0, sona_diya: 0, cash_diya: 0 }, title: 'کچا سونا لیا', meta: { customer: customerLabel(), from: from || 'ابتدا', to: to || 'آج تک' } })
     }
     setMsg(null); setDesc(d); setView('report')
   }
@@ -233,6 +238,14 @@ export default function UdharForm({ open, onClose }) {
                     {b.label}
                   </button>
                 ))}
+                {/* کچا سونا لیا — per-customer aggregate report (spans both columns). */}
+                <button
+                  type="button"
+                  onClick={() => loadReport({ type: 'kacha' })}
+                  className="col-span-2 urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors"
+                >
+                  کچا سونا لیا
+                </button>
               </div>
 
               {/* LEFT — filters */}
@@ -394,20 +407,22 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
   const [thermal, setThermal] = useState(true) // default to the thermal roll layout
   if (!report) return null
   const isStatement = report.group === 3
-  const canRowEdit = (report.rows || []).some((r) => r.id != null)
+  const isKacha = report.group === 'kacha' // 5-column per-customer table (no thermal)
+  const useThermal = thermal && !isKacha
+  const canRowEdit = !isKacha && (report.rows || []).some((r) => r.id != null)
 
   const doPrint = () => {
-    applyThermal(thermal)
+    applyThermal(useThermal)
     window.addEventListener('afterprint', () => applyThermal(false), { once: true })
     setTimeout(() => applyThermal(false), 4000) // fallback if afterprint doesn't fire
     window.print()
   }
   const doPdf = async () => {
     if (!hasApiFn()) { setNote('PDF صرف ایپ میں دستیاب ہے'); setTimeout(() => setNote(''), 2500); return }
-    applyThermal(thermal)
+    applyThermal(useThermal)
     try {
       const base = isStatement ? 'customer-statement' : (report.title || 'report')
-      const res = await window.api.exportPDF(`${String(base).replace(/\s+/g, '-')}.pdf`, thermal ? { cssPageSize: true } : undefined)
+      const res = await window.api.exportPDF(`${String(base).replace(/\s+/g, '-')}.pdf`, useThermal ? { cssPageSize: true } : undefined)
       if (res?.ok) setNote('PDF محفوظ ہو گیا ✓')
       else if (!res?.canceled) setNote('PDF محفوظ نہیں ہو سکا')
     } finally { applyThermal(false) }
@@ -418,21 +433,33 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
     <div className="print-area flex flex-col min-h-0 flex-1">
       <div className="no-print shrink-0 flex items-center gap-2 bg-white border-b border-gray-200 px-4 py-2.5">
         <button type="button" onClick={onBack} className="urdu text-[12px] font-semibold text-blue-700 border border-blue-200 rounded-md px-3 py-1.5 hover:bg-blue-50 transition-colors">← واپس</button>
-        <button
-          type="button"
-          onClick={() => setThermal((v) => !v)}
-          title={`تھرمل رول ${THERMAL_WIDTH_MM}mm`}
-          className={`urdu text-[12px] font-semibold border rounded-md px-3 py-1.5 transition-colors ${thermal ? 'bg-slate-700 text-white border-slate-700' : 'text-gray-700 border-gray-300 hover:bg-gray-100'}`}
-        >
-          تھرمل ({THERMAL_WIDTH_MM}mm)
-        </button>
+        {!isKacha && (
+          <button
+            type="button"
+            onClick={() => setThermal((v) => !v)}
+            title={`تھرمل رول ${THERMAL_WIDTH_MM}mm`}
+            className={`urdu text-[12px] font-semibold border rounded-md px-3 py-1.5 transition-colors ${thermal ? 'bg-slate-700 text-white border-slate-700' : 'text-gray-700 border-gray-300 hover:bg-gray-100'}`}
+          >
+            تھرمل ({THERMAL_WIDTH_MM}mm)
+          </button>
+        )}
         <div className="flex-1" />
         {note && <span className="urdu text-[11px] text-emerald-600">{note}</span>}
         <button type="button" onClick={doPrint} className="urdu text-[12px] font-semibold text-gray-700 border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-100 transition-colors">پرنٹ 🖨</button>
         <button type="button" onClick={doPdf} className="urdu text-[12px] font-semibold text-white bg-rose-600 rounded-md px-3 py-1.5 hover:bg-rose-700 transition-colors">PDF</button>
       </div>
 
-      {thermal ? (
+      {isKacha ? (
+        <>
+          <div className="px-4 pt-3">
+            <div className="urdu font-bold text-[15px] text-gray-800">کچا سونا لیا</div>
+            <div className="urdu text-[11px] text-gray-500">کسٹمر: {report.meta?.customer} — عرصہ: {report.meta?.from} تا {report.meta?.to} — کل کسٹمر: {report.rows.length}</div>
+          </div>
+          <div className="flex-1 min-h-0 overflow-auto p-4">
+            <KachaReport report={report} />
+          </div>
+        </>
+      ) : thermal ? (
         // Thermal preview — the receipt shown on screen at the exact roll width so
         // the user can check it before printing. This same narrow content prints.
         <div className="flex-1 min-h-0 overflow-auto bg-gray-200 p-4">
@@ -503,6 +530,52 @@ function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete 
             return <td key={c.label} className="px-3 py-2.5" />
           })}
           {canRowEdit && <td className="no-print" />}
+        </tr>
+      </tfoot>
+    </table>
+  )
+}
+
+// کچا سونا لیا — one row PER ENTRY (per kacha transaction), bold TOTAL row.
+//   نام | پرچی نمبر | کچا سونا | خالص سونا | سونا دیا | کیش دیا
+// پرچی نمبر is informational (each entry's receipt_no) and is NOT summed.
+function KachaReport({ report }) {
+  const rows = report.rows || []
+  const t = report.totals || { kacha_sona: 0, khalis_sona: 0, sona_diya: 0, cash_diya: 0 }
+  return (
+    <table className="w-full border-collapse text-[12.5px] bg-white border border-gray-300 shadow-sm">
+      <thead className="sticky top-0">
+        <tr className="bg-slate-100 text-gray-700 border-b-2 border-slate-300 urdu">
+          <th className="px-3 py-2 border-l border-gray-200 text-right">نام</th>
+          <th className="px-3 py-2 border-l border-gray-200 text-center">پرچی نمبر</th>
+          <th className="px-3 py-2 border-l border-gray-200 text-center">کچا سونا</th>
+          <th className="px-3 py-2 border-l border-gray-200 text-center">خالص سونا</th>
+          <th className="px-3 py-2 border-l border-gray-200 text-center">سونا دیا</th>
+          <th className="px-3 py-2 text-center">کیش دیا</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr><td colSpan={6} className="urdu text-center text-gray-400 py-10 text-[13px]">اس فلٹر پر کوئی اندراج نہیں ملا</td></tr>
+        ) : rows.map((r, i) => (
+          <tr key={r.id ?? `${r.customer_id}-${i}`} className="border-b border-gray-100 hover:bg-blue-50/40">
+            <td className="px-3 py-1.5 border-l border-gray-100 text-right urdu">{r.customer_name || '-'}</td>
+            <td className="px-3 py-1.5 border-l border-gray-100 text-center tabular-nums" dir="ltr">{r.receipt_no ?? '-'}</td>
+            <td className="px-3 py-1.5 border-l border-gray-100 text-center tabular-nums" dir="ltr">{fmtNum(r.kacha_sona)}</td>
+            <td className="px-3 py-1.5 border-l border-gray-100 text-center tabular-nums" dir="ltr">{fmtNum(r.khalis_sona)}</td>
+            <td className="px-3 py-1.5 border-l border-gray-100 text-center tabular-nums" dir="ltr">{fmtNum(r.sona_diya)}</td>
+            <td className="px-3 py-1.5 text-center tabular-nums" dir="ltr">{fmtMoney(r.cash_diya)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr className="bg-amber-50 border-t-2 border-amber-300 font-bold urdu text-[13px] text-amber-800">
+          <td className="px-3 py-2.5 text-right">کل :</td>
+          <td className="px-3 py-2.5 text-center text-amber-400">—</td>
+          <td className="px-3 py-2.5 text-center tabular-nums" dir="ltr">{fmtNum(t.kacha_sona)}</td>
+          <td className="px-3 py-2.5 text-center tabular-nums" dir="ltr">{fmtNum(t.khalis_sona)}</td>
+          <td className="px-3 py-2.5 text-center tabular-nums" dir="ltr">{fmtNum(t.sona_diya)}</td>
+          <td className="px-3 py-2.5 text-center tabular-nums" dir="ltr">{fmtMoney(t.cash_diya)}</td>
         </tr>
       </tfoot>
     </table>

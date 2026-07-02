@@ -9,7 +9,8 @@ const CAT_LABEL = {
   gold_take: 'سونا لیا (ادھار)',
   cash_give: 'کیش دیا',
   cash_take: 'کیش لیا',
-  lab_job: 'لیب کام'
+  lab_job: 'لیب کام',
+  kacha_gold_take: 'کچا سونا لیا'
 }
 
 export default function Daybook() {
