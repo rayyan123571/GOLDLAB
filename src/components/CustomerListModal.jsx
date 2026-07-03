@@ -19,12 +19,15 @@ function Avatar({ src, name }) {
   )
 }
 
-// Right-aligned, red-when-negative numeric cell.
-function BalCell({ value, text }) {
+// Right-aligned, red-when-negative numeric cell. The CELL keeps its logical
+// `text-end` so the value sits under its (RTL) header; only the NUMBER is wrapped
+// in an LTR-isolated span so a leading minus stays on the visual LEFT ("-430,000")
+// without shifting the cell's alignment.
+function BalCell({ value, text, bold }) {
   const neg = Number(value || 0) < 0
   return (
-    <td className={`px-3 py-2 text-end tabular-nums whitespace-nowrap ${neg ? 'text-red-600 font-semibold' : 'text-gray-800'}`}>
-      {text}
+    <td className={`px-3 py-2 text-end tabular-nums whitespace-nowrap ${bold ? 'font-bold' : ''} ${neg ? 'text-red-600 font-semibold' : 'text-gray-800'}`}>
+      <span dir="ltr" style={{ unicodeBidi: 'isolate' }}>{text}</span>
     </td>
   )
 }
@@ -157,7 +160,7 @@ export default function CustomerListModal({ open, onClose, onSelect }) {
                       </span>
                     </td>
                     <td className="px-3 py-2 text-gray-600 tabular-nums whitespace-nowrap" dir="ltr">{r.mobile || '—'}</td>
-                    <BalCell value={r.balance_gold} text={fmtGold(r.balance_gold)} />
+                    <BalCell value={r.balance_gold} text={fmtGold(r.balance_gold)} bold />
                     <BalCell value={r.balance_cash} text={fmtCash(r.balance_cash)} />
                   </tr>
                 ))

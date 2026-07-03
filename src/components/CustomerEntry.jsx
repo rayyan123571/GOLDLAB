@@ -41,6 +41,7 @@ function Combo({
           wrapperClassName="flex-1 min-w-0"
           inputClassName={inputClassName}
           placeholder={placeholder}
+          inputRef={inputRef}
         />
       ) : (
         <input
@@ -60,7 +61,8 @@ function Combo({
 export default function CustomerEntry() {
   const {
     customer, setCustomer, newCustomer, saveCustomer, saveParchi, newParchi, receiptNo, hasApi, bump,
-    gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt
+    gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt,
+    hasPrevReceipt, hasNextReceipt
   } = useApp()
   const [matches, setMatches] = useState([])
   const [open, setOpen] = useState(false)
@@ -149,16 +151,16 @@ export default function CustomerEntry() {
     setActiveIndex(-1)
     setOpen(true)
   }
-  const selectTail = (start, end) => {
-    // eslint-disable-next-line no-undef
-    requestAnimationFrame(() => {
-      const el = nameInputRef.current
-      if (el && end > start) { try { el.setSelectionRange(start, end) } catch (_) { /* noop */ } }
-    })
-  }
 
+  // Ghost-text autocomplete. The box holds ONLY what the user has actually typed
+  // (a prefix); GhostNameInput paints the completion in grey after it, and the
+  // dropdown lists every saved name that starts with that prefix. The user types
+  // freely (R → Ra → Ray) — nothing is force-filled or re-selected, so narrowing
+  // "Rizwan" down to "Rayyan" just works. The id is locked only on an EXACT match
+  // (typed-in exact name, or accepted via Enter/Tab/→). A keystroke that leaves a
+  // string which prefixes NO saved name is rejected, so the box can never hold an
+  // invented name — only a real customer's name or a prefix of one.
   const onNameChange = (e) => {
-    const el = nameInputRef.current
     const inputType = (e.nativeEvent && e.nativeEvent.inputType) || ''
     const deleting = inputType.indexOf('delete') === 0
     const value = e.target.value
@@ -173,48 +175,20 @@ export default function CustomerEntry() {
       return
     }
 
-    // Re-sync the committed prefix if the customer was loaded externally (nav/pick).
-    if (customer.id && !(customer.name || '').toLowerCase().startsWith(committedRef.current.toLowerCase())) {
-      committedRef.current = customer.name || ''
-    }
-
     const lower = value.toLowerCase()
+    const exact = savedCustomers.find(
+      (c) => (c.name || '').trim().toLowerCase() === value.trim().toLowerCase()
+    )
 
-    // Deleting: let the value shrink; adopt the customer only on an EXACT saved
-    // match, else keep it as a partial (no id → receipt hides the name).
-    if (deleting) {
-      committedRef.current = value
-      const exact = savedCustomers.find((c) => (c.name || '').trim().toLowerCase() === value.trim().toLowerCase())
-      if (exact) setCustomer(exact)
-      else setCustomer((c) => ({ ...c, id: null, name: value }))
-      showMatches(lower)
-      return
-    }
+    // Reject an INSERT that no longer prefixes any saved name (deletes always pass,
+    // and an exact match always passes). Returning early leaves `customer.name`
+    // unchanged, so React reverts the controlled input to the last valid text.
+    if (!deleting && !exact && !firstPrefix(value)) return
 
-    // Inserting: the typed text must be a PREFIX of some saved name.
-    const match = firstPrefix(value)
-    if (!match) {
-      // Reject the keystroke — snap the box back to the last valid state.
-      const base = committedRef.current
-      const bm = firstPrefix(base)
-      if (bm) {
-        if (el) { el.value = bm.name } // imperative revert (value prop may be unchanged)
-        setCustomer(bm)
-        selectTail(base.length, bm.name.length)
-      } else if (customer.id) {
-        if (el) el.value = customer.name || ''
-      } else {
-        committedRef.current = ''
-        newCustomer()
-      }
-      return
-    }
-
-    // Accept: auto-fill the saved name and select the completed remainder.
     committedRef.current = value
-    setCustomer(match)
+    if (exact) setCustomer(exact)
+    else setCustomer((c) => ({ ...c, id: null, name: value }))
     showMatches(lower)
-    selectTail(value.length, match.name.length)
   }
 
   // Pick a suggestion: FULL selection. findCustomers returns SELECT *, so `c`
@@ -289,6 +263,7 @@ export default function CustomerEntry() {
           onBlur={() => setTimeout(() => { setOpen(false); setActiveIndex(-1) }, 150)}
           onKeyDown={onNameKeyDown}
           placeholder="نام"
+          ghost
           hasApi={hasApi}
           inputRef={nameInputRef}
           inputClassName="inp-g border-l-0 px-3 py-2 text-[18px] font-bold"
@@ -313,8 +288,20 @@ export default function CustomerEntry() {
           Save
         </button>
         <button className="btn font-bold w-6" title="پہلی رسید — First" onClick={navigate(gotoFirstReceipt)}>⏮</button>
-        <button className="btn text-redX font-bold w-6" title="پچھلی رسید — Previous" onClick={navigate(gotoPrevReceipt)}>◀</button>
-        <button className="btn text-redX font-bold w-6" title="اگلی رسید — Next" onClick={navigate(gotoNextReceipt)}>▶</button>
+        {/* ◀ Prev / ▶ Next are DISABLED (greyed, non-clickable) when there is no
+            older / newer saved parchi in that direction. Nav behavior unchanged. */}
+        <button
+          className="btn text-redX font-bold w-6 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="پچھلی رسید — Previous"
+          onClick={navigate(gotoPrevReceipt)}
+          disabled={!hasPrevReceipt}
+        >◀</button>
+        <button
+          className="btn text-redX font-bold w-6 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="اگلی رسید — Next"
+          onClick={navigate(gotoNextReceipt)}
+          disabled={!hasNextReceipt}
+        >▶</button>
         <button className="btn font-bold w-6" title="آخری رسید — Last" onClick={navigate(gotoLastReceipt)}>⏭</button>
       </div>
 

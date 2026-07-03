@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../state/store.jsx'
 import { fmtMoney, fmtNum, gramsToTMR } from '../logic/units.js'
+import { computeTable, buildLabReceipt } from '../logic/purity.js'
+import { RecoveryReceipt, LabReceipt, CreditReceipt, CashReceipt } from './Receipts.jsx'
+import DateField from './DateField.jsx'
 
 // ─── Report buttons, three groups. flow 'in' = INTO shop (green), 'out' = OUT (red)
 const GROUP1 = [
@@ -76,27 +79,10 @@ const hasApiFn = () => typeof window !== 'undefined' && window.api
 
 // Date helpers — the app stores/queries ISO (yyyy-mm-dd); the UI shows DD/MM/YYYY.
 const pad2 = (n) => String(n).padStart(2, '0')
+// Today's LOCAL date as ISO (yyyy-mm-dd) — the From/To filters default to this.
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` }
 const isoToDisp = (iso) => { const p = String(iso || '').split('-'); return p.length === 3 && p[0] ? `${p[2]}/${p[1]}/${p[0]}` : '' }
 const dispToIso = (s) => { const m = String(s || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${pad2(m[2])}-${pad2(m[1])}` : null }
-
-// Date field: DD/MM/YYYY text (typeable) + a calendar icon that opens the native
-// picker. Both edit the same ISO value. Defaults to today via the parent's state.
-function DateField({ label, iso, setIso }) {
-  const ref = useRef(null)
-  const [text, setText] = useState(isoToDisp(iso))
-  useEffect(() => { setText(isoToDisp(iso)) }, [iso])
-  const onText = (v) => { setText(v); const parsed = dispToIso(v); if (parsed) setIso(parsed) }
-  const openPicker = () => { const el = ref.current; if (!el) return; if (el.showPicker) { try { el.showPicker() } catch { el.focus() } } else el.focus() }
-  return (
-    <label className="flex items-center gap-1.5">
-      <span className="text-[14px] font-bold text-black w-[86px] shrink-0">{label}</span>
-      <input value={text} onChange={(e) => onText(e.target.value)} placeholder="dd/mm/yyyy" dir="ltr"
-        className="flex-1 min-w-0 border border-gray-400 bg-white text-[16px] font-bold px-2 py-1.5 text-center tabular-nums rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
-      <button type="button" onClick={openPicker} title="کیلنڈر" className="border border-gray-400 bg-gray-100 px-2 py-1.5 rounded-sm hover:bg-gray-200 text-[16px]">📅</button>
-      <input ref={ref} type="date" value={iso || ''} onChange={(e) => setIso(e.target.value)} tabIndex={-1} className="absolute w-0 h-0 opacity-0 pointer-events-none" />
-    </label>
-  )
-}
 
 function FlowIcon({ flow }) {
   return flow === 'in' ? (
@@ -118,14 +104,14 @@ function ActionButton({ a, onClick }) {
 }
 
 export default function UdharForm({ open, onClose }) {
-  const { getReport, getReportGroup1, getKachaReport, editTransaction, removeTransaction, resetData, hasApi } = useApp()
+  const { getReport, getReportGroup1, getKachaReport, editTransaction, removeTransaction, resetData, hasApi, rates } = useApp()
 
   const [custCode, setCustCode] = useState('')
   const [custName, setCustName] = useState('')
   const [nameHits, setNameHits] = useState([])
   const nameTimer = useRef(null)
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
+  const [from, setFrom] = useState(todayStr())
+  const [to, setTo] = useState(todayStr())
   const [msg, setMsg] = useState(null)
   const [report, setReport] = useState(null)
   const [desc, setDesc] = useState(null)   // how to rebuild the current report
@@ -148,7 +134,7 @@ export default function UdharForm({ open, onClose }) {
     if (!open) return
     setCustCode(''); setCustName(''); setNameHits([]); setMsg(null)
     setReport(null); setDesc(null); setView('menu'); setEditRow(null)
-    setFrom(''); setTo('') // default to ALL dates — a customer filter shows full history
+    setFrom(todayStr()); setTo(todayStr()) // default From/To to today; clearing From = all dates
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
@@ -193,7 +179,18 @@ export default function UdharForm({ open, onClose }) {
       if (!(custCode.trim() || custName.trim())) { if (!silent) setMsg({ ok: false, text: 'پہلے کسٹمر منتخب کریں / نام درج کریں' }); return }
       if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
       const res = await getReport({ ...customerFilter(), from: from || undefined, to: to || undefined })
-      setReport({ group: 3, rows: res.rows || [], meta: { customer: customerLabel(), from: from || 'ابتدا', to: to || 'آج تک' } })
+      const rows = res.rows || []
+      // Fetch each parchi's saved snapshot ONCE, so a receipt can be classified as
+      // نقد / ادھار / لیب / وصولی and its لیب figures rebuilt (getReport rows carry
+      // kind/category but NOT lab detail — that lives in the receipt payload).
+      const rnos = [...new Set(rows.map((r) => r.receipt_no).filter((n) => n != null))]
+      const snapshots = {}
+      if (hasApi && rnos.length) {
+        const fetched = await Promise.all(rnos.map((n) => window.api.getReceiptByNo(n).catch(() => null)))
+        rnos.forEach((n, i) => { snapshots[n] = fetched[i] })
+      }
+      const parchis = groupParchis(rows, snapshots, rates, hasApi)
+      setReport({ group: 3, rows, parchis, meta: { customer: customerLabel(), from: from || 'ابتدا', to: to || 'آج تک' } })
     } else if (d.type === 'kacha') {
       // کچا سونا لیا — per-customer aggregate (no customer filter = all customers).
       if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
@@ -376,38 +373,6 @@ function ThermalTable({ report, rows }) {
   )
 }
 
-function StatementThermal({ rows }) {
-  const t = { goldGive: 0, goldTake: 0, cashGive: 0, cashTake: 0 }
-  for (const r of rows) {
-    if (r.category === 'gold_give') t.goldGive += Number(r.khalis_sona) || 0
-    if (r.category === 'gold_take') t.goldTake += Number(r.khalis_sona) || 0
-    if (r.category === 'cash_give') t.cashGive += Number(r.cash_amount) || 0
-    if (r.category === 'cash_take') t.cashTake += Number(r.cash_amount) || 0
-  }
-  return (
-    <div className="text-[10px] flex flex-col gap-1">
-      {rows.map((r) => {
-        const gold = r.category === 'gold_give' || r.category === 'gold_take'
-        return (
-          <div key={r.id} className="border-b border-black pb-0.5">
-            <div className="flex justify-between"><span className="urdu font-bold">پرچی {r.receipt_no}</span><span dir="ltr">{isoToDisp(r.date)}</span></div>
-            <div className="flex justify-between">
-              <span className="urdu">{CAT_LABEL[r.category] || r.category} ({r.direction === 'out' ? 'دیا' : 'لیا'})</span>
-              <span dir="ltr" className="tabular-nums font-bold">{gold ? `${fmtNum(r.khalis_sona)}g` : fmtMoney(r.cash_amount)}</span>
-            </div>
-          </div>
-        )
-      })}
-      <div className="border-t-2 border-black pt-1 flex flex-col gap-0.5 font-bold">
-        <div className="flex justify-between"><span className="urdu">کل تیزابی دیا</span><span dir="ltr">{fmtNum(t.goldGive)}g</span></div>
-        <div className="flex justify-between"><span className="urdu">کل تیزابی لیا</span><span dir="ltr">{fmtNum(t.goldTake)}g</span></div>
-        <div className="flex justify-between"><span className="urdu">کل رقم دی</span><span dir="ltr">{fmtMoney(t.cashGive)}</span></div>
-        <div className="flex justify-between"><span className="urdu">کل رقم لی</span><span dir="ltr">{fmtMoney(t.cashTake)}</span></div>
-      </div>
-    </div>
-  )
-}
-
 // Full thermal receipt: compact header + table (group 1/2) or statement (group 3).
 function ThermalReceipt({ report }) {
   const isStatement = report.group === 3
@@ -425,7 +390,7 @@ function ThermalReceipt({ report }) {
       {rows.length === 0 ? (
         <div className="urdu text-center text-[10px] py-2">کوئی اندراج نہیں</div>
       ) : isStatement ? (
-        <StatementThermal rows={rows} />
+        <StatementView parchis={report.parchis || []} rows={rows} thermal />
       ) : (
         <ThermalTable report={report} rows={rows} />
       )}
@@ -510,7 +475,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
             {report.rows.length === 0 ? (
               <div className="urdu text-center text-gray-400 py-12 text-[13px]">اس فلٹر پر کوئی لین دین نہیں ملا</div>
             ) : isStatement ? (
-              <StatementView rows={report.rows} onEdit={onEdit} onDelete={onDelete} />
+              <StatementView parchis={report.parchis} rows={report.rows} />
             ) : (
               <TableReport columns={report.columns} rows={report.rows} total={total} gold={report.gold} canRowEdit={canRowEdit} onEdit={onEdit} onDelete={onDelete} />
             )}
@@ -614,23 +579,199 @@ function KachaReport({ report }) {
   )
 }
 
-function StatementView({ rows, onEdit, onDelete }) {
-  const t = { goldGive: 0, goldTake: 0, cashGive: 0, cashTake: 0, netGold: 0, netCash: 0 }
-  for (const r of rows) {
+// ═══ STATEMENT GROUPING — one block PER PARCHI (receipt_no), each carrying the
+// full receipt(s) that parchi holds: نقد (cash) / ادھار (credit) / لیب (lab) /
+// وصولی (recovery). A parchi can be several at once, so every applicable
+// sub-receipt is rendered. Ledger money/gold (subtotals + grand total) come from
+// the transaction rows so the grand total STILL equals getReport's totals; the
+// saved payload is used only to classify type and rebuild the lab figures. ═══
+
+const UDHAR_CATS = ['gold_give', 'gold_take', 'cash_give', 'cash_take']
+const NAQAD_CATS = ['gold_sell', 'gold_buy']
+
+// Sign convention IDENTICAL to getReport / getCustomerLedger: out = +1 (customer
+// owes us), in = −1. Used for both the per-parchi subtotal and the grand total.
+const statementTotals = (rows) => {
+  const t = { goldGive: 0, goldTake: 0, cashGive: 0, cashTake: 0, netGold: 0, netCash: 0, hasGold: false, hasCash: false }
+  for (const r of rows || []) {
     const sign = r.direction === 'out' ? 1 : -1
     if (r.category === 'gold_give') t.goldGive += Number(r.khalis_sona) || 0
     if (r.category === 'gold_take') t.goldTake += Number(r.khalis_sona) || 0
     if (r.category === 'cash_give') t.cashGive += Number(r.cash_amount) || 0
     if (r.category === 'cash_take') t.cashTake += Number(r.cash_amount) || 0
-    if (r.category === 'gold_give' || r.category === 'gold_take') t.netGold += sign * (Number(r.khalis_sona) || 0)
-    if (r.category === 'cash_give' || r.category === 'cash_take') t.netCash += sign * (Number(r.cash_amount) || 0)
+    if (r.category === 'gold_give' || r.category === 'gold_take') { t.netGold += sign * (Number(r.khalis_sona) || 0); t.hasGold = true }
+    if (r.category === 'cash_give' || r.category === 'cash_take') { t.netCash += sign * (Number(r.cash_amount) || 0); t.hasCash = true }
   }
+  return t
+}
+
+const entryHasValue = (e) => e && String(e.wazan ?? '').trim() !== '' && Number(e.wazan) > 0
+
+// Rebuild the لیب رسید figures for a saved parchi from its payload snapshot —
+// the EXACT computeTable + buildLabReceipt path the main screen uses, so the
+// numbers match. Returns { lab, row } for the پرچی-ticked purity row, or null
+// when this parchi carried no lab (no ticked row with real charges).
+const labFromPayload = (payload, baseRates = {}) => {
+  if (!payload || !payload.input || Number(payload.input.wazan) <= 0) return null
+  // Merge the saved rates over the current (base) rates — SAME as buildParchiCtx —
+  // so a payload missing a rate field falls back to the live rate instead of
+  // buildLabReceipt's hardcoded default (which would give a wrong ریٹ/ٹوٹل/بقایا).
+  const rates = { ...(baseRates || {}), ...(payload.rates || {}) }
+  const table = computeTable(payload.input, rates, payload.overrides || {})
+  // Same selection as the main screen (LeftReceipts): پرچی-ticked row, else Standard.
+  const row = table.find((r) => r.parchi) || table[2]
+  if (!row || !(Number(row.labCharges) > 0)) return null
+  return { lab: buildLabReceipt(row, payload.input, rates), row }
+}
+
+// Reconstruct the exact `ctx` the main-screen receipt panels consume, from a
+// saved parchi's snapshot (payload + its transaction rows). This is the SAME
+// reconstruction store.jsx loadReceipt does — nقد/ادھار entries are rebuilt from
+// the transaction ROWS (source of truth), the purity rows from input+overrides+
+// rates — but assembled into a plain object instead of React state, so the real
+// <CashReceipt/> <CreditReceipt/> <LabReceipt/> <RecoveryReceipt/> render the
+// parchi EXACTLY as it looks on the main page. No formula is touched.
+const blankGold = () => ({ wazan: '', point: '100', rate: '' })
+function buildParchiCtx({ payload, snapRows, receiptNo, baseRates, hasApi, ledger }) {
+  const rates = { ...(baseRates || {}), ...(payload.rates || {}) }
+  const input = payload.input || { wazan: '', malawat: '' }
+  const overrides = payload.overrides || {}
+  const computedRows = computeTable(input, rates, overrides)
+
+  let cashSell = blankGold(), cashBuy = blankGold(), udharGive = blankGold(), udharTake = blankGold()
+  let udharCashGive = '', udharCashTake = ''
+  const asGold = (r) => ({
+    wazan: r.sona_wazan != null ? String(r.sona_wazan) : '',
+    point: r.point != null ? String(r.point) : '100',
+    rate: r.rate ? String(r.rate) : ''
+  })
+  const rws = Array.isArray(snapRows) ? snapRows : []
+  if (rws.length) {
+    for (const r of rws) {
+      if (r.category === 'gold_sell') cashSell = asGold(r)
+      else if (r.category === 'gold_buy') cashBuy = asGold(r)
+      else if (r.category === 'gold_give') udharGive = asGold(r)
+      else if (r.category === 'gold_take') udharTake = asGold(r)
+      else if (r.category === 'cash_give') udharCashGive = r.cash_amount != null ? String(r.cash_amount) : ''
+      else if (r.category === 'cash_take') udharCashTake = r.cash_amount != null ? String(r.cash_amount) : ''
+    }
+  } else if (payload.entries) {
+    const e = payload.entries
+    cashSell = e.cashSell ?? blankGold(); cashBuy = e.cashBuy ?? blankGold()
+    udharGive = e.udharGive ?? blankGold(); udharTake = e.udharTake ?? blankGold()
+    udharCashGive = e.udharCashGive ?? ''; udharCashTake = e.udharCashTake ?? ''
+  }
+
+  const pc = payload.customer || {}
+  const customer = { id: pc.id ?? null, name: pc.name ?? '', mobile: pc.mobile ?? '' }
+  const sb = payload.sidebar || {}
+  return {
+    customer, receiptNo, rates, input, overrides, computedRows,
+    cashSell, cashBuy, udharGive, udharTake, udharCashGive, udharCashTake,
+    udharComment: payload.comment ?? '',
+    ujratKaSona: sb.ujratKaSona != null ? sb.ujratKaSona : true,
+    sonaDiya: sb.sonaDiya ?? '', cashDiya: sb.cashDiya ?? '',
+    savedFlags: { naqad: true, udhar: true, lab: true, wasooli: true },
+    // A saved (not brand-new) parchi: openReceiptNo === receiptNo makes
+    // CreditReceipt read the ledger balance instead of re-adding live entries —
+    // identical to reopening the parchi on the main screen.
+    openReceiptNo: receiptNo,
+    // This parchi's OWN running (cumulative) ledger balance — so the ادھار receipt
+    // shows this parchi's باقی دینا/لینا, not the customer's grand total.
+    ledger,
+    hasApi, bump: 0, refresh: () => {}, printSlips: () => {}
+  }
+}
+
+// Group the flat transaction rows by receipt_no (rows arrive ordered by date,
+// receipt_no, id — first-seen order is preserved). `snapshots[rno]` is the
+// getReceiptByNo result for that parchi (may be null for a very old row).
+function groupParchis(rows, snapshots = {}, baseRates = {}, hasApi = false) {
+  const order = []
+  const map = new Map()
+  for (const r of rows || []) {
+    const key = r.receipt_no
+    if (key == null) continue
+    if (!map.has(key)) { map.set(key, []); order.push(key) }
+    map.get(key).push(r)
+  }
+  // Running (cumulative) ledger balance PER CUSTOMER, accumulated in chronological
+  // order (rows arrive date/receipt-ordered). Each parchi is given the balance
+  // THROUGH itself — same sign convention as getCustomerLedger — so its ادھار
+  // receipt shows that parchi's own باقی دینا/لینا instead of the grand total.
+  const acc = new Map() // customer_id -> { gold, cash }
+  return order.map((rno) => {
+    const prows = map.get(rno)
+    const snap = snapshots[rno] || null
+    const payload = (snap && snap.payload) || {}
+    const snapRows = (snap && snap.rows) || prows
+    const entries = payload.entries || {}
+    const first = prows[0]
+    const pnet = statementTotals(prows)
+    const cid = first.customer_id
+    const a = acc.get(cid) || { gold: 0, cash: 0 }
+    a.gold += pnet.netGold
+    a.cash += pnet.netCash
+    acc.set(cid, a)
+    const ledger = { balance_gold: a.gold, balance_cash: a.cash }
+    const naqadRows = prows.filter((r) => NAQAD_CATS.includes(r.category))
+    const udharRows = prows.filter((r) => UDHAR_CATS.includes(r.category))
+    const kachaRows = prows.filter((r) => r.category === 'kacha_gold_take')
+    const labInfo = labFromPayload(payload, baseRates)
+    const sidebar = payload.sidebar || null
+    const types = {
+      naqad: naqadRows.length > 0 || entryHasValue(entries.cashSell) || entryHasValue(entries.cashBuy),
+      udhar: udharRows.length > 0 ||
+        entryHasValue(entries.udharGive) || entryHasValue(entries.udharTake) ||
+        String(entries.udharCashGive ?? '').trim() !== '' || String(entries.udharCashTake ?? '').trim() !== '',
+      lab: !!labInfo,
+      // وصولی accompanies the lab flow (same as the main screen's LeftReceipts).
+      wasooli: !!labInfo
+    }
+    const ctx = buildParchiCtx({ payload, snapRows, receiptNo: rno, baseRates, hasApi, ledger })
+    return {
+      receipt_no: rno,
+      date: first.date,
+      customer_name: first.customer_name,
+      rows: prows,
+      naqadRows,
+      udharRows,
+      kachaRows,
+      lab: labInfo ? labInfo.lab : null,
+      labRow: labInfo ? labInfo.row : null,
+      sidebar,
+      types,
+      ctx
+    }
+  })
+}
+
+const TYPE_BADGES = [
+  { key: 'naqad', label: 'نقد کی رسید', cls: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+  { key: 'udhar', label: 'ادھار کی رسید', cls: 'bg-blue-100 text-blue-800 border-blue-300' },
+  { key: 'lab', label: 'لیب کی رسید', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
+  { key: 'wasooli', label: 'وصولی', cls: 'bg-violet-100 text-violet-800 border-violet-300' }
+]
+function TypeBadges({ types, small }) {
+  return (
+    <span className="flex flex-wrap gap-1">
+      {TYPE_BADGES.filter((b) => types[b.key]).map((b) => (
+        <span key={b.key} className={`urdu font-bold border rounded ${small ? 'text-[8px] px-1 py-0' : 'text-[10px] px-1.5 py-0.5'} ${b.cls}`}>{b.label}</span>
+      ))}
+    </span>
+  )
+}
+
+function StatementView({ parchis = [], rows = [], thermal = false }) {
+  const t = statementTotals(rows)
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-3">{rows.map((r) => <ParchiCard key={r.id} r={r} onEdit={onEdit} onDelete={onDelete} />)}</div>
+      <div className="flex flex-col gap-3">
+        {parchis.map((p) => <ParchiBlock key={p.receipt_no} p={p} thermal={thermal} />)}
+      </div>
       <div className="mt-2 border-2 border-slate-300 rounded-lg bg-white overflow-hidden">
         <div className="urdu font-bold text-[13px] bg-slate-100 px-3 py-2 border-b border-slate-200 text-gray-800">کل حساب (اس عرصے کا)</div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-4 py-3 text-[12.5px] urdu">
+        <div className={`grid ${thermal ? 'grid-cols-1' : 'grid-cols-2'} gap-x-6 gap-y-1 px-4 py-3 text-[12.5px] urdu`}>
           <StRow k="کل تیزابی دیا" v={`${fmtNum(t.goldGive)} گرام`} />
           <StRow k="کل تیزابی لیا" v={`${fmtNum(t.goldTake)} گرام`} />
           <StRow k="کل رقم دی" v={fmtMoney(t.cashGive)} />
@@ -650,39 +791,87 @@ function StRow({ k, v, bold }) {
   )
 }
 
-function ParchiCard({ r, onEdit, onDelete }) {
-  const isGold = r.category === 'gold_give' || r.category === 'gold_take'
-  const isCash = r.category === 'cash_give' || r.category === 'cash_take'
-  const tmr = gramsToTMR(Number(r.khalis_sona) || 0)
-  const typeLabel = CAT_LABEL[r.category] || r.category
-  return (
-    <div className="border border-gray-300 rounded-lg bg-white shadow-sm overflow-hidden text-[12px]">
-      <div className="flex items-center justify-between bg-slate-50 border-b border-gray-200 px-3 py-1.5">
-        <span className="urdu font-bold text-gray-800">پرچی نمبر {r.receipt_no}</span>
-        <span className="flex items-center gap-2">
-          <span className="tabular-nums text-gray-500" dir="ltr">{r.date}</span>
-          <span className="no-print inline-flex gap-1">
-            <button type="button" title="ترمیم" onClick={() => onEdit(r)} className="w-6 h-6 rounded hover:bg-blue-100 text-blue-700">✏️</button>
-            <button type="button" title="حذف" onClick={() => onDelete(r)} className="w-6 h-6 rounded hover:bg-red-100 text-red-600">🗑</button>
-          </span>
-        </span>
+// The parchi's ACTUAL receipt panels — the SAME components the main page renders
+// (نقد کی رسید / ادھار کی رسید / لیب رسید / وصولی رسید), fed the parchi's own
+// reconstructed ctx so every figure matches. Each receipt panel is fixed-size
+// (its internal flex rows fill the tile height, exactly like the main screen).
+// A parchi that is several types at once shows every applicable receipt. Wide
+// view tiles them; the 80mm thermal roll stacks them full-width.
+// Each receipt panel is built for a fixed DESIGN width (the same ~341px it has on
+// the main screen), so its internal grids (esp. the لیب رسید's گرام|ملی گرام|تولہ|
+// ماشہ|رتی columns) never reflow/merge. We render at that width and SCALE the panel
+// down to the tile width — wide view = full size (scale 1), 80mm thermal = scaled to
+// fit the roll. This is the same "render at design size, transform-scale to fit"
+// trick FitScreen uses for the main screen.
+const RECEIPT_DESIGN_W = 341 // = main-screen لیب/وصولی panel width (Left column / 2)
+const THERMAL_TILE_PX = Math.round(THERMAL_WIDTH_MM * 96 / 25.4) // 80mm ≈ 302px
+const WIDE_TILE_PX = Math.round(RECEIPT_DESIGN_W * 0.75) // ~256px — shrink so several fit the row
+
+function ParchiReceipts({ p, thermal }) {
+  const ctx = p.ctx
+  // Always render each panel at its full DESIGN width (341px) so the internal grids
+  // (esp. the لیب رسید columns) never collapse, then SCALE the whole thing DOWN to a
+  // smaller tile so the receipts fit the statement space easily.
+  const outerW = thermal ? THERMAL_TILE_PX : WIDE_TILE_PX
+  const scale = outerW / RECEIPT_DESIGN_W
+  // Render the panel at DESIGN width/height, then scale the whole thing to the tile.
+  // flexShrink:0 so the tile never shrinks below the design width in a flex row
+  // (which would re-collapse the لیب grid columns).
+  const Tile = ({ h, children }) => (
+    <div style={{ width: outerW, height: h * scale, overflow: 'hidden', breakInside: 'avoid', flexShrink: 0 }}>
+      <div style={{ width: RECEIPT_DESIGN_W, height: h, transform: scale !== 1 ? `scale(${scale})` : undefined, transformOrigin: 'top left' }}>
+        {children}
       </div>
-      <div className="px-3 py-2 flex flex-col gap-1" dir="rtl">
-        <div className="flex justify-between"><span className="urdu text-gray-500">نام</span><span className="urdu font-semibold">{r.customer_name || '-'}</span></div>
-        <div className="flex justify-between"><span className="urdu text-gray-500">قسم</span><span className={`urdu font-semibold ${r.direction === 'out' ? 'text-rose-600' : 'text-emerald-600'}`}>{typeLabel} ({r.direction === 'out' ? 'دیا' : 'لیا'})</span></div>
-        {isGold && (
-          <div className="mt-1 border border-gray-200 rounded-md overflow-hidden">
-            <div className="grid grid-cols-4 bg-slate-100 text-[10px] urdu text-gray-600 text-center">
-              <div className="py-0.5 border-l border-gray-200">تولہ</div><div className="py-0.5 border-l border-gray-200">ماشہ</div><div className="py-0.5 border-l border-gray-200">رتی</div><div className="py-0.5">گرام</div>
-            </div>
-            <div className="grid grid-cols-4 text-[11px] tabular-nums text-center">
-              <div className="py-0.5 border-l border-gray-100">{tmr.tola}</div><div className="py-0.5 border-l border-gray-100">{tmr.masha}</div><div className="py-0.5 border-l border-gray-100">{fmtNum(tmr.ratti, 2)}</div><div className="py-0.5">{fmtNum(wazanVal(r))}</div>
-            </div>
-            <div className="flex justify-between px-2 py-1 bg-amber-50 border-t border-amber-200"><span className="urdu text-gray-600">خالص سونا</span><span className="tabular-nums font-bold text-amber-800" dir="ltr">{fmtNum(r.khalis_sona)} گرام</span></div>
-          </div>
-        )}
-        {isCash && <div className="flex justify-between mt-1 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-md"><span className="urdu text-gray-600">رقم</span><span className="tabular-nums font-bold text-amber-800" dir="ltr">{fmtMoney(r.cash_amount)}</span></div>}
-        {r.note ? <div className="flex justify-between"><span className="urdu text-gray-500">نوٹ</span><span className="urdu text-gray-600">{r.note}</span></div> : null}
+    </div>
+  )
+  const any = p.types.naqad || p.types.udhar || p.types.lab || p.types.wasooli
+  // Design height = the receipts-band height each panel has on the main screen
+  // (~456px); anything shorter clips the panel's bottom rows (e.g. the لیب تاریخ/رتی row).
+  const DH = 456
+  return (
+    <div className={`flex ${thermal ? 'flex-col' : 'flex-row flex-wrap'} gap-2 justify-start`} dir="ltr">
+      {p.types.naqad && <Tile h={DH}><CashReceipt ctx={ctx} embed /></Tile>}
+      {p.types.udhar && <Tile h={DH}><CreditReceipt ctx={ctx} embed /></Tile>}
+      {p.types.lab && <Tile h={DH}><LabReceipt row={p.labRow} lab={p.lab} ctx={ctx} embed /></Tile>}
+      {p.types.wasooli && <Tile h={DH}><RecoveryReceipt row={p.labRow} lab={p.lab} ctx={ctx} embed /></Tile>}
+      {/* No main-page receipt exists for a bare raw-gold intake — show its figure
+          so nothing is lost, without mislabeling it. */}
+      {!any && p.kachaRows.map((r) => (
+        <div key={r.id} className="border border-gray-300 rounded-md bg-white p-2 text-[11.5px]" dir="rtl" style={{ width: outerW }}>
+          <div className="urdu font-bold text-gray-700 border-b border-gray-200 pb-1 mb-1">کچا سونا لیا</div>
+          <div className="flex justify-between"><span className="urdu text-gray-500">کچا سونا (کانٹے پر)</span><span className="tabular-nums" dir="ltr">{fmtNum(r.sona_wazan)} گرام</span></div>
+          {Number(r.khalis_sona) > 0 && <div className="flex justify-between"><span className="urdu text-gray-500">خالص سونا</span><span className="tabular-nums" dir="ltr">{fmtNum(r.khalis_sona)} گرام</span></div>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// One PARCHI = one receipt_no. Header (number + type badges + date), then the
+// real receipt panel(s) this parchi carries, then this parchi's own subtotal.
+function ParchiBlock({ p, thermal }) {
+  const sub = statementTotals(p.rows)
+  return (
+    <div className="border-2 border-slate-300 rounded-lg bg-white overflow-hidden text-[12px]">
+      <div className="flex items-center justify-between gap-2 bg-slate-100 border-b border-slate-200 px-3 py-2" dir="rtl">
+        <span className="urdu font-bold text-gray-800 whitespace-nowrap">پرچی نمبر {p.receipt_no}</span>
+        <TypeBadges types={p.types} small={thermal} />
+        <span className="tabular-nums text-gray-500 whitespace-nowrap" dir="ltr">{isoToDisp(p.date)}</span>
+      </div>
+      <div className="px-3 py-2 flex flex-col gap-2">
+        <div className="flex justify-between text-[11.5px]" dir="rtl"><span className="urdu text-gray-500">نام</span><span className="urdu font-semibold">{p.customer_name || '-'}</span></div>
+
+        <ParchiReceipts p={p} thermal={thermal} />
+
+        {/* Per-parchi subtotal — same sign logic as the grand total, scoped to
+            this parchi's ledger rows. */}
+        <div className="mt-1 border-t border-dashed border-slate-300 pt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11.5px] urdu font-semibold justify-start text-amber-800" dir="rtl">
+          <span className="text-gray-500">اس پرچی کا حساب :</span>
+          {sub.hasGold && <span>خالص تیزابی <b className="tabular-nums" dir="ltr">{fmtNum(sub.netGold)}</b> گرام</span>}
+          {sub.hasCash && <span>خالص رقم <b className="tabular-nums" dir="ltr">{fmtMoney(sub.netCash)}</b></span>}
+          {p.lab && <span>لیب باقی <b className="tabular-nums" dir="ltr">{fmtMoney(p.lab.baqi)}</b></span>}
+          {!sub.hasGold && !sub.hasCash && !p.lab && <span className="text-gray-400">—</span>}
+        </div>
       </div>
     </div>
   )

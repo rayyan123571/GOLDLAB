@@ -44,5 +44,7 @@ contextBridge.exposeInMainWorld('api', {
   listCustomersWithBalances: () => call('listCustomersWithBalances'),
   getDaybook: (date) => call('getDaybook', date),
   listDates: () => call('listDates'),
-  getShopTotals: () => call('getShopTotals')
+  getShopTotals: () => call('getShopTotals'),
+  // Quit the whole app (the top-left red "X" button calls this).
+  quitApp: () => ipcRenderer.invoke('quit-app')
 })

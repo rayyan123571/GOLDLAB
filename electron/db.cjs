@@ -18,7 +18,15 @@ let saveTimer = null
 function locateFile(file) {
   // sql.js ships sql-wasm.wasm next to its dist entry point.
   const dir = path.dirname(require.resolve('sql.js'))
-  return path.join(dir, file)
+  const full = path.join(dir, file)
+  // In a PACKAGED build the .wasm is asarUnpack'd (see electron-builder "asarUnpack"),
+  // so it physically lives under `app.asar.unpacked`, NOT inside the read-only
+  // `app.asar` archive that require.resolve() points at. Remap so sql.js reads the
+  // real on-disk file. In dev there is no "app.asar" segment, so the path is
+  // returned unchanged. This only changes WHERE the wasm is read from — no DB
+  // query, schema, or behaviour is affected.
+  const marker = `app.asar${path.sep}`
+  return full.includes(marker) ? full.replace(marker, `app.asar.unpacked${path.sep}`) : full
 }
 
 function scheduleSave() {
@@ -912,7 +920,12 @@ const api = {
     for (const t of txns) {
       // کچا سونا accumulates ONLY the raw scale-weight of kacha entries and feeds
       // no other total; conversely it must not pollute تیزابی/کیش, so skip it there.
-      if (t.category === 'kacha_gold_take') { kacha += t.sona_wazan || 0; continue }
+      if (t.category === 'kacha_gold_take') {
+        kacha += t.sona_wazan || 0
+        gold -= t.sona_diya || 0 // refined gold handed out for the kacha → reduces تیزابی
+        cash -= t.cash_diya || 0 // cash paid out for the kacha → reduces کیش
+        continue
+      }
       const goldSign = t.direction === 'in' ? 1 : -1
       gold += goldSign * (t.khalis_sona || 0)
       // cash: money flowing into shop minus out

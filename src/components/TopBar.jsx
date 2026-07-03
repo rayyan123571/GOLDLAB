@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react'
 import { useApp } from '../state/store.jsx'
+import { useDateMask } from './DateField.jsx'
 
 function RateField({ label, value, onChange, w = 'w-20', numeric }) {
   // Numeric rate fields display with thousand separators (9000 -> 9,000) while
@@ -21,7 +22,7 @@ function RateField({ label, value, onChange, w = 'w-20', numeric }) {
 }
 
 export default function TopBar() {
-  const { rates, saveRates, setScreen, openUdhar, closeUdhar, openAkhrajat, closeAkhrajat, screen, udharOpen, akhrajatOpen } = useApp()
+  const { rates, saveRates, setScreen, openUdhar, closeUdhar, openAkhrajat, closeAkhrajat, screen, udharOpen, akhrajatOpen, udharComment, setUdharComment } = useApp()
 
   // Exactly one tab is active at a time. ادھار / اخراجات are modals, so an open
   // modal wins the highlight; otherwise روزنامچہ = 'daybook'. لیب is no longer a
@@ -50,17 +51,9 @@ export default function TopBar() {
 
   const upd = (k) => (v) => saveRates({ [k]: v })
 
-  // Display date as dd/mm/yyyy from yyyy-mm-dd
-  const dispDate = (() => {
-    const p = String(rates.date || '').split('-')
-    return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : rates.date
-  })()
-
-  const onDate = (v) => {
-    const p = String(v).split('/')
-    if (p.length === 3) saveRates({ date: `${p[2]}-${p[1]}-${p[0]}` })
-    else saveRates({ date: v })
-  }
+  // تاریخ — edit-in-place dd/mm/yyyy mask bound to the persisted receipt date.
+  // Saves to rates.date only on a full valid date (or '' when cleared).
+  const dateMask = useDateMask(rates.date, (v) => saveRates({ date: v }))
 
   return (
     <div dir="rtl" className="flex items-stretch gap-1 bg-panel border-b border-line px-1 py-1 h-[46px] relative">
@@ -80,13 +73,35 @@ export default function TopBar() {
         </button>
       </div>
 
-      {/* wide free name box */}
-      <input className="inp flex-1 min-w-[120px]" />
+      {/* wide free name box — the parchi comment (e.g. name of who came to collect);
+          shown next to پوائنٹ in the ادھار receipt and saved with the parchi. */}
+      <input
+        className="inp flex-1 min-w-[120px] text-[17px] font-bold"
+        value={udharComment}
+        onChange={(e) => setUdharComment(e.target.value)}
+        placeholder="نام / تبصرہ"
+      />
 
       <RateField label="ریٹ تیزابی فی تولہ" value={rates.rate_tezabi_tola} onChange={upd('rate_tezabi_tola')} w="w-28" numeric />
-      <RateField label="تاریخ" value={dispDate} onChange={onDate} w="w-32" />
+      {/* تاریخ — edit-in-place date mask (same behavior as the Udhar/اخراجات dates). */}
+      <div className="flex items-stretch">
+        <div className="hdr urdu px-2 whitespace-nowrap text-[15px] font-bold">تاریخ</div>
+        <input
+          ref={dateMask.textRef}
+          value={dateMask.text}
+          onChange={dateMask.onChange}
+          placeholder="dd/mm/yyyy"
+          dir="ltr"
+          className="inp text-center w-32 text-[17px] font-bold leading-none"
+        />
+      </div>
 
-      <button className="bg-redX text-white font-bold w-7 flex items-center justify-center border border-line">
+      <button
+        type="button"
+        title="ایپ بند کریں — Quit"
+        onClick={() => window.api && window.api.quitApp && window.api.quitApp()}
+        className="bg-redX text-white font-bold w-7 flex items-center justify-center border border-line hover:brightness-110 active:brightness-90"
+      >
         X
       </button>
     </div>

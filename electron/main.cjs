@@ -13,11 +13,37 @@ function createWindow() {
     minWidth: 1200,
     minHeight: 720,
     title: 'چوہدری گولڈ لیبارٹری — Chaudhry Gold Laboratory',
+    // Frameless TRUE full-screen: covers the whole screen (Windows taskbar hidden),
+    // no title bar. show:false + ready-to-show avoids a white flash. The in-app red
+    // "X" (window.api.quitApp) and Alt+F4 are the ways out; Esc exits full-screen so
+    // the user is never trapped without a taskbar.
+    fullscreen: true,
+    frame: false,
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false
+    }
+  })
+
+  win.once('ready-to-show', () => {
+    win.setFullScreen(true) // ensure the taskbar is actually covered
+    win.show()
+  })
+
+  // Escape hatches (a frameless full-screen window has no title bar, so these MUST
+  // work): Alt+F4 quits, Esc drops out of full-screen so the taskbar is reachable.
+  // We explicitly handle Alt+F4 because a frameless/full-screen window doesn't
+  // always receive the default WM_CLOSE reliably.
+  win.webContents.on('before-input-event', (evt, input) => {
+    if (input.type !== 'keyDown') return
+    if (input.alt && (input.key === 'F4' || input.code === 'F4')) {
+      evt.preventDefault()
+      app.quit()
+    } else if (input.key === 'Escape' && win && win.isFullScreen()) {
+      win.setFullScreen(false)
     }
   })
 
@@ -35,6 +61,10 @@ ipcMain.handle('db', async (_evt, { fn, args }) => {
   }
   return db.api[fn](...(args || []))
 })
+
+// Quit the whole app — wired to the in-app red "X" button (window.api.quitApp).
+// db is flushed in before-quit / window-all-closed, so no data is lost.
+ipcMain.handle('quit-app', () => { app.quit() })
 
 // Export the CURRENT report to PDF (Part 3). The renderer flips a body class so
 // only the report (`.print-area`) is visible; @media print CSS drives both the

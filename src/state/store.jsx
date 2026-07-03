@@ -65,13 +65,10 @@ export function AppProvider({ children }) {
   const [totals, setTotals] = useState({ cash: 0, tezabi_sona: 0, parchun: 0 })
   const [bump, setBump] = useState(0)
 
-  // Bottom-bar "کچا سونا" is a DISPLAY-ONLY accumulator. Each parchi Save with the
-  // sidebar "پرچوں لیا" checkbox TICKED adds that parchi's وزن کانٹے پر (input.wazan)
-  // — and nothing else — to this on-screen number. It resets on a date change and
-  // via the manual reset button. It NEVER reads or writes the DB or the کچا سونا
-  // لیا report (that report is fed only by کچا سونا لیا transactions, unchanged).
-  const [kachaDisplay, setKachaDisplay] = useState(0)
-  const kachaDateRef = useRef(null)
+  // Bottom-bar "کچا سونا" is DERIVED from the DB: getShopTotals returns kacha_sona =
+  // Σ sona_wazan over kacha_gold_take transactions, loaded into `totals.kacha_sona`.
+  // So it reflects the actually-saved kacha parchis (one row each via replaceReceipt)
+  // — counted once per parchi, and it drops when a parchi's kacha entry is removed.
 
   // Bottom-bar "کیش" is DISPLAY-ONLY reduced by TODAY'S expenses: shown cash =
   // totals.cash − (sum of today's کھرچہ). Expenses live in their own table and
@@ -100,6 +97,10 @@ export function AppProvider({ children }) {
   const [udharTake, setUdharTake] = useState({ wazan: '', point: '100', rate: '' })
   const [udharCashGive, setUdharCashGive] = useState('')
   const [udharCashTake, setUdharCashTake] = useState('')
+  // Free-text note saved with the parchi — typically the NAME of whoever came to
+  // collect on the account holder's behalf. Shown only in the ادھار receipt
+  // (next to پوائنٹ). Persisted in the receipt payload (no DB column).
+  const [udharComment, setUdharComment] = useState('')
 
   // "Saved" confirmation ticks under each of the four receipts. Auto-set true
   // after a successful DB save of that section; cleared on New / reset.
@@ -132,26 +133,37 @@ export function AppProvider({ children }) {
     window.api.getShopTotals().then(setTotals)
   }, [bump])
 
+  // Parchi nav boundary flags — whether an older/newer SAVED parchi exists relative
+  // to the one open. Recomputes when the open parchi changes or the saved set
+  // changes (bump). Drives DISABLING the ◀ (Prev) / ▶ (Next) nav buttons at edges.
+  const [receiptBounds, setReceiptBounds] = useState({ hasPrev: false, hasNext: false })
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      if (!hasApi) { setReceiptBounds({ hasPrev: false, hasNext: false }); return }
+      const first = await window.api.getFirstReceiptNo()
+      const last = await window.api.getLastReceiptNo()
+      const hasAny = first != null
+      let hasPrev, hasNext
+      if (openReceiptNo == null) {
+        // Composing a NEW unsaved parchi = newest position, at the end.
+        hasPrev = hasAny // can step back into the saved history
+        hasNext = false // nothing newer ahead
+      } else {
+        hasPrev = openReceiptNo > first // an older saved parchi exists
+        hasNext = openReceiptNo < last // a newer saved parchi exists
+      }
+      if (alive) setReceiptBounds({ hasPrev, hasNext })
+    })()
+    return () => { alive = false }
+  }, [openReceiptNo, bump])
+
   // Today's expenses total (read-only) — recomputed on every write (bump, e.g.
   // after adding an expense) and on a date change. Reduces ONLY the cash DISPLAY.
   useEffect(() => {
     if (!hasApi) return
     window.api.getExpensesTotalForDate(rates.date).then((s) => setExpensesToday(Number(s) || 0))
   }, [rates.date, bump])
-
-  // Date change → reset the کچا سونا display counter for the new day (display-only).
-  // Keyed on rates.date ONLY (never `bump`), so a normal save doesn't wipe the
-  // running accumulator — only an actual date change does.
-  useEffect(() => {
-    if (kachaDateRef.current == null) { kachaDateRef.current = rates.date; return }
-    if (kachaDateRef.current !== rates.date) {
-      kachaDateRef.current = rates.date
-      setKachaDisplay(0)
-    }
-  }, [rates.date])
-
-  // DISPLAY-ONLY manual reset — zeros the on-screen number; DB/report untouched.
-  const resetKachaDisplay = useCallback(() => setKachaDisplay(0), [])
 
   // Bottom-bar cash DISPLAY = live cash figure − today's expenses (display-only;
   // the DB cash balance/ledger is never reduced by expenses).
@@ -176,34 +188,45 @@ export function AppProvider({ children }) {
     [input, rates, overrides]
   )
 
-  // PART 2 — سونا دیا ↔ کیش دیا two-way binding, using the EXISTING rate basis:
-  //   ratePerGram = selected purity row's rate (ریٹ فی تولہ) ÷ GRAMS_PER_TOLA
-  //   cash = gold × ratePerGram    gold = cash ÷ ratePerGram
-  // (Identical to LeftSidebar/saveParchi's cashForLeftover = gold × ratePerGram.)
-  // The selected row is the پرچی-ticked one, else Standard — same as the sidebar.
-  const sidebarRatePerGram = useCallback(() => {
+  // PART 2 — سونا دیا ↔ کیش دیا two-way binding as a SPLIT of the gold owed:
+  //   (سونا دیا) + (کیش دیا ÷ ratePerGram) = goldOwed  (سونا دینا ہے)
+  // The two boxes are COMPLEMENTS, not the same amount in two units — giving all
+  // the owed gold leaves کیش دیا at 0, and vice versa. goldOwed is computed exactly
+  // like LeftSidebar.jsx: selected row = پرچی-ticked else Standard; اجرت کا سونا on
+  // subtracts the labour's gold value (ujratGold) from the row's khalis.
+  const sidebarGoldCtx = useCallback(() => {
     const sel = computedRows.find((r) => r.parchi) || computedRows[2]
-    return sel ? (Number(sel.rate) || 0) / GRAMS_PER_TOLA : 0
-  }, [computedRows])
+    if (!sel) return { rpg: 0, goldOwed: 0 }
+    const rpg = (Number(sel.rate) || 0) / GRAMS_PER_TOLA
+    const ujratGold = rpg > 0 ? (Number(sel.labCharges) || 0) / rpg : 0
+    const goldOwed = ujratKaSona ? (Number(sel.khalisSona) || 0) - ujratGold
+                                 : (Number(sel.khalisSona) || 0)
+    return { rpg, goldOwed }
+  }, [computedRows, ujratKaSona])
 
   // These are called ONLY from the user's onChange on each input. They set the
   // SIBLING field's state directly (not via its onChange), so a programmatic
   // update never re-fires the other handler → no feedback loop.
+  // سونا دیا typed → کیش دیا = cash value of the gold STILL owed after this gold.
   const setSonaDiyaLinked = useCallback((v) => {
     setSonaDiya(v)
-    const rpg = sidebarRatePerGram()
+    const { rpg, goldOwed } = sidebarGoldCtx()
     const n = Number(v)
-    if (String(v).trim() === '' || !Number.isFinite(n)) setCashDiya('')
-    else if (rpg > 0) setCashDiya(String(round(n * rpg, 0)))
-  }, [sidebarRatePerGram])
+    if (String(v).trim() === '' || !Number.isFinite(n) || rpg <= 0) { setCashDiya(''); return }
+    const leftoverGold = Math.max(0, goldOwed - n)
+    const cash = round(leftoverGold * rpg, 0)
+    setCashDiya(cash > 0 ? String(cash) : '') // all in gold → cash blank/0
+  }, [sidebarGoldCtx])
 
+  // کیش دیا typed → سونا دیا = the gold STILL owed after the cash's gold-equivalent.
   const setCashDiyaLinked = useCallback((v) => {
     setCashDiya(v)
-    const rpg = sidebarRatePerGram()
+    const { rpg, goldOwed } = sidebarGoldCtx()
     const n = Number(v)
-    if (String(v).trim() === '' || !Number.isFinite(n)) setSonaDiya('')
-    else if (rpg > 0) setSonaDiya(String(round(n / rpg, 3)))
-  }, [sidebarRatePerGram])
+    if (String(v).trim() === '' || !Number.isFinite(n) || rpg <= 0) { setSonaDiya(''); return }
+    const remainingGold = Math.max(0, goldOwed - (n / rpg))
+    setSonaDiya(remainingGold > 0 ? String(round(remainingGold, 3)) : '')
+  }, [sidebarGoldCtx])
 
   // Auto-default: once a weight is entered and NO row is parchi-selected, tick
   // the Standard row. This is only a default — the moment any row is selected
@@ -380,6 +403,9 @@ export function AppProvider({ children }) {
       if (sb.sonaDiya != null) setSonaDiya(sb.sonaDiya)
       setCashDiya(sb.cashDiya != null ? sb.cashDiya : '')
     }
+
+    // ادھار comment (collector's name / note) — restore from the saved payload.
+    setUdharComment(payload.comment ?? '')
   }, [])
 
   // Fetch a saved parchi by receipt_no and load it via the shared loadReceipt
@@ -581,7 +607,8 @@ export function AppProvider({ children }) {
       overrides,
       rates,
       entries: { cashSell, cashBuy, udharGive, udharTake, udharCashGive, udharCashTake },
-      sidebar: { ujratKaSona, parchunLiya, sonaDiya, cashDiya }
+      sidebar: { ujratKaSona, parchunLiya, sonaDiya, cashDiya },
+      comment: udharComment
     }
 
     // UPSERT: atomically delete this receipt_no's prior rows then insert the
@@ -611,15 +638,6 @@ export function AppProvider({ children }) {
     }))
     refresh()
 
-    // Bottom-bar کچا سونا (DISPLAY-ONLY): when the sidebar "پرچوں لیا" checkbox is
-    // ticked, add this parchi's وزن کانٹے پر (input.wazan) — and ONLY that — to the
-    // on-screen counter. This touches no transaction/receipt/report. Read BEFORE
-    // the entry fields are cleared below.
-    if (parchunLiya) {
-      const w = Number(input.wazan) || 0
-      if (w > 0) setKachaDisplay((v) => v + w)
-    }
-
     if (!isEdit) {
       // Brand-new parchi: it is now recorded in the ledger. CLEAR the entry fields
       // and advance to a fresh blank parchi. This is what fixes the "doubling": the
@@ -634,6 +652,7 @@ export function AppProvider({ children }) {
       setUdharTake({ wazan: '', point: '100', rate: '' })
       setUdharCashGive('')
       setUdharCashTake('')
+      setUdharComment('')
       setInput({ wazan: '', malawat: '' })
       setOverrides({})
       setSonaDiya('')
@@ -652,7 +671,7 @@ export function AppProvider({ children }) {
       setOpenReceiptNo(rno)
     }
     return { ok: true, receipt_no: rno, saved: rows.length, edited: isEdit }
-  }, [rates, cashSell, cashBuy, udharGive, udharTake, udharCashGive, udharCashTake, input, overrides, computedRows, ujratKaSona, parchunLiya, sonaDiya, cashDiya, receiptNo, openReceiptNo, customer, ensureCustomer, refresh])
+  }, [rates, cashSell, cashBuy, udharGive, udharTake, udharCashGive, udharCashTake, udharComment, input, overrides, computedRows, ujratKaSona, parchunLiya, sonaDiya, cashDiya, receiptNo, openReceiptNo, customer, ensureCustomer, refresh])
 
   // Stage 3 — Save one udhar action-button transaction (kind/direction/category
   // supplied by the caller). `explicit` (optional) is the customer to record for
@@ -692,6 +711,7 @@ export function AppProvider({ children }) {
     setUdharTake({ wazan: '', point: '100', rate: '' })
     setUdharCashGive('')
     setUdharCashTake('')
+    setUdharComment('')
     setSonaDiya('')
     setCashDiya('')
     setSavedFlags(NO_SAVED)
@@ -814,7 +834,6 @@ export function AppProvider({ children }) {
     receiptNo, setReceiptNo,
     customer, setCustomer, newCustomer, saveCustomer,
     totals, refresh, bump,
-    kachaDisplay, resetKachaDisplay,
     cashDisplay, addExpense, editExpense, removeExpense, resetExpensesData,
     input, setInput, setWeight,
     overrides, setCell, clearCell, toggleParchi, resetEntry,
@@ -828,9 +847,12 @@ export function AppProvider({ children }) {
     udharTake, setUdharTake,
     udharCashGive, setUdharCashGive,
     udharCashTake, setUdharCashTake,
+    udharComment, setUdharComment,
     computedRows,
     loadReceipt, loadReceiptNo,
     openReceiptNo,
+    hasPrevReceipt: receiptBounds.hasPrev,
+    hasNextReceipt: receiptBounds.hasNext,
     gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt,
     addTransaction,
     saveParchi, saveUdharTxn, newParchi, resetData, resetKachaData, getReport, getReportGroup1, getKachaReport,

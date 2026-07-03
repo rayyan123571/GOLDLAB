@@ -8,6 +8,16 @@
   --line: #9a9a9a;
 }
 
+/* Render a formatted number as an independent LTR run so a leading minus stays on
+   the visual LEFT even inside a dir="rtl" block (the RTL bidi algorithm would
+   otherwise push "-430,000" to "430,000-"). `isolate` keeps it from disturbing the
+   surrounding Urdu text. Use on a number rendered INLINE inside RTL text; for a
+   standalone numeric cell/box, dir="ltr" on that element is enough. */
+.num-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 * {
   box-sizing: border-box;
 }

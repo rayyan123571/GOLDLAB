@@ -140,13 +140,13 @@ export default function CashUdharPanel() {
             سونا لین دین :
           </div>
           {/* col4: gold-ledger yellow box — only for a selected customer */}
-          <input className="inp-y text-center text-[14px] font-bold" value={customer.id ? fmtNum(ledger.balance_gold) : '-'} readOnly />
+          <input dir="ltr" className="inp-y text-center text-[14px] font-bold" value={customer.id ? fmtNum(ledger.balance_gold) : '-'} readOnly />
           {/* col5: کیش لین دین label */}
           <div className="cell justify-end pr-1 urdu text-[12px] font-bold whitespace-nowrap overflow-visible bg-header">
             کیش لین دین :
           </div>
           {/* col6 (left): cash-ledger yellow box — only for a selected customer */}
-          <input className="inp-y text-center text-[14px] font-bold" value={customer.id ? fmtMoney(ledger.balance_cash) : '-'} readOnly />
+          <input dir="ltr" className="inp-y text-center text-[14px] font-bold" value={customer.id ? fmtMoney(ledger.balance_cash) : '-'} readOnly />
         </div>
       </div>
     </div>

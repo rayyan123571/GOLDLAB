@@ -63,7 +63,7 @@ function RateRow({ rates }) {
 // and we shrink until scrollWidth ≤ clientWidth. Because the design canvas is a
 // fixed size that FitScreen only CSS-transforms, these measurements are stable
 // regardless of window size, so a single layout pass on value change suffices.
-function FitValue({ value, align = 'right', strong, red, min = 6, fit = false }) {
+function FitValue({ value, align = 'right', strong, red, min = 6, fit = false, autoWidth = false }) {
   const ref = useRef(null)
   const raw = value === null || value === undefined || value === '' ? '-' : String(value)
   // Digits plus number/date punctuation only → treat as numeric (shrink, keep all
@@ -92,7 +92,9 @@ function FitValue({ value, align = 'right', strong, red, min = 6, fit = false })
     <span
       ref={ref}
       dir="ltr"
-      className={`block w-full whitespace-nowrap overflow-hidden ${doFit ? '' : 'text-ellipsis'} ${alignCls} ${strong ? 'font-bold' : ''} ${red ? 'text-red-600' : ''}`}
+      // autoWidth: shrink-wrap to the number (inline-block, capped at the box) so a
+      // small value gets a small box; default: fill the box (block w-full).
+      className={`${autoWidth ? 'inline-block max-w-full' : 'block w-full'} whitespace-nowrap overflow-hidden ${doFit ? '' : 'text-ellipsis'} ${alignCls} ${strong ? 'font-bold' : ''} ${red ? 'text-red-600' : ''}`}
     >
       {raw}
     </span>
@@ -104,19 +106,23 @@ function FitValue({ value, align = 'right', strong, red, min = 6, fit = false })
 // right-aligned against the label. Values can never spill the panel border:
 // min-w-0 lets the value box shrink, overflow-hidden clips, and FitValue keeps
 // numbers readable (shrink-to-fit) and text tidy (ellipsis).
-function Fld({ label, value, yellow, red, strong, fit }) {
+function Fld({ label, value, yellow, red, strong, fit, autoWidth }) {
+  // autoWidth: the value box hugs its content (small value → small box) and sits at
+  // the far LEFT via justify-between, label stays far RIGHT. Default: box fills the
+  // space to the left of the label (flex-1). Only the box sizing differs.
+  const boxSize = autoWidth ? 'max-w-full min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
   return (
-    <div className="flex items-center gap-1 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px]">
+    <div className={`flex items-center gap-1 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] ${autoWidth ? 'justify-between' : ''}`}>
       <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
         {label} :
       </span>
       {yellow ? (
-        <div className="bg-yellowCell border border-line text-[9px] leading-tight px-2 py-[1px] flex-1 min-w-0 overflow-hidden box-border">
-          <FitValue value={value} align="right" fit={fit} />
+        <div className={`bg-yellowCell border border-line text-[9px] leading-tight px-2 py-[1px] box-border ${boxSize}`}>
+          <FitValue value={value} align="right" fit={fit} autoWidth={autoWidth} />
         </div>
       ) : (
-        <div className={`text-[10px] flex-1 min-w-0 overflow-hidden ${red ? 'text-red-600' : ''}`}>
-          <FitValue value={value} align="right" strong={strong} red={red} fit={fit} />
+        <div className={`text-[10px] ${boxSize} ${red ? 'text-red-600' : ''}`}>
+          <FitValue value={value} align="right" strong={strong} red={red} fit={fit} autoWidth={autoWidth} />
         </div>
       )}
     </div>
@@ -175,7 +181,7 @@ const waOpen = (mobile, text) => {
 }
 
 /* 1) وصولی رسید — Recovery Receipt */
-function RecoveryReceipt({ row, lab, ctx }) {
+export function RecoveryReceipt({ row, lab, ctx, embed }) {
   const { customer, receiptNo, rates, ujratKaSona } = ctx
   const now = useClock()
   // اجرت کا سونا checkbox: convert the labour charge (PKR) into its gold weight
@@ -244,19 +250,21 @@ function RecoveryReceipt({ row, lab, ctx }) {
           />
         </R>
       </div>
-      <ActionBar
-        onWa={() => waOpen(customer.mobile, `وصولی رسید نمبر ${receiptNo}\nخالص سونا: ${fmtNum(row?.khalisSona)}\nباقی: ${fmtMoney(row?.baqiRaqam)}`)}
-        onPrint={() => ctx.printSlips()}
-      >
-        <SavedChk on={ctx.savedFlags?.wasooli} />
-      </ActionBar>
+      {!embed && (
+        <ActionBar
+          onWa={() => waOpen(customer.mobile, `وصولی رسید نمبر ${receiptNo}\nخالص سونا: ${fmtNum(row?.khalisSona)}\nباقی: ${fmtMoney(row?.baqiRaqam)}`)}
+          onPrint={() => ctx.printSlips()}
+        >
+          <SavedChk on={ctx.savedFlags?.wasooli} />
+        </ActionBar>
+      )}
 
     </div>
   )
 }
 
 /* 2) لیب رسید — Lab Receipt */
-function LabReceipt({ row, lab, ctx }) {
+export function LabReceipt({ row, lab, ctx, embed }) {
   const { customer, receiptNo, rates } = ctx
   const now = useClock()
   // ONE shared 6-col grid (left -> right): گرام | ملی گرام | تولہ | ماشہ | رتی | label.
@@ -365,13 +373,15 @@ function LabReceipt({ row, lab, ctx }) {
           <span className="num">{fmtNum(lab?.milawatTotalRatti, 2)}</span>
         </div>
       </div>
-      <ActionBar
-        onWa={() => waOpen(customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`)}
-        onPrint={() => ctx.printSlips()}
-      >
-        <SavedChk on={ctx.savedFlags?.lab} />
-        <span className="urdu text-[10px]">رسید</span>
-      </ActionBar>
+      {!embed && (
+        <ActionBar
+          onWa={() => waOpen(customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`)}
+          onPrint={() => ctx.printSlips()}
+        >
+          <SavedChk on={ctx.savedFlags?.lab} />
+          <span className="urdu text-[10px]">رسید</span>
+        </ActionBar>
+      )}
     </div>
   )
 }
@@ -383,7 +393,7 @@ function CSide({ f }) {
   if (f.bare)
     return (
       <div className="flex-1 min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] flex items-center overflow-hidden text-[10px]">
-        <FitValue value={f.value} align="right" />
+        <FitValue value={f.value} align="right" fit={f.fit} />
       </div>
     )
   return <div className="flex-1 min-w-0"><Fld {...f} /></div>
@@ -398,16 +408,20 @@ function CRow({ right, left }) {
 }
 
 /* 3) ادھار کی رسید — Credit Receipt */
-function CreditReceipt({ ctx }) {
+export function CreditReceipt({ ctx, embed }) {
   const { customer, receiptNo, rates, bump, hasApi, openReceiptNo,
-    udharGive, udharTake, udharCashGive, udharCashTake } = ctx
+    udharGive, udharTake, udharCashGive, udharCashTake, udharComment } = ctx
   const now = useClock()
-  const [led, setLed] = useState({ balance_gold: 0, balance_cash: 0 })
+  const [ledFetched, setLed] = useState({ balance_gold: 0, balance_cash: 0 })
   useEffect(() => {
+    // ctx.ledger injected (e.g. the customer statement passes each parchi's OWN
+    // running/cumulative balance) → use it as-is, never fetch the live grand total.
+    if (ctx.ledger) return
     if (hasApi && customer.id)
       window.api.getCustomerLedger(customer.id).then((l) => setLed(l || { balance_gold: 0, balance_cash: 0 }))
     else setLed({ balance_gold: 0, balance_cash: 0 })
-  }, [customer.id, bump, hasApi])
+  }, [customer.id, bump, hasApi, ctx.ledger])
+  const led = ctx.ledger || ledFetched
 
   // Live ادھار transaction figures — same ratti-scale formula as the panel's
   // GoldRow. null when a gold row's wazan is empty so the field shows '-'.
@@ -440,13 +454,18 @@ function CreditReceipt({ ctx }) {
   // are ALREADY part of the ledger balance, so adding them again is what made the
   // receipt value DOUBLE after Save. In that case the balance alone is the total.
   const composingNew = openReceiptNo == null
-  // Final gold balance = previous ledger balance (+ this transaction's net when new).
-  // Shop convention: give MORE than you take (net > 0) -> the customer owes YOU
-  // that gold -> "لینا" (to take). Net < 0 -> you owe them -> "دینا".
-  const finalGold = (led?.balance_gold || 0) + (composingNew ? netGold : 0)
-  // Same orientation for cash: previous balance + this transaction's net (when new).
-  // net > 0 -> customer owes YOU -> "لینا"; net < 0 -> you owe them -> "دینا".
-  const finalCash = (led?.balance_cash || 0) + (composingNew ? netCash : 0)
+  // Previous balance = ledger balance MINUS this parchi's own net, but only when
+  // this parchi is already in the ledger (saved / reopened / navigated to). While
+  // composing a brand-new unsaved parchi the ledger does NOT include it yet, so
+  // previous = ledger as-is. This parchi's exact ledger contribution == netGold /
+  // netCash (same sign + rate-independent khalis/cash as getCustomerLedger).
+  const prevGold = (led?.balance_gold || 0) - (composingNew ? 0 : netGold)
+  const prevCash = (led?.balance_cash || 0) - (composingNew ? 0 : netCash)
+  // Final = previous + this parchi's net. Same final numbers as before (no
+  // doubling), but now سابقہ + باقی = final always reconciles.
+  // Shop convention: net > 0 -> customer owes YOU -> "لینا"; net < 0 -> "دینا".
+  const finalGold = prevGold + netGold
+  const finalCash = prevCash + netCash
   // Each row grows (flex-1) so rows fill the panel evenly instead of bunching at
   // the top, but is capped at a comfortable height so they never over-stretch.
   const R = ({ children }) => (
@@ -468,35 +487,40 @@ function CreditReceipt({ ctx }) {
         {/* ---- Gold block ---- */}
         <R><CRow right={{ label: 'تیزابی دیا', value: gGive ? fmtNum(gGive.wazan) : '-' }} left={{ label: 'خالص وزن', value: gGive ? fmtNum(gGive.khalis) : '-' }} /></R>
         <R><CRow right={{ label: 'تیزابی لیا', value: gTake ? fmtNum(gTake.wazan) : '-' }} left={{ label: 'خالص وزن', value: gTake ? fmtNum(gTake.khalis) : '-' }} /></R>
-        {/* پوائنٹ on its own line in the empty space below تیزابی لیا. */}
-        <R><CRow right={{ label: 'پوائنٹ', value: activePoint != null ? fmtNum(Number(activePoint), 0) : '-' }} left={null} /></R>
-        <R><CRow right={null} left={{ label: 'باقی', value: netGold ? fmtNum(netGold) : '-' }} /></R>
-        <R><CRow right={{ bare: true, value: customer.id ? fmtNum(led?.balance_gold) : '-' }} left={{ label: 'سابقہ سونا بیلنس', value: customer.id ? fmtNum(led?.balance_gold) : '-' }} /></R>
-        <R><CRow right={null} left={{ label: 'باقی تیزابی دینا ہے', value: finalGold < 0 ? fmtNum(Math.abs(finalGold)) : '-', yellow: true }} /></R>
-        <R><CRow right={null} left={{ label: 'باقی تیزابی لینا ہے', value: finalGold > 0 ? fmtNum(finalGold) : '-', yellow: true }} /></R>
+        {/* پوائنٹ on its own line; the collector name / note (udharComment) fills
+            the empty LEFT slot. Blank when there is no comment (no stray "-"). */}
+        <R><CRow right={{ label: 'پوائنٹ', value: activePoint != null ? fmtNum(Number(activePoint), 0) : '-' }} left={udharComment ? { bare: true, value: udharComment, fit: true } : null} /></R>
+        <R><Fld label="باقی" value={netGold ? fmtNum(netGold) : '-'} /></R>
+        <R><Fld label="سابقہ سونا بیلنس" value={customer.id ? fmtNum(prevGold) : '-'} autoWidth /></R>
+        <R><Fld label="باقی تیزابی دینا ہے" value={finalGold < 0 ? fmtNum(Math.abs(finalGold)) : '-'} yellow autoWidth /></R>
+        <R><Fld label="باقی تیزابی لینا ہے" value={finalGold > 0 ? fmtNum(finalGold) : '-'} yellow autoWidth /></R>
 
         <div className="border-t border-line my-[1px]" />
 
         {/* ---- Cash block ---- */}
         <R><CRow right={{ label: 'کیش۔ دیا', value: cGive ? fmtMoney(cGive) : '-' }} left={{ label: 'کیش۔ لیا', value: cTake ? fmtMoney(cTake) : '-' }} /></R>
-        <R><CRow right={null} left={{ label: 'باقی', value: netCash ? fmtMoney(netCash) : '-' }} /></R>
-        <R><CRow right={{ bare: true, value: customer.id ? fmtMoney(led?.balance_cash) : '-' }} left={{ label: 'سابقہ کیش بیلنس', value: customer.id ? fmtMoney(led?.balance_cash) : '-' }} /></R>
-        <R><CRow right={null} left={{ label: 'باقی کیش دینا ہے', value: finalCash < 0 ? fmtMoney(Math.abs(finalCash)) : '-', yellow: true }} /></R>
-        <R><CRow right={null} left={{ label: 'باقی کیش لینا ہے', value: finalCash > 0 ? fmtMoney(finalCash) : '-', yellow: true }} /></R>
+        <R><Fld label="باقی" value={netCash ? fmtMoney(netCash) : '-'} /></R>
+        <R><Fld label="سابقہ کیش بیلنس" value={customer.id ? fmtMoney(prevCash) : '-'} autoWidth /></R>
+        <R><Fld label="باقی کیش دینا ہے" value={finalCash < 0 ? fmtMoney(Math.abs(finalCash)) : '-'} yellow autoWidth /></R>
+        <R><Fld label="باقی کیش لینا ہے" value={finalCash > 0 ? fmtMoney(finalCash) : '-'} yellow autoWidth /></R>
       </div>
-      <ActionBar
-        onWa={() => waOpen(customer.mobile, `ادھار رسید\nنام: ${customer.id ? customer.name : ''}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
-        onPrint={() => ctx.printSlips()}
-      >
-        <SavedChk on={ctx.savedFlags?.udhar} />
-        <Btn onClick={() => ctx.refresh()}>Refresh</Btn>
-      </ActionBar>
+      {!embed && (
+        <ActionBar
+          onWa={() => waOpen(customer.mobile, `ادھار رسید\nنام: ${customer.id ? customer.name : ''}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
+          onPrint={() => ctx.printSlips()}
+        >
+          <SavedChk on={ctx.savedFlags?.udhar} />
+          {/* Full page reload — re-reads saved SQLite data from disk. Trade-off:
+              discards any UNSAVED parchi being composed on screen (intended). */}
+          <Btn onClick={() => window.location.reload()}>Refresh</Btn>
+        </ActionBar>
+      )}
     </div>
   )
 }
 
 /* 4) نقد کی رسید — Cash Receipt (رسید سونا خرید) */
-function CashReceipt({ ctx }) {
+export function CashReceipt({ ctx, embed }) {
   const { customer, receiptNo, rates, cashSell, cashBuy } = ctx
   const now = useClock()
   // Active نقد entry = whichever of فروخت / خرید has a non-zero سونا وزن. Its
@@ -589,13 +613,15 @@ function CashReceipt({ ctx }) {
         <R><Fld label="کل قیمت" value={v ? fmtMoney(v.qeemat) : '-'} /></R>
         <R><Fld label="رقم دی" value={v ? fmtMoney(v.qeemat) : '-'} /></R>
       </div>
-      <div className="flex flex-wrap items-center gap-1 px-1 pb-1">
-        <SavedChk on={ctx.savedFlags?.naqad} />
-        <div className="flex-1 min-w-0" />
-        <Btn variant="green"
-          onClick={() => waOpen(customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.id ? customer.name : ''}`)}>WhatsApp</Btn>
-        <Btn title="پرنٹ" onClick={() => ctx.printSlips()}>🖨</Btn>
-      </div>
+      {!embed && (
+        <div className="flex flex-wrap items-center gap-1 px-1 pb-1">
+          <SavedChk on={ctx.savedFlags?.naqad} />
+          <div className="flex-1 min-w-0" />
+          <Btn variant="green"
+            onClick={() => waOpen(customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.id ? customer.name : ''}`)}>WhatsApp</Btn>
+          <Btn title="پرنٹ" onClick={() => ctx.printSlips()}>🖨</Btn>
+        </div>
+      )}
     </div>
   )
 }

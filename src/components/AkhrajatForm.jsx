@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { fmtMoney } from '../logic/units.js'
 import { useApp } from '../state/store.jsx'
+import DateField from './DateField.jsx'
 
 const hasApi = () => typeof window !== 'undefined' && window.api
 
@@ -37,23 +38,6 @@ const REPORTS = {
       { label: 'وقت', get: (r) => fmtTime(r.ts), num: true }
     ]
   }
-}
-
-function DateField({ label, iso, setIso }) {
-  const ref = useRef(null)
-  const [text, setText] = useState(isoToDisp(iso))
-  useEffect(() => { setText(isoToDisp(iso)) }, [iso])
-  const onText = (v) => { setText(v); const parsed = dispToIso(v); if (parsed) setIso(parsed) }
-  const openPicker = () => { const el = ref.current; if (!el) return; if (el.showPicker) { try { el.showPicker() } catch { el.focus() } } else el.focus() }
-  return (
-    <label className="flex items-center gap-1.5">
-      <span className="text-[14px] font-bold text-black w-[86px] shrink-0">{label}</span>
-      <input value={text} onChange={(e) => onText(e.target.value)} placeholder="dd/mm/yyyy" dir="ltr"
-        className="flex-1 min-w-0 border border-gray-400 bg-white text-[16px] font-bold px-2 py-1.5 text-center tabular-nums rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
-      <button type="button" onClick={openPicker} title="کیلنڈر" className="border border-gray-400 bg-gray-100 px-2 py-1.5 rounded-sm hover:bg-gray-200 text-[16px]">📅</button>
-      <input ref={ref} type="date" value={iso || ''} onChange={(e) => setIso(e.target.value)} tabIndex={-1} className="absolute w-0 h-0 opacity-0 pointer-events-none" />
-    </label>
-  )
 }
 
 const BTN = 'urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors'
