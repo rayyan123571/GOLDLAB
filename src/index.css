@@ -406,6 +406,13 @@ input[type='number'] {
    modals are unaffected (their .print-area lives inside #root; no slip-print class). */
 @media print {
   body.slip-print #root { display: none !important; }
+  /* Thermal-head friendly: pure black text, no grey fills/shadows (like the
+     thermal report mode) so the 80mm printer renders the slip crisply. */
+  body.slip-print .print-area * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
 }
 
 /* ── Customer statement (کسٹمر کی تفصیلی رسید): wide A4 portrait page (NOT the 80mm

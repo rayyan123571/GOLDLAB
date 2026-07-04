@@ -82,23 +82,49 @@ ipcMain.handle('toggle-maximize', () => {
   win.setFullScreen(true)
 })
 
-// Print via the MAIN process (webContents.print) instead of the renderer's
-// window.print(). Electron's renderer print shows "app does not support print
-// preview" because Chromium's preview UI isn't bundled; webContents.print opens
-// the native Windows print dialog directly. Content styling still comes from the
-// already-applied @media print CSS (thermal-print / statement-print classes).
-ipcMain.handle('print-page', (_evt, opts = {}) => {
-  if (!win) return { ok: false }
+// ── Printing (receipt-printer safe) ────────────────────────────────────────
+// One print attempt. A watchdog timer (when given) resolves the promise even if
+// Chromium never fires the print callback — a known Windows quirk — so the
+// renderer's `await` can NEVER hang. timedOut distinguishes "no answer" from an
+// explicit driver failure (only the latter is worth a dialog fallback; a timed-
+// out job may still print later, and a fallback then would print twice).
+function printOnce(opts, timeoutMs) {
   return new Promise((resolve) => {
+    let done = false
+    const finish = (ok, reason, timedOut) => { if (!done) { done = true; resolve({ ok, reason, timedOut }) } }
+    const timer = timeoutMs ? setTimeout(() => finish(false, 'timeout', true), timeoutMs) : null
     try {
-      win.webContents.print(
-        { silent: false, printBackground: true, ...opts },
-        (success, failureReason) => resolve({ ok: success, reason: failureReason })
-      )
+      win.webContents.print(opts, (success, failureReason) => {
+        if (timer) clearTimeout(timer)
+        finish(success, failureReason || '')
+      })
     } catch (e) {
-      resolve({ ok: false, reason: String(e && e.message ? e.message : e) })
+      if (timer) clearTimeout(timer)
+      finish(false, String(e && e.message ? e.message : e))
     }
   })
+}
+
+// Print via the MAIN process. Receipts print SILENTLY straight to the system
+// default printer (the shop's 80mm thermal): webContents.print's system dialog
+// frequently fails to spool on Windows thermal drivers (long-standing Electron
+// issue), which is why dialog printing produced nothing. If the silent attempt
+// reports an explicit failure, we fall back to the dialog once so the user still
+// has a path (e.g. printing to a different printer). Callers may pass
+// { silent: false } to force the dialog. Always resolves { ok, reason }.
+ipcMain.handle('print-page', async (_evt, opts = {}) => {
+  if (!win) return { ok: false, reason: 'no-window' }
+  const wantSilent = opts.silent !== false
+  const base = { printBackground: true, ...opts }
+  if (wantSilent) {
+    const first = await printOnce({ ...base, silent: true }, 30000)
+    if (first.ok || first.timedOut) return first
+    // Explicit driver refusal (e.g. no default printer) → offer the dialog once.
+    // Dialog attempts get a LONG watchdog (the user may sit in the dialog a
+    // while) so a dead callback still can't hang the renderer forever.
+    return printOnce({ ...base, silent: false }, 180000)
+  }
+  return printOnce({ ...base, silent: false }, 180000)
 })
 
 // Export the CURRENT report to PDF (Part 3). The renderer flips a body class so

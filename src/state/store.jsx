@@ -43,6 +43,22 @@ const FALLBACK_RATES = {
 
 const hasApi = typeof window !== 'undefined' && window.api
 
+// Transient bottom-center toast for print failures — surfaces the reason instead
+// of failing silently (a failed print used to look like "nothing happened").
+function showPrintError(reason) {
+  if (typeof document === 'undefined') return
+  const el = document.createElement('div')
+  el.dir = 'rtl'
+  el.className = 'urdu no-print'
+  el.style.cssText =
+    'position:fixed;bottom:56px;left:50%;transform:translateX(-50%);z-index:9999;' +
+    'background:#b91c1c;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;' +
+    'font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,.35);max-width:80vw;text-align:center'
+  el.textContent = `پرنٹ نہیں ہو سکا${reason ? ` (${reason})` : ''} — پرنٹر آن اور کنیکٹڈ چیک کریں`
+  document.body.appendChild(el)
+  setTimeout(() => el.remove(), 5000)
+}
+
 // Flip to true to trace the parchi save/load path in the devtools console
 // (Save button → saveParchi → replaceReceipt, and loadReceipt reconstruction).
 const DEBUG_SAVE = false
@@ -263,6 +279,7 @@ export function AppProvider({ children }) {
     // scale transform, so it prints at natural size; `slip-print` on <body> hides
     // #root entirely in print so the clone starts on page 1. Cleaned up after.
     let overlay = null
+    let pageStyle = null
     if (panelEl && typeof document !== 'undefined') {
       overlay = document.createElement('div')
       overlay.className = 'print-overlay'
@@ -272,25 +289,39 @@ export function AppProvider({ children }) {
       root.className = 'print-root'
       const area = document.createElement('div')
       area.className = 'print-area'
-      // ≈ the receipt's 341px on-screen design width, so the slip prints at the
-      // familiar proportions instead of stretching across the page.
-      area.style.cssText = 'width:90mm;max-width:100%'
+      // Sized for the shop's 80mm thermal roll: 80mm − 2mm margins ≈ 76mm
+      // printable, 74mm content leaves a safe edge. (max-width guards A4 too.)
+      area.style.cssText = 'width:74mm;max-width:100%'
       area.appendChild(panelEl.cloneNode(true))
       root.appendChild(area)
       overlay.appendChild(root)
       document.body.appendChild(overlay)
       document.body.classList.add('slip-print')
+      // 80mm continuous-roll page (same technique as the thermal reports): the
+      // last @page rule wins over the global `@page { margin: 10mm }`.
+      pageStyle = document.createElement('style')
+      pageStyle.id = 'slip-page-style'
+      pageStyle.textContent = '@page { size: 80mm auto; margin: 2mm; }'
+      document.head.appendChild(pageStyle)
     }
     try {
-      // Print via the main process (native dialog). Electron's renderer
-      // window.print() fails with "app does not support print preview"; fall back
-      // to it only in a plain browser (dev) where the bridge isn't present.
+      // SILENT print straight to the default (thermal) printer — the system
+      // print dialog often fails to spool on Windows thermal drivers, which is
+      // why dialog printing produced nothing. Failures now surface as a toast.
       for (let i = 0; i < n; i++) {
-        if (hasApi && window.api.printPage) await window.api.printPage()
-        else window.print()
+        if (hasApi && window.api.printPage) {
+          const res = await window.api.printPage({ silent: true })
+          if (res && res.ok === false) {
+            showPrintError(res.reason)
+            break // don't fire remaining copies into a failing printer
+          }
+        } else {
+          window.print() // plain-browser dev fallback
+        }
       }
     } finally {
       if (overlay) { overlay.remove(); document.body.classList.remove('slip-print') }
+      if (pageStyle) pageStyle.remove()
     }
   }, [rates.slip_count])
 

@@ -434,10 +434,18 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
   const doPrint = async () => {
     applyPrintMode(true)
     try {
-      // Native print via the main process (avoids Electron's renderer
-      // "does not support print preview" error). Browser dev falls back.
-      if (hasApiFn() && window.api.printPage) await window.api.printPage()
-      else window.print()
+      // Silent print to the default printer via the main process — the system
+      // dialog often fails to spool on Windows thermal drivers. Failures show a
+      // note instead of vanishing silently. Browser dev falls back.
+      if (hasApiFn() && window.api.printPage) {
+        const res = await window.api.printPage({ silent: true })
+        if (res && res.ok === false) {
+          setNote(`پرنٹ نہیں ہو سکا${res.reason ? ` (${res.reason})` : ''} — پرنٹر چیک کریں`)
+          setTimeout(() => setNote(''), 4000)
+        }
+      } else {
+        window.print()
+      }
     } finally {
       clearPrintMode()
     }
