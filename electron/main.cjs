@@ -82,6 +82,25 @@ ipcMain.handle('toggle-maximize', () => {
   win.setFullScreen(true)
 })
 
+// Print via the MAIN process (webContents.print) instead of the renderer's
+// window.print(). Electron's renderer print shows "app does not support print
+// preview" because Chromium's preview UI isn't bundled; webContents.print opens
+// the native Windows print dialog directly. Content styling still comes from the
+// already-applied @media print CSS (thermal-print / statement-print classes).
+ipcMain.handle('print-page', (_evt, opts = {}) => {
+  if (!win) return { ok: false }
+  return new Promise((resolve) => {
+    try {
+      win.webContents.print(
+        { silent: false, printBackground: true, ...opts },
+        (success, failureReason) => resolve({ ok: success, reason: failureReason })
+      )
+    } catch (e) {
+      resolve({ ok: false, reason: String(e && e.message ? e.message : e) })
+    }
+  })
+})
+
 // Export the CURRENT report to PDF (Part 3). The renderer flips a body class so
 // only the report (`.print-area`) is visible; @media print CSS drives both the
 // print dialog and printToPDF, so the PDF contains only the filtered report +

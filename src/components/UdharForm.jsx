@@ -431,11 +431,16 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
     else applyThermal(on && useThermal)
   }
   const clearPrintMode = () => { applyThermal(false); applyStatementA4(false) }
-  const doPrint = () => {
+  const doPrint = async () => {
     applyPrintMode(true)
-    window.addEventListener('afterprint', clearPrintMode, { once: true })
-    setTimeout(clearPrintMode, 4000) // fallback if afterprint doesn't fire
-    window.print()
+    try {
+      // Native print via the main process (avoids Electron's renderer
+      // "does not support print preview" error). Browser dev falls back.
+      if (hasApiFn() && window.api.printPage) await window.api.printPage()
+      else window.print()
+    } finally {
+      clearPrintMode()
+    }
   }
   const doPdf = async () => {
     if (!hasApiFn()) { setNote('PDF صرف ایپ میں دستیاب ہے'); setTimeout(() => setNote(''), 2500); return }

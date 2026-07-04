@@ -51,5 +51,8 @@ contextBridge.exposeInMainWorld('api', {
   // Minimize the window to the taskbar (the "–" button next to the red "X").
   minimizeApp: () => ipcRenderer.invoke('minimize-window'),
   // Maximize / restore toggle — full-screen on/off (the "□" button).
-  maximizeApp: () => ipcRenderer.invoke('toggle-maximize')
+  maximizeApp: () => ipcRenderer.invoke('toggle-maximize'),
+  // Print through the main process (native dialog) — avoids Electron's renderer
+  // "does not support print preview" error.
+  printPage: (opts) => ipcRenderer.invoke('print-page', opts)
 })

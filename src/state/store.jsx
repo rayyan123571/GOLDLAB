@@ -254,9 +254,15 @@ export function AppProvider({ children }) {
 
   // Print the current view once per configured slip copy (سلپ پرنٹ). 1 → one
   // print, 2 → two, etc. Each call opens the print dialog for that copy.
-  const printSlips = useCallback(() => {
+  const printSlips = useCallback(async () => {
     const n = Math.max(1, parseInt(rates.slip_count, 10) || 1)
-    for (let i = 0; i < n; i++) window.print()
+    // Print via the main process (native dialog). Electron's renderer window.print()
+    // fails with "app does not support print preview"; fall back to it only in a
+    // plain browser (dev) where the bridge isn't present.
+    for (let i = 0; i < n; i++) {
+      if (hasApi && window.api.printPage) await window.api.printPage()
+      else window.print()
+    }
   }, [rates.slip_count])
 
   // Change a top weight (gross / water). Changing a weight reruns the forward
