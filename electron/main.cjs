@@ -7,6 +7,77 @@ const backup = require('./backup.cjs')
 const isDev = process.env.NODE_ENV === 'development'
 let win = null
 
+// ── WhatsApp share window ────────────────────────────────────────────────────
+// The renderer copies the receipt-slip IMAGE to the clipboard and opens a
+// wa.me link. We intercept that link, open WhatsApp Web in our own window, and
+// AUTO-PASTE the image the moment a chat's compose box appears — whether the
+// chat opened directly (customer number saved) or the operator picked a
+// contact by hand. The operator then only presses Send. Everything is
+// best-effort and guarded: if anything fails, the chat still opens normally
+// and the image stays on the clipboard for a manual Ctrl+V.
+let waWin = null
+
+// WhatsApp Web rejects unknown browsers — present a clean Chrome UA (the real
+// Chromium version Electron ships, minus the Electron/app tokens).
+function chromeUA(wc) {
+  try {
+    return wc.getUserAgent()
+      .replace(/\s?Electron\/[\d.]+/g, '')
+      .replace(/\s?gold-lab\/[\d.]+/gi, '')
+      .replace(/\s?chaudhry[^\s]*(\s?gold\S*)?(\s?lab\S*)?\/[\d.]+/gi, '')
+  } catch {
+    return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+  }
+}
+
+// Poll for a chat compose box (footer contenteditable). First sighting → focus
+// it and paste ONCE. Polls for up to ~3 minutes so there is time to scan the
+// QR code on first use or to pick a contact manually. Stops early if the
+// clipboard no longer holds an image (nothing of ours to paste).
+function armWaAutoPaste(w) {
+  try { if (w.__waTimer) clearInterval(w.__waTimer) } catch {}
+  let tries = 0
+  w.__waTimer = setInterval(async () => {
+    try {
+      if (w.isDestroyed()) { clearInterval(w.__waTimer); return }
+      if (++tries > 150 || clipboard.readImage().isEmpty()) { clearInterval(w.__waTimer); return }
+      const found = await w.webContents.executeJavaScript(
+        '(() => { const b = document.querySelector(\'footer div[contenteditable="true"], footer [contenteditable="true"]\'); if (!b) return false; b.focus(); return true })()',
+        true
+      ).catch(() => false)
+      if (found) {
+        clearInterval(w.__waTimer)
+        // small settle delay: WhatsApp finishes wiring its composer, then paste
+        setTimeout(() => { try { if (!w.isDestroyed()) { w.webContents.focus(); w.webContents.paste() } } catch {} }, 800)
+      }
+    } catch {}
+  }, 1200)
+}
+
+function openWhatsAppWindow(url) {
+  try {
+    const target = process.env.GOLDLAB_WA_URL_OVERRIDE || url // test hook only
+    if (waWin && !waWin.isDestroyed()) {
+      waWin.focus()
+      waWin.loadURL(target)
+    } else {
+      waWin = new BrowserWindow({
+        width: 1100,
+        height: 820,
+        title: 'WhatsApp',
+        autoHideMenuBar: true,
+        webPreferences: { nodeIntegration: false, contextIsolation: true }
+      })
+      waWin.on('closed', () => { waWin = null })
+      waWin.webContents.setUserAgent(chromeUA(waWin.webContents))
+      waWin.loadURL(target)
+    }
+    armWaAutoPaste(waWin)
+  } catch (e) {
+    console.error('WhatsApp window failed:', e)
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1500,
@@ -32,6 +103,17 @@ function createWindow() {
   win.once('ready-to-show', () => {
     win.setFullScreen(true) // ensure the taskbar is actually covered
     win.show()
+  })
+
+  // WhatsApp links (the receipts' WhatsApp buttons) open in OUR window so the
+  // slip image can be auto-pasted into the chat. Everything else keeps the
+  // default window.open behaviour.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\/(wa\.me|api\.whatsapp\.com|web\.whatsapp\.com)\//i.test(url)) {
+      openWhatsAppWindow(url)
+      return { action: 'deny' }
+    }
+    return { action: 'allow' }
   })
 
   // Escape hatches (a frameless full-screen window has no title bar, so these MUST

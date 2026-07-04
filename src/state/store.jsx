@@ -491,7 +491,7 @@ export function AppProvider({ children }) {
       overlay.remove()
       overlay = null
       if (res && res.ok) {
-        showToast('رسید کی تصویر کاپی ہو گئی ہے — WhatsApp چیٹ میں Ctrl+V دبا کر پیسٹ کریں اور بھیج دیں', true)
+        showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V)', true)
       } else {
         showToast('تصویر کاپی نہیں ہو سکی — صرف تحریری پیغام بھیجا جائے گا', false)
       }
