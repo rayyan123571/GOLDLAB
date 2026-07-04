@@ -289,10 +289,24 @@ export function AppProvider({ children }) {
       root.className = 'print-root'
       const area = document.createElement('div')
       area.className = 'print-area'
-      // Sized for the shop's 80mm thermal roll: 80mm − 2mm margins ≈ 76mm
-      // printable, 74mm content leaves a safe edge. (max-width guards A4 too.)
-      area.style.cssText = 'width:74mm;max-width:100%'
-      area.appendChild(panelEl.cloneNode(true))
+      // Print the receipt EXACTLY as designed: render the clone at the panel's
+      // fixed DESIGN width and transform-scale it down to the 80mm roll (74mm
+      // content ≈ 280px), the same render-at-design-size-then-scale trick the
+      // statement view uses. Squeezing the clone directly to 74mm broke the
+      // internal fixed-px grids (لیب رسید columns) — scaling preserves them.
+      const DESIGN_W = 341 // the receipt panels' on-screen design width (px)
+      const targetPx = (74 * 96) / 25.4 // 74mm in CSS px ≈ 280
+      const scale = targetPx / DESIGN_W
+      const designH = panelEl.offsetHeight || 456 // layout (unscaled) height
+      area.style.cssText = `width:74mm;max-width:100%;overflow:hidden;height:${Math.ceil(designH * scale)}px`
+      const inner = document.createElement('div')
+      inner.style.cssText = `width:${DESIGN_W}px;transform:scale(${scale});transform-origin:top left`
+      const clone = panelEl.cloneNode(true)
+      // Fix the clone at its on-screen height so the flex rows keep the same
+      // even spacing they have on screen (h-full has no parent height here).
+      clone.style.height = `${designH}px`
+      inner.appendChild(clone)
+      area.appendChild(inner)
       root.appendChild(area)
       overlay.appendChild(root)
       document.body.appendChild(overlay)
