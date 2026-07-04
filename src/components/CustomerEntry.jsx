@@ -254,7 +254,7 @@ export default function CustomerEntry() {
           The ID and Mobile rows were removed from the main screen; that freed space
           goes to a larger, roomier name field + a prominent primary "+" action. */}
       <div className="flex items-stretch gap-1.5 mb-2">
-        <button className="link-red w-12" onClick={onNew}>New</button>
+        <button className="link-red w-16 font-bold text-[16px]" onClick={onNew}>New</button>
         <div className="hdr urdu w-12 flex items-center justify-center">نام</div>
         <Combo
           value={customer.name}
@@ -282,27 +282,27 @@ export default function CustomerEntry() {
         <div className="hdr urdu w-16">رسید نمبر</div>
         <input className="inp w-16 text-center font-bold" value={receiptNo} readOnly />
         <button
-          className="flex-1 flex items-center justify-center font-bold text-[14px] px-4 py-1.5 rounded-md border border-blue-300 bg-blue-100 text-blue-800 shadow-sm hover:bg-blue-200 hover:border-blue-400 active:bg-blue-300 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors"
+          className="flex-1 flex items-center justify-center font-bold text-[14px] px-2 py-1.5 rounded-md border border-blue-300 bg-blue-100 text-blue-800 shadow-sm hover:bg-blue-200 hover:border-blue-400 active:bg-blue-300 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors"
           onClick={onSave}
         >
           Save
         </button>
-        <button className="btn font-bold w-6" title="پہلی رسید — First" onClick={navigate(gotoFirstReceipt)}>⏮</button>
+        <button className="btn font-bold w-9 text-[18px]" title="پہلی رسید — First" onClick={navigate(gotoFirstReceipt)}>⏮</button>
         {/* ◀ Prev / ▶ Next are DISABLED (greyed, non-clickable) when there is no
             older / newer saved parchi in that direction. Nav behavior unchanged. */}
         <button
-          className="btn text-redX font-bold w-6 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="btn text-redX font-bold w-9 text-[18px] disabled:opacity-40 disabled:cursor-not-allowed"
           title="پچھلی رسید — Previous"
           onClick={navigate(gotoPrevReceipt)}
           disabled={!hasPrevReceipt}
         >◀</button>
         <button
-          className="btn text-redX font-bold w-6 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="btn text-redX font-bold w-9 text-[18px] disabled:opacity-40 disabled:cursor-not-allowed"
           title="اگلی رسید — Next"
           onClick={navigate(gotoNextReceipt)}
           disabled={!hasNextReceipt}
         >▶</button>
-        <button className="btn font-bold w-6" title="آخری رسید — Last" onClick={navigate(gotoLastReceipt)}>⏭</button>
+        <button className="btn font-bold w-9 text-[18px]" title="آخری رسید — Last" onClick={navigate(gotoLastReceipt)}>⏭</button>
       </div>
 
       {saveMsg && (
