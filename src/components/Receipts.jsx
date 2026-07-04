@@ -243,7 +243,9 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
             left={{ label: 'اجرت کا سونا', value: ujratKaSona ? fmtNum(ujratGold) : '-' }}
           />
         </R>
-        <R><FLine left={{ label: 'سونا دینا ہے', value: '-' }} /></R>
+        {/* سونا دینا ہے mirrors the sidebar's goldOwed (same formula, display
+            only): ticked اجرت کا سونا deducts the ujrat gold from خالص سونا. */}
+        <R><FLine left={{ label: 'سونا دینا ہے', value: lab?.ratePerTola ? fmtNum(ujratKaSona ? ((Number(row?.khalisSona) || 0) - ujratGold) : (Number(row?.khalisSona) || 0)) : '-' }} /></R>
 
         {/* Left-sidebar values mapped straight onto the receipt (display only):
             کیش دیا / its gold equivalent / سونا دیا / labour-as-cash. Every value
@@ -256,7 +258,7 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
         </R>
         <R>
           <FLine
-            right={{ label: 'اجرت لینی ہے', value: ujratKaSona ? '-' : fmtMoney(row?.labCharges), yellow: true }}
+            right={{ label: 'اجرت لینی ہے', value: fmtMoney(row?.labCharges), yellow: true }}
             left={{ label: 'خالص سونا دیا', value: Number(sonaDiya) ? fmtNum(Number(sonaDiya)) : '-', yellow: true }}
           />
         </R>
