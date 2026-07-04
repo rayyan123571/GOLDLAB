@@ -406,9 +406,12 @@ input[type='number'] {
    modals are unaffected (their .print-area lives inside #root; no slip-print class). */
 @media print {
   body.slip-print #root { display: none !important; }
-  /* The slip prints AS-IS (same borders, header bars, yellow cells as on
-     screen) — printBackground is on, and the thermal driver dithers colors.
-     No monochrome stripping: it erased the receipt's visual structure. */
+  /* The slip keeps its on-screen FORMAT (borders, header bars, yellow cells —
+     printBackground is on). Only text is forced pure black so grey/red labels
+     don't print faint on the thermal head, with a semi-bold baseline for
+     legibility (explicit font-bold classes still win with their 700). */
+  body.slip-print .print-area * { color: #000 !important; }
+  body.slip-print .print-area .receipt-panel { font-weight: 600; }
 }
 
 /* ── Customer statement (کسٹمر کی تفصیلی رسید): wide A4 portrait page (NOT the 80mm

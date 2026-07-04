@@ -59,6 +59,42 @@ function showPrintError(reason) {
   setTimeout(() => el.remove(), 5000)
 }
 
+// ── Thermal slip header/footer — STATIC shop-identity text printed above/below
+// the cloned receipt panel. Display-only markup: never touches any value.
+function buildSlipHeader() {
+  const el = document.createElement('div')
+  el.dir = 'rtl'
+  el.className = 'urdu'
+  el.style.cssText = 'text-align:center;color:#000;padding:0 2px 5px;border-bottom:2px solid #000;margin-bottom:5px'
+  el.innerHTML =
+    '<div style="font-size:23px;font-weight:800;line-height:1.5">چوہدری گولڈ لیبارٹری</div>' +
+    '<div style="font-size:12px;font-weight:700;line-height:1.9">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز  (جیولری چوڑی میکر)</div>' +
+    '<div style="font-size:13px;font-weight:700;line-height:1.7">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">0300-7301839</span></div>' +
+    '<div style="font-size:13px;font-weight:700;line-height:1.6"><span dir="ltr">0302-7330000</span>&nbsp;&nbsp;&nbsp;&nbsp;<span dir="ltr">0302-3334440</span></div>' +
+    '<div style="font-size:12px;font-weight:700;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>'
+  return el
+}
+
+// Footer: the sona-testing fee paragraph is LAB-ONLY; the software line (with
+// Rayyan 0307-6965231) prints on every slip.
+function buildSlipFooter(kind) {
+  const el = document.createElement('div')
+  el.dir = 'rtl'
+  el.className = 'urdu'
+  el.style.cssText = 'color:#000;margin-top:5px'
+  const fee = kind === 'lab'
+    ? '<div style="font-size:11px;font-weight:700;line-height:1.9;text-align:right;border:1px solid #000;padding:3px 6px;margin-bottom:5px">' +
+      'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔' +
+      '</div>'
+    : ''
+  el.innerHTML = fee +
+    '<div style="font-size:11px;font-weight:700;line-height:1.9;text-align:center;border-top:2px solid #000;padding-top:4px">' +
+    'لیبارٹری، کاسٹنگ سنٹر، ہول سیل شاپ، جیولری شاپ، چوڑی کڑے اور کارخانے کے سوفٹ ویئر دستیاب ہیں۔' +
+    '<div dir="ltr" style="font-size:12.5px;font-weight:800;margin-top:2px">Rayyan&nbsp;&nbsp;0307-6965231</div>' +
+    '</div>'
+  return el
+}
+
 // Flip to true to trace the parchi save/load path in the devtools console
 // (Save button → saveParchi → replaceReceipt, and loadReceipt reconstruction).
 const DEBUG_SAVE = false
@@ -298,19 +334,37 @@ export function AppProvider({ children }) {
       const targetPx = (74 * 96) / 25.4 // 74mm in CSS px ≈ 280
       const scale = targetPx / DESIGN_W
       const designH = panelEl.offsetHeight || 456 // layout (unscaled) height
-      area.style.cssText = `width:74mm;max-width:100%;overflow:hidden;height:${Math.ceil(designH * scale)}px`
+      area.style.cssText = 'width:74mm;max-width:100%;overflow:hidden'
       const inner = document.createElement('div')
       inner.style.cssText = `width:${DESIGN_W}px;transform:scale(${scale});transform-origin:top left`
       const clone = panelEl.cloneNode(true)
       // Fix the clone at its on-screen height so the flex rows keep the same
       // even spacing they have on screen (h-full has no parent height here).
       clone.style.height = `${designH}px`
+      // cloneNode copies attributes, NOT live input/checkbox state — sync every
+      // field into the clone so no value can go missing from the printout.
+      const srcFields = panelEl.querySelectorAll('input, textarea, select')
+      const dstFields = clone.querySelectorAll('input, textarea, select')
+      dstFields.forEach((f, i) => {
+        const s = srcFields[i]
+        if (!s) return
+        f.value = s.value
+        if (f.type === 'checkbox' || f.type === 'radio') f.checked = s.checked
+      })
+      // Slip = [SHOP HEADER] → [receipt body, exactly as on screen] → [FOOTER].
+      // The fee paragraph is lab-only; data-receipt on the panel root says which
+      // receipt this is (lab / naqad / udhar / wasooli).
+      inner.appendChild(buildSlipHeader())
       inner.appendChild(clone)
+      inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || ''))
       area.appendChild(inner)
       root.appendChild(area)
       overlay.appendChild(root)
       document.body.appendChild(overlay)
       document.body.classList.add('slip-print')
+      // The scaled inner keeps its unscaled layout height — clamp the printable
+      // area to the VISUAL (scaled) height so no blank feed follows the slip.
+      area.style.height = `${Math.ceil((inner.offsetHeight || designH) * scale)}px`
       // 80mm continuous-roll page (same technique as the thermal reports): the
       // last @page rule wins over the global `@page { margin: 10mm }`.
       pageStyle = document.createElement('style')

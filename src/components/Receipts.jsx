@@ -199,7 +199,7 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
     </div>
   )
   return (
-    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
+    <div data-receipt="wasooli" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu flex items-center justify-center relative">
         <span>وصولی رسید</span>
         <span className="absolute left-1 bg-header border border-line text-[10px] font-normal px-2">{fmtTime(now)}</span>
@@ -292,7 +292,7 @@ export function LabReceipt({ row, lab, ctx, embed }) {
   )
   const div = 'border-l border-gray-400' // faint vertical divider after ملی گرام
   return (
-    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
+    <div data-receipt="lab" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">لیب رسید</div>
       <div className="flex-1 px-1 pt-[2px] flex flex-col">
         {/* header */}
@@ -472,7 +472,7 @@ export function CreditReceipt({ ctx, embed }) {
     <div className="flex-1 flex flex-col justify-center">{children}</div>
   )
   return (
-    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
+    <div data-receipt="udhar" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">ادھار کی رسید</div>
       <div className="flex-1 px-1 pt-1 flex flex-col" dir="rtl">
         {/* رسید نمبر + تاریخ */}
@@ -554,7 +554,7 @@ export function CashReceipt({ ctx, embed }) {
     <div className="flex-1 flex flex-col justify-center">{children}</div>
   )
   return (
-    <div className="receipt-panel border border-line bg-white flex flex-col h-full">
+    <div data-receipt="naqad" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">نقد کی رسید</div>
       <div className="urdu text-center text-[12px] font-bold py-[2px]">{`رسید سونا ${v ? v.kind : 'خرید'}`}</div>
       <div className="flex-1 px-1 pt-1 flex flex-col" dir="rtl">
