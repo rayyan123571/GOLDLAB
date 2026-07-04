@@ -231,7 +231,7 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
 
         <R top>
           <FLine
-            right={{ label: 'کیش دیا', value: '#Num!', strong: true }}
+            right={{ label: 'کیش دیا', value: Number(ctx.cashDiya) ? fmtMoney(ctx.cashDiya) : '-', strong: true }}
             left={{ label: 'کیش کا سونا', value: '-', yellow: true }}
           />
         </R>
