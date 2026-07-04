@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, clipboard, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const { spawn } = require('child_process')
 const db = require('./db.cjs')
 const backup = require('./backup.cjs')
 
@@ -54,9 +55,66 @@ function armWaAutoPaste(w) {
   }, 1200)
 }
 
+// Normalize a stored mobile for WhatsApp: digits only, and a local Pakistani
+// 03xx-xxxxxxx becomes 923xxxxxxxxx (WhatsApp needs the country code). Numbers
+// already carrying a country code (or anything else) pass through unchanged.
+function waNumber(mobile) {
+  const digits = String(mobile || '').replace(/[^0-9]/g, '')
+  if (/^0\d{10}$/.test(digits)) return '92' + digits.slice(1)
+  return digits
+}
+
+// wa.me links show a "Continue to chat" interstitial in a browser — convert
+// them to the direct WhatsApp Web chat URL so the embedded window lands
+// straight in the conversation.
+function toWebWhatsAppUrl(url) {
+  try {
+    const u = new URL(url)
+    if (u.hostname === 'wa.me' || u.hostname === 'api.whatsapp.com') {
+      const num = (u.pathname.replace(/\//g, '') || u.searchParams.get('phone') || '').replace(/[^0-9]/g, '')
+      const text = u.searchParams.get('text') || ''
+      return num || text
+        ? `https://web.whatsapp.com/send?phone=${num}&text=${encodeURIComponent(text)}`
+        : 'https://web.whatsapp.com/'
+    }
+  } catch {}
+  return url
+}
+
+// WhatsApp DESKTOP route: after launching whatsapp://send we cannot reach into
+// the native app's DOM, so a tiny hidden PowerShell watcher waits (up to ~30s)
+// for a WhatsApp window to be in the foreground, gives the chat a moment to
+// finish opening, then sends ONE Ctrl+V — the slip image (already on the
+// clipboard) lands in the message box as an attachment preview. Best-effort:
+// if it misses, the toast has already told the operator about Ctrl+V.
+let waWatcherAt = 0
+function startDesktopPasteWatcher() {
+  try {
+    const now = Date.now()
+    if (now - waWatcherAt < 35000) return // one active watcher at a time
+    waWatcherAt = now
+    const script =
+      "$sig='[DllImport(\"user32.dll\")]public static extern IntPtr GetForegroundWindow();[DllImport(\"user32.dll\")]public static extern int GetWindowText(IntPtr h,System.Text.StringBuilder s,int n);';" +
+      'Add-Type -MemberDefinition $sig -Name U -Namespace W;' +
+      'Add-Type -AssemblyName System.Windows.Forms;' +
+      'for($i=0;$i -lt 60;$i++){' +
+      '$h=[W.U]::GetForegroundWindow();' +
+      '$sb=New-Object System.Text.StringBuilder 512;' +
+      '[W.U]::GetWindowText($h,$sb,512)|Out-Null;' +
+      "if($sb.ToString() -like '*WhatsApp*'){Start-Sleep -Milliseconds 1800;[System.Windows.Forms.SendKeys]::SendWait('^v');break};" +
+      'Start-Sleep -Milliseconds 500}'
+    const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      windowsHide: true, detached: true, stdio: 'ignore'
+    })
+    p.unref()
+  } catch (e) {
+    console.error('WhatsApp paste watcher failed:', e)
+  }
+}
+
 function openWhatsAppWindow(url) {
   try {
-    const target = process.env.GOLDLAB_WA_URL_OVERRIDE || url // test hook only
+    const target = process.env.GOLDLAB_WA_URL_OVERRIDE || toWebWhatsAppUrl(url) // override = test hook only
     if (waWin && !waWin.isDestroyed()) {
       waWin.focus()
       waWin.loadURL(target)
@@ -208,6 +266,34 @@ ipcMain.handle('print-page', async (_evt, opts = {}) => {
     return printOnce({ ...base, silent: false }, 180000)
   }
   return printOnce({ ...base, silent: false }, 180000)
+})
+
+// Open WhatsApp for a receipt share, smartest route first:
+//   1. WhatsApp DESKTOP app (whatsapp://send) when installed — fastest, always
+//      logged in — plus the paste-watcher so the slip image lands by itself.
+//   2. Otherwise the embedded WhatsApp Web window (direct chat URL, in-window
+//      auto-paste poller).
+// GOLDLAB_WA_FORCE_MODE ('web' | 'desktop-watch-only') is a TEST hook only.
+ipcMain.handle('open-whatsapp', (_evt, { mobile, text } = {}) => {
+  try {
+    const num = waNumber(mobile)
+    const msg = encodeURIComponent(text || '')
+    const force = process.env.GOLDLAB_WA_FORCE_MODE || ''
+    const desktopApp = force === 'web' ? '' : app.getApplicationNameForProtocol('whatsapp://send')
+    if (force === 'desktop-watch-only') { startDesktopPasteWatcher(); return { ok: true, mode: 'desktop', num } }
+    if (desktopApp) {
+      shell.openExternal(`whatsapp://send?phone=${num}&text=${msg}`)
+      startDesktopPasteWatcher()
+      return { ok: true, mode: 'desktop', num }
+    }
+    const url = num || msg
+      ? `https://web.whatsapp.com/send?phone=${num}&text=${msg}`
+      : 'https://web.whatsapp.com/'
+    openWhatsAppWindow(url)
+    return { ok: true, mode: 'web', num, url }
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message ? e.message : e) }
+  }
 })
 
 // Capture a screen region of the app window and place it on the system

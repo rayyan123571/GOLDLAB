@@ -56,5 +56,7 @@ contextBridge.exposeInMainWorld('api', {
   // "does not support print preview" error.
   printPage: (opts) => ipcRenderer.invoke('print-page', opts),
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
-  captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect)
+  captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
+  // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.
+  openWhatsApp: (opts) => ipcRenderer.invoke('open-whatsapp', opts)
 })
