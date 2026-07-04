@@ -233,7 +233,15 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
         <R>
           <FLine
             right={{ label: 'ریٹ فی تولہ', value: fmtMoney(lab?.ratePerTola) }}
-            left={{ label: 'پرچون وزن', value: fmtNum(row?.malawat) }}
+            left={{
+              label: 'پرچون وزن',
+              // Mirrors the sidebar's پرچوں لیا value exactly: the scale weight
+              // when the checkbox is ticked, '-' when not. Embedded statement
+              // ctx has no parchunLiya flag → keep its old malawat display.
+              value: ctx.parchunLiya === undefined
+                ? fmtNum(row?.malawat)
+                : (ctx.parchunLiya ? fmtNum(ctx.input?.wazan) : '-')
+            }}
           />
         </R>
         <R><FLine left={{ label: 'خالص وزن', value: fmtNum(row?.khalisSona) }} /></R>
