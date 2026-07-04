@@ -398,3 +398,16 @@ input[type='number'] {
   body.thermal-print .print-area th,
   body.thermal-print .print-area td { border: 1px solid #000 !important; padding: 1px 3px !important; }
 }
+
+/* ── Customer statement (کسٹمر کی تفصیلی رسید): wide A4 portrait page (NOT the 80mm
+   strip). Full content width + a little padding so every Urdu label has room and
+   nothing clips. Scoped to `statement-print` (set only while printing/PDF-ing the
+   statement), so the main-screen thermal receipts and other reports are untouched. */
+@media print {
+  body.statement-print .print-area {
+    width: 100% !important;
+    max-width: 190mm !important;
+    margin: 0 auto !important;
+    padding: 4mm !important;
+  }
+}

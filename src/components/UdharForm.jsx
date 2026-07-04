@@ -341,6 +341,22 @@ function applyThermal(on) {
   }
 }
 
+// The کسٹمر کی تفصیلی رسید statement prints as a WIDE A4 portrait page (NOT the
+// 80mm thermal strip), so every Urdu label has room and nothing is clipped. Adds
+// a `statement-print` body class (print CSS bumps font/padding) plus a scoped
+// @page A4 rule injected only while printing this statement — never affecting the
+// main-screen thermal receipts or other reports. Cleared afterwards.
+function applyStatementA4(on) {
+  document.body.classList.toggle('statement-print', on)
+  let style = document.getElementById('statement-page-style')
+  if (on) {
+    if (!style) { style = document.createElement('style'); style.id = 'statement-page-style'; document.head.appendChild(style) }
+    style.textContent = '@page { size: A4 portrait; margin: 12mm; }'
+  } else if (style) {
+    style.remove()
+  }
+}
+
 function ThermalTable({ report, rows }) {
   const cols = thermalColumns(report)
   const totalCol = cols.find((c) => c.total)
@@ -405,24 +421,31 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
   if (!report) return null
   const isStatement = report.group === 3
   const isKacha = report.group === 'kacha' // 5-column per-customer table (no thermal)
-  const useThermal = thermal && !isKacha
+  // The statement (کسٹمر کی تفصیلی رسید) is ALWAYS the wide A4 layout — never thermal.
+  const useThermal = thermal && !isKacha && !isStatement
   const canRowEdit = !isKacha && (report.rows || []).some((r) => r.id != null)
 
+  // The statement forces the wide A4 page; other reports honour the thermal toggle.
+  const applyPrintMode = (on) => {
+    if (isStatement) applyStatementA4(on)
+    else applyThermal(on && useThermal)
+  }
+  const clearPrintMode = () => { applyThermal(false); applyStatementA4(false) }
   const doPrint = () => {
-    applyThermal(useThermal)
-    window.addEventListener('afterprint', () => applyThermal(false), { once: true })
-    setTimeout(() => applyThermal(false), 4000) // fallback if afterprint doesn't fire
+    applyPrintMode(true)
+    window.addEventListener('afterprint', clearPrintMode, { once: true })
+    setTimeout(clearPrintMode, 4000) // fallback if afterprint doesn't fire
     window.print()
   }
   const doPdf = async () => {
     if (!hasApiFn()) { setNote('PDF صرف ایپ میں دستیاب ہے'); setTimeout(() => setNote(''), 2500); return }
-    applyThermal(useThermal)
+    applyPrintMode(true)
     try {
       const base = isStatement ? 'customer-statement' : (report.title || 'report')
       const res = await window.api.exportPDF(`${String(base).replace(/\s+/g, '-')}.pdf`, useThermal ? { cssPageSize: true } : undefined)
       if (res?.ok) setNote('PDF محفوظ ہو گیا ✓')
       else if (!res?.canceled) setNote('PDF محفوظ نہیں ہو سکا')
-    } finally { applyThermal(false) }
+    } finally { clearPrintMode() }
     setTimeout(() => setNote(''), 2500)
   }
 
@@ -430,7 +453,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
     <div className="print-area flex flex-col min-h-0 flex-1">
       <div className="no-print shrink-0 flex items-center gap-2 bg-white border-b border-gray-200 px-4 py-2.5">
         <button type="button" onClick={onBack} className="urdu text-[12px] font-semibold text-blue-700 border border-blue-200 rounded-md px-3 py-1.5 hover:bg-blue-50 transition-colors">← واپس</button>
-        {!isKacha && (
+        {!isKacha && !isStatement && (
           <button
             type="button"
             onClick={() => setThermal((v) => !v)}
@@ -456,9 +479,10 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
             <KachaReport report={report} />
           </div>
         </>
-      ) : thermal ? (
+      ) : (thermal && !isStatement) ? (
         // Thermal preview — the receipt shown on screen at the exact roll width so
         // the user can check it before printing. This same narrow content prints.
+        // (The statement is excluded — it always uses the wide A4 layout below.)
         <div className="flex-1 min-h-0 overflow-auto bg-gray-200 p-4">
           <div className="mx-auto bg-white border border-gray-400 shadow-md" style={{ width: `${THERMAL_WIDTH_MM}mm` }}>
             <div className="p-2"><ThermalReceipt report={report} /></div>
