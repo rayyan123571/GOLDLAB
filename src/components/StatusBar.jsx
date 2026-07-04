@@ -4,7 +4,7 @@ import { fmtMoney, fmtNum } from '../logic/units.js'
 import DefaultsForm from './DefaultsForm.jsx'
 
 export default function StatusBar() {
-  const { totals, resetEntry, loadReceipt, resetKachaData, cashDisplay } = useApp()
+  const { totals, resetEntry, loadReceipt, resetKachaCounter, cashDisplay } = useApp()
   const [search, setSearch] = useState('')
   const [searchMsg, setSearchMsg] = useState('')
   const [showDefaults, setShowDefaults] = useState(false)
@@ -54,12 +54,12 @@ export default function StatusBar() {
         <div className="flex items-stretch gap-1">
           <div className="urdu flex items-center px-1 text-[15px] font-bold">کچا سونا</div>
           <div dir="ltr" style={negStyle(totals.kacha_sona)} className="status-green flex items-center justify-center px-3 min-w-[120px] text-[18px] font-bold whitespace-nowrap">{fmtNum(totals.kacha_sona, 3)}</div>
-          {/* Clear ALL کچا سونا records (permanent): asks to confirm first, then
-              deletes every kacha entry so the derived total drops to 0. */}
+          {/* Reset ONLY this bottom-bar کچا سونا COUNTER to 0. Records are KEPT —
+              the اُدھار report's کچا سونا لیا stays intact (baseline offset). */}
           <button
             type="button"
             onClick={() => setShowKachaConfirm(true)}
-            title="تمام کچا سونا ریکارڈ مستقل حذف کریں (permanently delete all kacha records)"
+            title="کچا سونا کاؤنٹر صفر کریں (ریکارڈ محفوظ رہے گا)"
             className="self-center flex items-center justify-center w-6 h-[26px] rounded border border-gray-300 bg-white text-gray-600 text-[14px] leading-none hover:bg-gray-100 active:bg-gray-200 transition-colors"
           >
             ↺
@@ -109,7 +109,8 @@ export default function StatusBar() {
 
       <DefaultsForm open={showDefaults} onClose={() => setShowDefaults(false)} />
 
-      {/* کچا سونا clear confirmation — PERMANENTLY deletes all kacha records. */}
+      {/* کچا سونا COUNTER reset confirmation — zeroes the bottom-bar counter only,
+          کچا سونا لیا records are KEPT (اُدھار report stays intact). */}
       {showKachaConfirm && (
         <div
           className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4"
@@ -121,18 +122,18 @@ export default function StatusBar() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="urdu font-bold text-[15px] text-gray-800 bg-slate-100 border-b border-gray-200 px-4 py-2.5">
-              تمام کچا سونا ریکارڈ حذف کریں؟
+              کچا سونا کاؤنٹر صفر کریں؟
             </div>
             <div className="px-4 py-4 flex flex-col gap-2">
-              <p className="urdu text-[14px] text-gray-800">کیا آپ تمام کچا سونا ریکارڈ مستقل طور پر حذف کرنا چاہتے ہیں؟</p>
-              <p className="urdu text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1.5">
-                یہ عمل واپس نہیں ہو سکتا — تمام کچا سونا اندراج ڈیٹابیس سے حذف ہو جائیں گے اور کچا سونا صفر ہو جائے گا
+              <p className="urdu text-[14px] text-gray-800">کیا آپ نیچے کا کچا سونا ٹوٹل صفر کرنا چاہتے ہیں؟</p>
+              <p className="urdu text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
+                صرف نیچے والا کاؤنٹر صفر ہوگا — کوئی ریکارڈ حذف نہیں ہوگا، اُدھار فارم میں کچا سونا لیا کا ریکارڈ محفوظ رہے گا
               </p>
             </div>
             <div className="flex gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50">
               <button
                 type="button"
-                onClick={() => { resetKachaData(); setShowKachaConfirm(false) }}
+                onClick={() => { resetKachaCounter(); setShowKachaConfirm(false) }}
                 className="urdu flex-1 rounded-md bg-rose-600 text-white text-[14px] font-bold py-2 hover:bg-rose-700 active:bg-rose-800 transition-colors"
               >
                 ہاں

@@ -66,6 +66,22 @@ ipcMain.handle('db', async (_evt, { fn, args }) => {
 // db is flushed in before-quit / window-all-closed, so no data is lost.
 ipcMain.handle('quit-app', () => { app.quit() })
 
+// "–" button: fill the whole screen but KEEP THE TASKBAR VISIBLE. This leaves
+// full-screen (which hides the taskbar) and maximizes to the work area, so the
+// app occupies everything except the taskbar — on any screen size / any laptop.
+ipcMain.handle('minimize-window', () => {
+  if (!win) return
+  if (win.isFullScreen()) win.setFullScreen(false)
+  win.maximize()
+})
+
+// "□" button: occupy the ENTIRE screen with the taskbar HIDDEN (true full-screen)
+// — the same state the app launches in, on any screen size.
+ipcMain.handle('toggle-maximize', () => {
+  if (!win) return
+  win.setFullScreen(true)
+})
+
 // Export the CURRENT report to PDF (Part 3). The renderer flips a body class so
 // only the report (`.print-area`) is visible; @media print CSS drives both the
 // print dialog and printToPDF, so the PDF contains only the filtered report +

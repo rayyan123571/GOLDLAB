@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   getPrevReceiptNo: (current) => call('getPrevReceiptNo', current),
   resetTransactions: () => call('resetTransactions'),
   resetKachaGold: () => call('resetKachaGold'),
+  resetKachaCounter: () => call('resetKachaCounter'),
   addTransaction: (t) => call('addTransaction', t),
   updateTransaction: (id, fields) => call('updateTransaction', id, fields),
   deleteTransaction: (id) => call('deleteTransaction', id),
@@ -46,5 +47,9 @@ contextBridge.exposeInMainWorld('api', {
   listDates: () => call('listDates'),
   getShopTotals: () => call('getShopTotals'),
   // Quit the whole app (the top-left red "X" button calls this).
-  quitApp: () => ipcRenderer.invoke('quit-app')
+  quitApp: () => ipcRenderer.invoke('quit-app'),
+  // Minimize the window to the taskbar (the "–" button next to the red "X").
+  minimizeApp: () => ipcRenderer.invoke('minimize-window'),
+  // Maximize / restore toggle — full-screen on/off (the "□" button).
+  maximizeApp: () => ipcRenderer.invoke('toggle-maximize')
 })

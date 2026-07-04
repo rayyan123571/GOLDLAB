@@ -98,6 +98,22 @@ export default function TopBar() {
 
       <button
         type="button"
+        title="ٹاسک بار کے ساتھ — Fill (taskbar visible)"
+        onClick={() => window.api && window.api.minimizeApp && window.api.minimizeApp()}
+        className="bg-gray-300 text-gray-800 font-bold w-7 flex items-center justify-center border border-line hover:brightness-105 active:brightness-95"
+      >
+        –
+      </button>
+      <button
+        type="button"
+        title="پوری اسکرین — Full screen (taskbar hidden)"
+        onClick={() => window.api && window.api.maximizeApp && window.api.maximizeApp()}
+        className="bg-gray-300 text-gray-800 font-bold w-7 flex items-center justify-center border border-line hover:brightness-105 active:brightness-95"
+      >
+        □
+      </button>
+      <button
+        type="button"
         title="ایپ بند کریں — Quit"
         onClick={() => window.api && window.api.quitApp && window.api.quitApp()}
         className="bg-redX text-white font-bold w-7 flex items-center justify-center border border-line hover:brightness-110 active:brightness-90"

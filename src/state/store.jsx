@@ -265,6 +265,10 @@ export function AppProvider({ children }) {
   const setWeight = useCallback((field, value) => {
     setInput((s) => ({ ...s, [field]: value }))
     setOverrides({})
+    // Entering وزن کانٹے پر starts the وصولی رسید UNticked: both پرچوں لیا and
+    // اجرت کا سونا clear, so the operator opts in deliberately (later ticking
+    // پرچوں لیا re-ticks اجرت کا سونا via the coupling effect below).
+    if (field === 'wazan') { setParchunLiya(false); setUjratKaSona(false) }
   }, [])
 
   const setCell = useCallback((rowKey, field, value) => {
@@ -518,7 +522,10 @@ export function AppProvider({ children }) {
     // getShopTotals skips this category, so the stored khalis never pollutes the
     // تیزابی/کیش/سونا totals — کچا سونا still accumulates ONLY وزن کانٹے پر.
     const kachaWazan = Number(input.wazan) || 0
-    if (kachaWazan > 0) {
+    // کچا سونا is recorded ONLY when پرچوں لیا is ticked. If it's off, NO
+    // kacha_gold_take row is written — so nothing is added to the bottom-bar
+    // کچا سونا total even when the parchi is saved.
+    if (parchunLiya && kachaWazan > 0) {
       const tickedRow = computedRows.find((r) => r.parchi)
       const tickedKhalis = tickedRow ? (Number(tickedRow.khalisSona) || 0) : 0
       // The sidebar "پرچوں لیا" checkbox GATES the سونا دیا / کیش دیا values (data,
@@ -657,6 +664,8 @@ export function AppProvider({ children }) {
       setOverrides({})
       setSonaDiya('')
       setCashDiya('')
+      // Fresh parchi after save: وصولی رسید starts UNticked (پرچوں لیا + اجرت کا سونا).
+      setParchunLiya(false); setUjratKaSona(false)
       setSavedFlags(NO_SAVED)
       setOpenReceiptNo(null)
       if (hasApi) {
@@ -714,6 +723,8 @@ export function AppProvider({ children }) {
     setUdharComment('')
     setSonaDiya('')
     setCashDiya('')
+    // A fresh parchi starts with the وصولی رسید UNticked (پرچوں لیا + اجرت کا سونا).
+    setParchunLiya(false); setUjratKaSona(false)
     // A fresh parchi always starts on TODAY'S date — even if the user set a past
     // date on the previous parchi, clicking "New" snaps the تاریخ back to today
     // (no app restart needed). Historical parchis keep their own saved date.
@@ -738,6 +749,16 @@ export function AppProvider({ children }) {
   const resetKachaData = useCallback(async () => {
     if (!hasApi) return { ok: false }
     const res = await window.api.resetKachaGold()
+    refresh()
+    return res || { ok: true }
+  }, [refresh])
+
+  // Reset ONLY the bottom-bar کچا سونا COUNTER (display → 0) WITHOUT deleting any
+  // کچا سونا لیا record — the اُدھار report keeps them. refresh() so the bottom-bar
+  // re-reads (sum − baseline) = 0. Returns { ok, kacha_sona? }.
+  const resetKachaCounter = useCallback(async () => {
+    if (!hasApi) return { ok: false }
+    const res = await window.api.resetKachaCounter()
     refresh()
     return res || { ok: true }
   }, [refresh])
@@ -859,7 +880,7 @@ export function AppProvider({ children }) {
     hasNextReceipt: receiptBounds.hasNext,
     gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt,
     addTransaction,
-    saveParchi, saveUdharTxn, newParchi, resetData, resetKachaData, getReport, getReportGroup1, getKachaReport,
+    saveParchi, saveUdharTxn, newParchi, resetData, resetKachaData, resetKachaCounter, getReport, getReportGroup1, getKachaReport,
     editTransaction, removeTransaction, recordSettle,
     savedFlags, setSavedFlags,
     udharOpen, openUdhar, closeUdhar,

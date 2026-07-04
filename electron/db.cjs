@@ -122,6 +122,15 @@ function migrateSchema() {
     db.run('UPDATE settings SET slip_count = 1 WHERE slip_count IS NULL')
   }
 
+  // settings.kacha_baseline — offset for the bottom-bar کچا سونا COUNTER. The
+  // display shows (Σ kacha weight − baseline); the ↺ reset sets baseline to the
+  // current sum so the counter zeroes WITHOUT deleting any کچا سونا لیا record
+  // (the اُدھار report keeps them). Default 0 on old DBs.
+  if (!sCols.includes('kacha_baseline')) {
+    db.run('ALTER TABLE settings ADD COLUMN kacha_baseline REAL')
+    db.run('UPDATE settings SET kacha_baseline = 0 WHERE kacha_baseline IS NULL')
+  }
+
   // expenses.ts — full timestamp. Patch DBs that had expenses before it existed.
   const xCols = query('PRAGMA table_info(expenses)').map((r) => r.name)
   if (xCols.length && !xCols.includes('ts')) db.run('ALTER TABLE expenses ADD COLUMN ts TEXT')
@@ -550,6 +559,9 @@ const api = {
          )`
       )
       db.run("DELETE FROM transactions WHERE category = 'kacha_gold_take'")
+      // Records are gone, so clear the counter baseline too (keeps the display at 0
+      // rather than going negative against a stale baseline).
+      db.run('UPDATE settings SET kacha_baseline = 0 WHERE id = 1')
       db.run('COMMIT')
     } catch (e) {
       try { db.run('ROLLBACK') } catch { /* ignore */ }
@@ -558,6 +570,23 @@ const api = {
     }
     flush() // persist immediately (not just the debounced save)
     return { ok: true, removedTxns, removedReceipts }
+  },
+
+  // Reset ONLY the bottom-bar کچا سونا COUNTER (display) to zero — WITHOUT deleting
+  // any کچا سونا لیا record. Stores the current raw kacha sum as the baseline so
+  // getShopTotals shows (sum − baseline) = 0 now, while the اُدھار report keeps
+  // every record intact. New کچا سونا after this still accumulates from zero.
+  resetKachaCounter() {
+    try {
+      const r = query("SELECT COALESCE(SUM(sona_wazan), 0) AS s FROM transactions WHERE category = 'kacha_gold_take'")
+      const sum = r[0] ? (Number(r[0].s) || 0) : 0
+      db.run('UPDATE settings SET kacha_baseline = ? WHERE id = 1', [sum])
+    } catch (e) {
+      console.error('resetKachaCounter failed:', e)
+      return { ok: false, message: String(e && e.message ? e.message : e) }
+    }
+    flush()
+    return { ok: true, kacha_sona: 0 }
   },
 
   // READ-ONLY: sum of کچا سونا (وزن کانٹے پر) recorded on a given date. Feeds the
@@ -626,6 +655,7 @@ const api = {
         t.meta ? JSON.stringify(t.meta) : null
       ]
     )
+    flush() // immediate persist: close the ~200ms debounce data-loss window
     return { id: lastInsertId() }
   },
 
@@ -647,6 +677,7 @@ const api = {
     sets.push('updated_at = ?'); params.push(todayISO())
     params.push(id)
     run(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`, params)
+    flush() // immediate persist: close the ~200ms debounce data-loss window
     return { ok: true, id }
   },
 
@@ -654,6 +685,7 @@ const api = {
   deleteTransaction(id) {
     if (id == null) return { ok: false }
     run('DELETE FROM transactions WHERE id = ?', [id])
+    flush() // immediate persist: close the ~200ms debounce data-loss window
     return { ok: true, id }
   },
 
@@ -825,7 +857,7 @@ const api = {
       console.error('replaceReceipt failed:', e)
       return { ok: false, message: String(e && e.message ? e.message : e) }
     }
-    scheduleSave()
+    flush() // immediate persist: close the ~200ms debounce data-loss window
     return { ok: true, receipt_no: rno, count: transactions.length }
   },
 
@@ -942,7 +974,12 @@ const api = {
       if (t.category === 'lab_job') cash += t.qeemat || 0
       parchun += t.point || 0
     }
-    return { cash, tezabi_sona: gold, parchun, kacha_sona: kacha }
+    // The bottom-bar کچا سونا is a RESETTABLE running counter: subtract the stored
+    // baseline (set by the ↺ reset) so zeroing the counter never deletes any کچا
+    // سونا لیا record — the اُدھار report reads those records independently.
+    const bl = query('SELECT COALESCE(kacha_baseline, 0) AS b FROM settings WHERE id = 1')
+    const baseline = bl[0] ? (Number(bl[0].b) || 0) : 0
+    return { cash, tezabi_sona: gold, parchun, kacha_sona: kacha - baseline }
   }
 }
 
