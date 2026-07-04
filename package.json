@@ -1,7 +1,7 @@
 {
   "name": "gold-lab",
   "private": true,
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Gold Laboratory Management Desktop App",
   "type": "module",
   "main": "electron/main.cjs",

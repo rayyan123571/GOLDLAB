@@ -192,13 +192,19 @@ const waSlip = (ctx, e, mobile, text) => {
 
 /* 1) وصولی رسید — Recovery Receipt */
 export function RecoveryReceipt({ row, lab, ctx, embed }) {
-  const { customer, receiptNo, rates, ujratKaSona } = ctx
+  const { customer, receiptNo, rates, ujratKaSona, cashDiya, sonaDiya } = ctx
   const now = useClock()
   // اجرت کا سونا checkbox: convert the labour charge (PKR) into its gold weight
   // at the per-tola rate (grams = money / ratePerTola * GRAMS_PER_TOLA). When on,
   // the cash اجرت کی رقم field zeroes out and the gold weight shows instead.
   const ujratGold = lab?.ratePerTola
     ? (Number(row?.labCharges) || 0) / lab.ratePerTola * GRAMS_PER_TOLA
+    : 0
+  // کیش کا سونا = the sidebar's کیش دیا converted to grams at the per-tola rate.
+  // Display-only conversion, fully guarded: missing/zero rate or empty cash → 0
+  // (renders '-'), never NaN.
+  const cashKaSona = (lab?.ratePerTola && Number(cashDiya))
+    ? Number(cashDiya) * GRAMS_PER_TOLA / lab.ratePerTola
     : 0
   // Each row grows (flex-1) so rows never bunch at the top, but is capped at a
   // comfortable height so they never over-stretch in a tall panel — giving even,
@@ -239,23 +245,26 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
         </R>
         <R><FLine left={{ label: 'سونا دینا ہے', value: '-' }} /></R>
 
+        {/* Left-sidebar values mapped straight onto the receipt (display only):
+            کیش دیا / its gold equivalent / سونا دیا / labour-as-cash. Every value
+            is guarded so an empty input or missing rate shows '-'. */}
         <R top>
           <FLine
-            right={{ label: 'کیش دیا', value: Number(ctx.cashDiya) ? fmtMoney(ctx.cashDiya) : '-', strong: true }}
-            left={{ label: 'کیش کا سونا', value: '-', yellow: true }}
+            right={{ label: 'کیش دیا', value: Number(cashDiya) ? fmtMoney(Number(cashDiya)) : '-', strong: true }}
+            left={{ label: 'کیش کا سونا', value: cashKaSona ? fmtNum(cashKaSona) : '-', yellow: true }}
           />
         </R>
         <R>
           <FLine
-            right={{ label: 'اجرت لینی ہے', value: '-', yellow: true }}
-            left={{ label: 'خالص سونا دیا', value: '-', yellow: true }}
+            right={{ label: 'اجرت لینی ہے', value: ujratKaSona ? '-' : fmtMoney(row?.labCharges), yellow: true }}
+            left={{ label: 'خالص سونا دیا', value: Number(sonaDiya) ? fmtNum(Number(sonaDiya)) : '-', yellow: true }}
           />
         </R>
 
-        <R top><FLine right={{ label: 'اجرت وصول', value: '-' }} /></R>
-        <R>
+        {/* اجرت وصول and ڈسکاؤنٹ rows removed; باقی keeps its value and yellow
+            box, and carries the section divider the removed row used to hold. */}
+        <R top>
           <FLine
-            right={{ label: 'ڈسکاؤنٹ', value: '-' }}
             left={{ label: 'باقی', value: fmtMoney(row?.baqiRaqam), yellow: true }}
           />
         </R>
