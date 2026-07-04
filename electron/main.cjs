@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const db = require('./db.cjs')
@@ -126,6 +126,28 @@ ipcMain.handle('print-page', async (_evt, opts = {}) => {
     return printOnce({ ...base, silent: false }, 180000)
   }
   return printOnce({ ...base, silent: false }, 180000)
+})
+
+// Capture a screen region of the app window and place it on the system
+// clipboard as an IMAGE — used by the WhatsApp share: the renderer shows the
+// slip (same header/receipt/footer as printing), we snapshot it here, and the
+// user pastes it straight into the WhatsApp chat with Ctrl+V. Never throws.
+ipcMain.handle('capture-to-clipboard', async (_evt, rect) => {
+  try {
+    if (!win) return { ok: false, reason: 'no-window' }
+    const r = {
+      x: Math.max(0, Math.round(rect?.x || 0)),
+      y: Math.max(0, Math.round(rect?.y || 0)),
+      width: Math.max(1, Math.round(rect?.width || 1)),
+      height: Math.max(1, Math.round(rect?.height || 1))
+    }
+    const img = await win.webContents.capturePage(r)
+    if (!img || img.isEmpty()) return { ok: false, reason: 'empty-capture' }
+    clipboard.writeImage(img)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message ? e.message : e) }
+  }
 })
 
 // Export the CURRENT report to PDF (Part 3). The renderer flips a body class so

@@ -59,6 +59,25 @@ function showPrintError(reason) {
   setTimeout(() => el.remove(), 5000)
 }
 
+// Generic transient toast (green = success, red = problem) — same style as the
+// print-error toast; used by the WhatsApp share to tell the operator the image
+// is on the clipboard. Display-only; never throws.
+function showToast(text, ok) {
+  if (typeof document === 'undefined') return
+  try {
+    const el = document.createElement('div')
+    el.dir = 'rtl'
+    el.className = 'urdu no-print'
+    el.style.cssText =
+      'position:fixed;bottom:56px;left:50%;transform:translateX(-50%);z-index:9999;' +
+      `background:${ok ? '#047857' : '#b91c1c'};color:#fff;padding:10px 18px;border-radius:8px;` +
+      'font-size:14px;font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,.35);max-width:80vw;text-align:center'
+    el.textContent = text
+    document.body.appendChild(el)
+    setTimeout(() => { try { el.remove() } catch {} }, 6000)
+  } catch {}
+}
+
 // ── Thermal slip header/footer — STATIC shop-identity text printed above/below
 // the cloned receipt panel. Display-only markup: never touches any value.
 function buildSlipHeader() {
@@ -402,6 +421,86 @@ export function AppProvider({ children }) {
       if (pageStyle) pageStyle.remove()
     }
   }, [rates.slip_count])
+
+  // WhatsApp share: build the SAME slip the printer gets (shop header → the
+  // clicked receipt exactly as on screen → footer), show it briefly as a
+  // centered card, snapshot that card to the system CLIPBOARD as an image via
+  // the main process, then open the WhatsApp chat — the operator just presses
+  // Ctrl+V and Send. Every step is guarded; on ANY failure it falls back to the
+  // old text-only WhatsApp link, so the button can never break or crash.
+  const shareSlipWhatsApp = useCallback(async (panelEl, mobile, text) => {
+    const openWa = () => {
+      const num = String(mobile || '').replace(/[^0-9]/g, '')
+      const url = `https://wa.me/${num}?text=${encodeURIComponent(text || '')}`
+      if (typeof window !== 'undefined') window.open(url, '_blank')
+    }
+    if (!panelEl || typeof document === 'undefined' || !hasApi || !window.api.captureToClipboard) {
+      openWa()
+      return
+    }
+    let overlay = null
+    try {
+      const DESIGN_W = 341 // same design width the thermal print path uses
+      const designH = panelEl.offsetHeight || 456
+      overlay = document.createElement('div')
+      overlay.dir = 'ltr' // html is rtl; keep the slip's internal grids unmirrored
+      overlay.className = 'no-print'
+      overlay.style.cssText =
+        'position:fixed;inset:0;z-index:9997;background:rgba(0,0,0,.45);' +
+        'display:flex;align-items:flex-start;justify-content:center;padding-top:12px'
+      const card = document.createElement('div')
+      card.style.cssText = 'background:#fff;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.4)'
+      const inner = document.createElement('div')
+      inner.style.cssText = `width:${DESIGN_W}px;transform-origin:top left;background:#fff;padding:4px`
+      const clone = panelEl.cloneNode(true)
+      clone.style.height = `${designH}px`
+      // cloneNode copies attributes, NOT live input state — sync every field.
+      const srcFields = panelEl.querySelectorAll('input, textarea, select')
+      const dstFields = clone.querySelectorAll('input, textarea, select')
+      dstFields.forEach((f, i) => {
+        const s = srcFields[i]
+        if (!s) return
+        f.value = s.value
+        if (f.type === 'checkbox' || f.type === 'radio') f.checked = s.checked
+      })
+      // The print path hides .no-print (action bar / Saved / buttons) via CSS at
+      // print time; this is a SCREEN capture, so drop them from the clone — the
+      // shared picture matches the printed slip exactly. (Field sync above runs
+      // first, on the identical index order of panel vs clone.)
+      clone.querySelectorAll('.no-print').forEach((n) => { try { n.remove() } catch {} })
+      inner.appendChild(buildSlipHeader())
+      inner.appendChild(clone)
+      inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || ''))
+      card.appendChild(inner)
+      overlay.appendChild(card)
+      document.body.appendChild(overlay)
+      // Two-phase: measure at natural size, then scale UP as far as the window
+      // allows (max 2x) so the WhatsApp image is crisp but never clipped.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      const naturalH = inner.offsetHeight || designH
+      const scale = Math.max(0.5, Math.min(2,
+        (window.innerHeight - 34) / naturalH,
+        (window.innerWidth - 34) / DESIGN_W))
+      inner.style.transform = `scale(${scale})`
+      card.style.width = `${Math.floor(DESIGN_W * scale)}px`
+      card.style.height = `${Math.floor(naturalH * scale)}px`
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      await new Promise((r) => setTimeout(r, 80)) // let paint settle before capture
+      const b = card.getBoundingClientRect()
+      const res = await window.api.captureToClipboard({ x: b.x, y: b.y, width: b.width, height: b.height })
+      overlay.remove()
+      overlay = null
+      if (res && res.ok) {
+        showToast('رسید کی تصویر کاپی ہو گئی ہے — WhatsApp چیٹ میں Ctrl+V دبا کر پیسٹ کریں اور بھیج دیں', true)
+      } else {
+        showToast('تصویر کاپی نہیں ہو سکی — صرف تحریری پیغام بھیجا جائے گا', false)
+      }
+    } catch (e) {
+      console.error('WhatsApp slip share failed:', e)
+      if (overlay) { try { overlay.remove() } catch {} }
+    }
+    openWa()
+  }, [])
 
   // Change a top weight (gross / water). Changing a weight reruns the forward
   // calc fresh for all 5 rows, so any per-row manual edits (e.g. Baqi Raqam
@@ -1033,6 +1132,7 @@ export function AppProvider({ children }) {
     udharOpen, openUdhar, closeUdhar,
     akhrajatOpen, openAkhrajat, closeAkhrajat,
     printSlips,
+    shareSlipWhatsApp,
     hasApi
   }
 
