@@ -168,6 +168,12 @@ async function init(userDataDir) {
   db.run(SCHEMA)
   migrateSchema()
   seedSettings()
+  // The working date ALWAYS starts on TODAY at every launch. settings.date is only
+  // the DEFAULT date for NEW parchis — historical parchis keep their own date in
+  // transactions/receipts, so this never touches saved data. The user can still
+  // change it during a session, but reopening the app always shows the current day
+  // (fixes the stale/previous date that used to persist across restarts).
+  db.run('UPDATE settings SET date = ? WHERE id = 1', [todayISO()])
   flush()
 }
 

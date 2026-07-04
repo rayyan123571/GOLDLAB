@@ -714,6 +714,10 @@ export function AppProvider({ children }) {
     setUdharComment('')
     setSonaDiya('')
     setCashDiya('')
+    // A fresh parchi always starts on TODAY'S date — even if the user set a past
+    // date on the previous parchi, clicking "New" snaps the تاریخ back to today
+    // (no app restart needed). Historical parchis keep their own saved date.
+    setRates((r) => ({ ...r, date: todayISO() }))
     setSavedFlags(NO_SAVED)
     setOpenReceiptNo(null) // composing a fresh, unsaved parchi
     if (hasApi) window.api.nextReceiptNo().then((n) => n && setReceiptNo(n))
