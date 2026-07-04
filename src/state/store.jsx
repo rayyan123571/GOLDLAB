@@ -651,8 +651,9 @@ export function AppProvider({ children }) {
       // live receipt previews compute باقی = (ledger balance) + (current form
       // entries). After saving, the ledger ALREADY includes these amounts, so
       // leaving them in the form would count them a SECOND time on screen — and a
-      // second Save would record them again. The customer stays selected so more
-      // entries for the same person can follow.
+      // second Save would record them again. The customer is also cleared so the
+      // previous parchi's name does NOT carry into the fresh parchi.
+      setCustomer({ id: null, name: '', mobile: '', mobile2: '', telephone: '', address: '', imagePath: null })
       setCashSell({ wazan: '', point: '100', rate: '' })
       setCashBuy({ wazan: '', point: '100', rate: '' })
       setUdharGive({ wazan: '', point: '100', rate: '' })
@@ -725,6 +726,8 @@ export function AppProvider({ children }) {
     setCashDiya('')
     // A fresh parchi starts with the وصولی رسید UNticked (پرچوں لیا + اجرت کا سونا).
     setParchunLiya(false); setUjratKaSona(false)
+    // Clear the customer so the previous parchi's name does NOT carry over.
+    setCustomer({ id: null, name: '', mobile: '', mobile2: '', telephone: '', address: '', imagePath: null })
     // A fresh parchi always starts on TODAY'S date — even if the user set a past
     // date on the previous parchi, clicking "New" snaps the تاریخ back to today
     // (no app restart needed). Historical parchis keep their own saved date.

@@ -35,13 +35,14 @@ const OVR_KEY = {
 // ONE shared grid template for the header and every data row, so all columns
 // line up perfectly. Using CSS grid (not flex) is what guarantees alignment —
 // flex + <input> intrinsic widths is what caused the brick-wall misalignment.
-// Column widths. The money columns (سونا ریٹ / نوٹل رقم / باقی رقم) keep their
-// wide share so large amounts (e.g. 10,360,752, 430,000) fit fully. تولہ/ماشہ
-// only ever show a dash or single digit, so they're kept narrow and the freed
-// width is given to رتی (which shows values like 1.84 / 7.46) so it no longer
-// truncates. Order:
+// Column widths. تولہ/ماشہ are EDITABLE inputs, so they're widened (~0.66fr, close
+// to رتی) so a typed 2–3 digit value shows fully with cursor room. The extra width
+// is taken (fr sum unchanged, so total table width + alignment stay identical) from
+// the generously-sized money columns (سونا ریٹ / ٹوٹل رقم / باقی رقم), which stay
+// above the لیب چارجز money column's 1.0fr so large amounts (e.g. 430,000) still fit.
+// Order:
 // label | khalisSona | milawat/g | tola | masha | ratti | rate | total | labCharges | baqi | parchi
-const GRID = '108px 1.4fr 1.0fr 0.32fr 0.34fr 0.7fr 1.25fr 1.3fr 1.0fr 1.3fr 30px'
+const GRID = '108px 1.4fr 1.0fr 0.66fr 0.66fr 0.7fr 1.05fr 1.07fr 1.0fr 1.07fr 30px'
 
 function Cell({ col, row }) {
   const { overrides, setCell, clearCell, toggleParchi } = useApp()
