@@ -254,14 +254,43 @@ export function AppProvider({ children }) {
 
   // Print the current view once per configured slip copy (سلپ پرنٹ). 1 → one
   // print, 2 → two, etc. Each call opens the print dialog for that copy.
-  const printSlips = useCallback(async () => {
+  const printSlips = useCallback(async (panelEl) => {
     const n = Math.max(1, parseInt(rates.slip_count, 10) || 1)
-    // Print via the main process (native dialog). Electron's renderer window.print()
-    // fails with "app does not support print preview"; fall back to it only in a
-    // plain browser (dev) where the bridge isn't present.
-    for (let i = 0; i < n; i++) {
-      if (hasApi && window.api.printPage) await window.api.printPage()
-      else window.print()
+    // The global @media print CSS shows ONLY `.print-area` content — and the main
+    // screen has none, so receipt prints came out BLANK. Fix: clone the clicked
+    // receipt panel into a temporary body-level .print-area (the same overlay
+    // structure the report prints use). The clone lives OUTSIDE the FitScreen
+    // scale transform, so it prints at natural size; `slip-print` on <body> hides
+    // #root entirely in print so the clone starts on page 1. Cleaned up after.
+    let overlay = null
+    if (panelEl && typeof document !== 'undefined') {
+      overlay = document.createElement('div')
+      overlay.className = 'print-overlay'
+      // invisible + out of flow on screen; print CSS re-shows the .print-area
+      overlay.style.cssText = 'visibility:hidden;position:fixed;left:0;top:0;pointer-events:none'
+      const root = document.createElement('div')
+      root.className = 'print-root'
+      const area = document.createElement('div')
+      area.className = 'print-area'
+      // ≈ the receipt's 341px on-screen design width, so the slip prints at the
+      // familiar proportions instead of stretching across the page.
+      area.style.cssText = 'width:90mm;max-width:100%'
+      area.appendChild(panelEl.cloneNode(true))
+      root.appendChild(area)
+      overlay.appendChild(root)
+      document.body.appendChild(overlay)
+      document.body.classList.add('slip-print')
+    }
+    try {
+      // Print via the main process (native dialog). Electron's renderer
+      // window.print() fails with "app does not support print preview"; fall back
+      // to it only in a plain browser (dev) where the bridge isn't present.
+      for (let i = 0; i < n; i++) {
+        if (hasApi && window.api.printPage) await window.api.printPage()
+        else window.print()
+      }
+    } finally {
+      if (overlay) { overlay.remove(); document.body.classList.remove('slip-print') }
     }
   }, [rates.slip_count])
 

@@ -399,6 +399,15 @@ input[type='number'] {
   body.thermal-print .print-area td { border: 1px solid #000 !important; padding: 1px 3px !important; }
 }
 
+/* ── Main-screen receipt slip printing (printSlips). The clicked receipt panel is
+   CLONED into a temporary body-level .print-overlay/.print-area (outside #root and
+   outside the FitScreen scale transform). Hiding #root entirely removes its layout
+   space from the print flow, so the slip starts cleanly on page 1 — the report
+   modals are unaffected (their .print-area lives inside #root; no slip-print class). */
+@media print {
+  body.slip-print #root { display: none !important; }
+}
+
 /* ── Customer statement (کسٹمر کی تفصیلی رسید): wide A4 portrait page (NOT the 80mm
    strip). Full content width + a little padding so every Urdu label has room and
    nothing clips. Scoped to `statement-print` (set only while printing/PDF-ing the

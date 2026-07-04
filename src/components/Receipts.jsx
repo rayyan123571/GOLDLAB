@@ -165,7 +165,7 @@ function SavedChk({ on }) {
 
 function ActionBar({ children, onWa, onPrint }) {
   return (
-    <div className="flex flex-wrap items-center gap-1 mt-1 px-1 pb-1">
+    <div className="no-print flex flex-wrap items-center gap-1 mt-1 px-1 pb-1">
       {children}
       <div className="flex-1 min-w-0" />
       <Btn variant="green" onClick={onWa}>WhatsApp</Btn>
@@ -253,7 +253,7 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
       {!embed && (
         <ActionBar
           onWa={() => waOpen(customer.mobile, `وصولی رسید نمبر ${receiptNo}\nخالص سونا: ${fmtNum(row?.khalisSona)}\nباقی: ${fmtMoney(row?.baqiRaqam)}`)}
-          onPrint={() => ctx.printSlips()}
+          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}
         >
           <SavedChk on={ctx.savedFlags?.wasooli} />
         </ActionBar>
@@ -376,7 +376,7 @@ export function LabReceipt({ row, lab, ctx, embed }) {
       {!embed && (
         <ActionBar
           onWa={() => waOpen(customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`)}
-          onPrint={() => ctx.printSlips()}
+          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}
         >
           <SavedChk on={ctx.savedFlags?.lab} />
           <span className="urdu text-[10px]">رسید</span>
@@ -507,7 +507,7 @@ export function CreditReceipt({ ctx, embed }) {
       {!embed && (
         <ActionBar
           onWa={() => waOpen(customer.mobile, `ادھار رسید\nنام: ${customer.id ? customer.name : ''}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
-          onPrint={() => ctx.printSlips()}
+          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}
         >
           <SavedChk on={ctx.savedFlags?.udhar} />
           {/* Full page reload — re-reads saved SQLite data from disk. Trade-off:
@@ -614,12 +614,12 @@ export function CashReceipt({ ctx, embed }) {
         <R><Fld label="رقم دی" value={v ? fmtMoney(v.qeemat) : '-'} /></R>
       </div>
       {!embed && (
-        <div className="flex flex-wrap items-center gap-1 px-1 pb-1">
+        <div className="no-print flex flex-wrap items-center gap-1 px-1 pb-1">
           <SavedChk on={ctx.savedFlags?.naqad} />
           <div className="flex-1 min-w-0" />
           <Btn variant="green"
             onClick={() => waOpen(customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.id ? customer.name : ''}`)}>WhatsApp</Btn>
-          <Btn title="پرنٹ" onClick={() => ctx.printSlips()}>🖨</Btn>
+          <Btn title="پرنٹ" onClick={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}>🖨</Btn>
         </div>
       )}
     </div>
