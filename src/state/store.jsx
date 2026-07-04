@@ -429,7 +429,16 @@ export function AppProvider({ children }) {
   // Ctrl+V and Send. Every step is guarded; on ANY failure it falls back to the
   // old text-only WhatsApp link, so the button can never break or crash.
   const shareSlipWhatsApp = useCallback(async (panelEl, mobile, text) => {
-    const openWa = () => {
+    // Main process picks the best route: WhatsApp DESKTOP app when installed
+    // (auto-paste watcher), else the embedded web window (in-window auto-paste).
+    // Plain wa.me window.open remains the last-resort fallback (browser dev).
+    const openWa = async () => {
+      if (hasApi && window.api.openWhatsApp) {
+        try {
+          const r = await window.api.openWhatsApp({ mobile, text: text || '' })
+          if (r && r.ok) return
+        } catch {}
+      }
       const num = String(mobile || '').replace(/[^0-9]/g, '')
       const url = `https://wa.me/${num}?text=${encodeURIComponent(text || '')}`
       if (typeof window !== 'undefined') window.open(url, '_blank')
