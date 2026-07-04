@@ -54,5 +54,7 @@ contextBridge.exposeInMainWorld('api', {
   maximizeApp: () => ipcRenderer.invoke('toggle-maximize'),
   // Print through the main process (native dialog) — avoids Electron's renderer
   // "does not support print preview" error.
-  printPage: (opts) => ipcRenderer.invoke('print-page', opts)
+  printPage: (opts) => ipcRenderer.invoke('print-page', opts),
+  // Snapshot a window region to the system clipboard as an image (WhatsApp share).
+  captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect)
 })
