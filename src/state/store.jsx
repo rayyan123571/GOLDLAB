@@ -319,6 +319,16 @@ export function AppProvider({ children }) {
     if (panelEl && typeof document !== 'undefined') {
       overlay = document.createElement('div')
       overlay.className = 'print-overlay'
+      // <html dir="rtl">: on screen the receipt panels sit inside a dir="ltr"
+      // wrapper (LeftReceipts/RightReceipts), but this overlay hangs off <body>,
+      // so without its own LTR the clone inherits RTL — the لیب grid mirrors its
+      // columns AND the 341px inner block right-aligns in the 74mm area, hanging
+      // ~61px off the LEFT edge (transform-origin:left keeps that overhang), which
+      // clipped the label column and the leading digits of رتی/کیرٹ on the printed
+      // slip. dir="ltr" here restores the exact on-screen anchoring/column order;
+      // the header/footer and the receipts' internal RTL blocks set dir="rtl"
+      // explicitly themselves, so they are unaffected.
+      overlay.dir = 'ltr'
       // invisible + out of flow on screen; print CSS re-shows the .print-area
       overlay.style.cssText = 'visibility:hidden;position:fixed;left:0;top:0;pointer-events:none'
       const root = document.createElement('div')

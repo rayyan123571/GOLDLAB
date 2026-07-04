@@ -411,7 +411,21 @@ input[type='number'] {
      don't print faint on the thermal head, with a semi-bold baseline for
      legibility (explicit font-bold classes still win with their 700). */
   body.slip-print .print-area * { color: #000 !important; }
-  body.slip-print .print-area .receipt-panel { font-weight: 600; }
+  /* The receipt bodies draw their cell grid with light-grey borders (gray-300 /
+     gray-400, incl. the لیب رسید 6-col table). A thermal head drops light grey
+     entirely, erasing the grid and leaving the columns visually collapsed —
+     force every border that EXISTS to pure black (border-style/width stay
+     untouched, so borderless elements gain nothing) and pin exact colour
+     reproduction so nothing is washed out. Text goes full bold to match the
+     on-screen 700 weight. Scoped to .receipt-panel: the slip header/footer
+     already use solid-black inline styles and are not touched. */
+  body.slip-print .print-area .receipt-panel,
+  body.slip-print .print-area .receipt-panel * {
+    border-color: #000 !important;
+    font-weight: 700 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }
 
 /* ── Customer statement (کسٹمر کی تفصیلی رسید): wide A4 portrait page (NOT the 80mm
