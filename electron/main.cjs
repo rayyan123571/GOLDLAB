@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const db = require('./db.cjs')
+const backup = require('./backup.cjs')
 
 const isDev = process.env.NODE_ENV === 'development'
 let win = null
@@ -150,7 +151,17 @@ ipcMain.handle('export-pdf', async (_evt, { defaultName, cssPageSize } = {}) => 
 })
 
 app.whenReady().then(async () => {
-  await db.init(app.getPath('userData'))
+  const userDataDir = app.getPath('userData')
+  const dbPath = path.join(userDataDir, 'goldlab.sqlite')
+  // Restore check runs BEFORE the DB is opened/created. It does something ONLY
+  // when goldlab.sqlite is missing (fresh machine / reinstall) — an existing DB
+  // is opened untouched, with no prompt. Fully try/catch'd inside; never blocks.
+  backup.restoreIfMissing({ userDataDir, dbPath })
+  await db.init(userDataDir)
+  console.log('Database opened.')
+  // Silent automatic backups: shortly after launch, then every ~10 minutes, and
+  // once more on quit below. Best-effort only — cannot crash or block the app.
+  backup.start({ userDataDir, dbPath, flush: db.flush })
   createWindow()
 
   app.on('activate', () => {
@@ -163,4 +174,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => db.flush())
+app.on('before-quit', () => { db.flush(); backup.runOnQuit() })
