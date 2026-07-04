@@ -18,6 +18,13 @@ const GROUP2 = [
   { label: 'آج کا تیزابی ادھار دیا', flow: 'out', category: 'gold_give', kind: 'gold' },
   { label: 'آج کا تیزابی ادھار لیا', flow: 'in', category: 'gold_take', kind: 'gold' }
 ]
+// نقد reports — the main-screen نقد panel saves with its OWN categories
+// (gold_sell / gold_buy); no other button/report uses them, so these two can
+// never pull or affect the ادھار / لیب / کچا data.
+const NAQAD = [
+  { label: 'نقد فروخت', category: 'gold_sell' },
+  { label: 'نقد خرید', category: 'gold_buy' }
+]
 const CATS = [
   { v: 'gold_take', label: 'تیزابی لیا' },
   { v: 'gold_give', label: 'تیزابی دیا' },
@@ -72,6 +79,18 @@ const goldBalanceColumns = () => [
   { label: 'ماشہ', get: (r) => gramsToTMR(goldVal(r)).masha, num: true },
   { label: 'گرام', get: (r) => fmtNum(wazanVal(r)), num: true, total: true, raw: (r) => wazanVal(r) },
   { label: 'تاریخ', get: (r) => isoToDisp(r.updated_at || r.date), num: true }
+]
+// Columns for ONLY the نقد فروخت / نقد خرید reports — one row per saved naqad
+// entry. Both خالص سونا and قیمت carry totals; their fmtTotal marks them for the
+// multi-total footer path in TableReport (reports without fmtTotal — all the
+// existing ones — keep the old single-total footer unchanged).
+const naqadColumns = () => [
+  { label: 'تاریخ', get: (r) => isoToDisp(r.date), num: true },
+  { label: 'نام', get: (r) => r.customer_name || '-' },
+  { label: 'وزن', get: (r) => fmtNum(r.sona_wazan), num: true },
+  { label: 'خالص سونا', get: (r) => fmtNum(r.khalis_sona), num: true, total: true, raw: (r) => Number(r.khalis_sona) || 0, fmtTotal: (t) => `${fmtNum(t)} گرام` },
+  { label: 'ریٹ', get: (r) => fmtMoney(r.rate), num: true },
+  { label: 'قیمت', get: (r) => fmtMoney(r.qeemat), num: true, total: true, raw: (r) => Number(r.qeemat) || 0, fmtTotal: (t) => fmtMoney(t) }
 ]
 
 const INP = 'w-full bg-white border border-gray-300 rounded-md text-[13px] px-2 py-1.5 text-start tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -196,6 +215,19 @@ export default function UdharForm({ open, onClose }) {
       if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
       const res = await getKachaReport({ ...customerFilter(), from: from || undefined, to: to || undefined })
       setReport({ group: 'kacha', rows: res.rows || [], totals: res.totals || { kacha_sona: 0, khalis_sona: 0, sona_diya: 0, cash_diya: 0 }, title: 'کچا سونا لیا', meta: { customer: customerLabel(), from: from || 'ابتدا', to: to || 'آج تک' } })
+    } else if (d.type === 'naqad') {
+      // نقد فروخت / نقد خرید — filtered by that naqad category ONLY (gold_sell /
+      // gold_buy), so no other report's rows can appear here. From/To behaves
+      // like the other ranged reports: blank = all dates, else the set range.
+      if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
+      const res = await getReport({ category: d.a.category, from: from || undefined, to: to || undefined, ...customerFilter() })
+      setReport({
+        group: 'naqad',
+        rows: res.rows || [],
+        columns: naqadColumns(),
+        title: d.a.label,
+        meta: { customer: customerLabel(), dateNote: `${from || 'ابتدا'} تا ${to || 'آج تک'}` }
+      })
     }
     setMsg(null); setDesc(d); setView('report')
   }
@@ -226,7 +258,9 @@ export default function UdharForm({ open, onClose }) {
   //   آج کا تیزابی ادھار دیا | آج کا تیزابی ادھار لیا
   const gridButtons = [
     ...GROUP1.map((a) => ({ label: a.label, run: () => loadReport({ type: 'g1', a }) })),
-    ...GROUP2.map((a) => ({ label: a.label, run: () => loadReport({ type: 'g2', a }) }))
+    ...GROUP2.map((a) => ({ label: a.label, run: () => loadReport({ type: 'g2', a }) })),
+    // Buttons 9–10: نقد فروخت | نقد خرید — same grid style, own report type.
+    ...NAQAD.map((a) => ({ label: a.label, run: () => loadReport({ type: 'naqad', a }) }))
   ]
 
   return (
@@ -421,9 +455,13 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
   if (!report) return null
   const isStatement = report.group === 3
   const isKacha = report.group === 'kacha' // 5-column per-customer table (no thermal)
+  // نقد فروخت / نقد خرید — always the wide TableReport (no thermal layout), and no
+  // row edit: the edit modal only offers the ادھار categories, so editing a naqad
+  // row there would silently convert it into an ادھار entry.
+  const isNaqad = report.group === 'naqad'
   // The statement (کسٹمر کی تفصیلی رسید) is ALWAYS the wide A4 layout — never thermal.
-  const useThermal = thermal && !isKacha && !isStatement
-  const canRowEdit = !isKacha && (report.rows || []).some((r) => r.id != null)
+  const useThermal = thermal && !isKacha && !isStatement && !isNaqad
+  const canRowEdit = !isKacha && !isNaqad && (report.rows || []).some((r) => r.id != null)
 
   // The statement forces the wide A4 page; other reports honour the thermal toggle.
   const applyPrintMode = (on) => {
@@ -466,7 +504,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
     <div className="print-area flex flex-col min-h-0 flex-1">
       <div className="no-print shrink-0 flex items-center gap-2 bg-white border-b border-gray-200 px-4 py-2.5">
         <button type="button" onClick={onBack} className="urdu text-[12px] font-semibold text-blue-700 border border-blue-200 rounded-md px-3 py-1.5 hover:bg-blue-50 transition-colors">← واپس</button>
-        {!isKacha && !isStatement && (
+        {!isKacha && !isStatement && !isNaqad && (
           <button
             type="button"
             onClick={() => setThermal((v) => !v)}
@@ -492,7 +530,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
             <KachaReport report={report} />
           </div>
         </>
-      ) : (thermal && !isStatement) ? (
+      ) : (thermal && !isStatement && !isNaqad) ? (
         // Thermal preview — the receipt shown on screen at the exact roll width so
         // the user can check it before printing. This same narrow content prints.
         // (The statement is excluded — it always uses the wide A4 layout below.)
@@ -537,6 +575,11 @@ function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete 
   const totalIdx = columns.findIndex((c) => c.total)
   const totalText = gold ? `${fmtNum(total)} گرام` : fmtMoney(total)
   const totalLabel = gold ? 'کل خالص سونا' : 'کل رقم'
+  // Multi-total mode (نقد reports): any column carrying its own fmtTotal renders
+  // its OWN summed footer cell, with a plain کل label in the first column. Reports
+  // without fmtTotal (all the pre-existing ones) never enter this path.
+  const multiTotal = columns.some((c) => c.total && c.fmtTotal)
+  const colSum = (c) => (rows || []).reduce((s, r) => s + (c.raw ? c.raw(r) : 0), 0)
   const span = columns.length + (canRowEdit ? 1 : 0)
   return (
     <table className="w-full border-collapse text-[12.5px] bg-white border border-gray-300 shadow-sm">
@@ -559,6 +602,11 @@ function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete 
       <tfoot>
         <tr className="bg-amber-50 border-t-2 border-amber-300 font-bold urdu text-[13px]">
           {columns.map((c, i) => {
+            if (multiTotal) {
+              if (c.total && c.fmtTotal) return <td key={c.label} className="px-3 py-2.5 text-center tabular-nums text-amber-800" dir="ltr">{c.fmtTotal(colSum(c))}</td>
+              if (i === 0) return <td key={c.label} className="px-3 py-2.5 text-right text-amber-800">کل :</td>
+              return <td key={c.label} className="px-3 py-2.5" />
+            }
             if (i === totalIdx) return <td key={c.label} className="px-3 py-2.5 text-center tabular-nums text-amber-800" dir="ltr">{totalText}</td>
             if (i === totalIdx - 1) return <td key={c.label} className="px-3 py-2.5 text-left text-amber-800">{totalLabel} :</td>
             return <td key={c.label} className="px-3 py-2.5" />
