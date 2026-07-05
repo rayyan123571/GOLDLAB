@@ -5,6 +5,7 @@ const { spawn } = require('child_process')
 const db = require('./db.cjs')
 const backup = require('./backup.cjs')
 const raster = require('./rasterPrint.cjs')
+const liveGold = require('./liveGold.cjs')
 
 const isDev = process.env.NODE_ENV === 'development'
 let win = null
@@ -194,6 +195,10 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
+
+  // live gold ticker: starts its poll loop only AFTER the page has loaded —
+  // a slow/failed fetch can never block or delay startup.
+  win.webContents.once('did-finish-load', () => liveGold.start(win))
 }
 
 // Single IPC entry point: renderer calls window.api.invoke(channel, payload)
@@ -405,4 +410,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => { db.flush(); backup.runOnQuit() })
+app.on('before-quit', () => { db.flush(); backup.runOnQuit(); liveGold.stop() })
+
+// On-demand fetch+parse of the live gold spot (also used by the renderer to
+// seed its ticker box on mount). Display-only; never touches rates/receipts.
+ipcMain.handle('get-live-gold', async () => {
+  try { return await liveGold.fetchOnce() } catch { return liveGold.getLast() }
+})
