@@ -197,14 +197,26 @@ export default function UdharForm({ open, onClose }) {
       setReport({ group: 1, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldBalanceColumns() : cashColumns({}), title: a.label, meta: { customer: customerLabel(), dateNote: 'تمام تواریخ (بیلنس)' } })
     } else if (d.type === 'g2') {
       const a = d.a
-      // Single-day report ("آج کی…") — the shared date fields now default to blank
-      // (all-dates) for the other reports, so here fall back to TODAY when blank.
-      const day = from || to || todayISO
-      if (from && to && from !== to) { if (!silent) setMsg({ ok: false, text: 'اس رپورٹ کے لیے فرام اور ٹو ڈیٹ ایک ہی دن ہونی چاہیے' }); return }
-      const res = await getReport({ category: a.category, from: day, to: day, ...customerFilter() })
+      // Date-RANGE report via the shared From/To fields. Blank dates keep the
+      // old آج کی/آج کا habit (today only); only-from → from..today; only-to →
+      // beginning..to; both → validated from..to (same rule/error as g3).
+      if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
+      let f, t, dateNote
+      if (!from && !to) {
+        f = todayISO; t = todayISO; dateNote = todayISO
+      } else if (from && !to) {
+        f = from; t = todayISO
+        dateNote = f === t ? f : `${isoToDisp(f)} تا ${isoToDisp(t)}`
+      } else if (!from && to) {
+        f = undefined; t = to; dateNote = `ابتدا تا ${isoToDisp(to)}`
+      } else {
+        f = from; t = to
+        dateNote = f === t ? f : `${isoToDisp(f)} تا ${isoToDisp(t)}`
+      }
+      const res = await getReport({ category: a.category, from: f, to: t, ...customerFilter() })
       // noActions: the four daily GROUP2 reports never show the ایکشن column
       // (thermal on OR off) — view-only lists.
-      setReport({ group: 2, kind: a.kind, gold: a.kind === 'gold', noActions: true, rows: res.rows || [], columns: a.kind === 'gold' ? goldColumns({ parchi: true, date: true }) : cashColumns({ parchi: true, date: true }), title: a.label, meta: { customer: customerLabel(), dateNote: day } })
+      setReport({ group: 2, kind: a.kind, gold: a.kind === 'gold', noActions: true, rows: res.rows || [], columns: a.kind === 'gold' ? goldColumns({ parchi: true, date: true }) : cashColumns({ parchi: true, date: true }), title: a.label, meta: { customer: customerLabel(), dateNote } })
     } else if (d.type === 'g3') {
       if (!(custCode.trim() || custName.trim())) { if (!silent) setMsg({ ok: false, text: 'پہلے کسٹمر منتخب کریں / نام درج کریں' }); return }
       if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
