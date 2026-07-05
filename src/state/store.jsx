@@ -201,6 +201,10 @@ function buildRasterSlipHtml(panelEl) {
       // to a SOLID BLACK BLOCK swallowing its (forced-black) text — strip it
       // back to plain black-on-clear like every other printed field.
       '\n.print-area .redbox-value,.print-area .redbox-value *{background:transparent!important;color:#000!important;-webkit-text-fill-color:#000!important;opacity:1!important}' +
+      // rcpt-label = SCREEN-only bold/dark labels; pin the raster path's usual
+      // forcing (500 / pure black) so the printed slip never changes with
+      // screen styling.
+      '\n.print-area .rcpt-label{font-weight:500!important;color:#000!important}' +
       // the offscreen page renders SCREEN media, so the @media print rule that
       // hides action bars (WhatsApp/print buttons, Saved tick) never fires —
       // hide them here explicitly

@@ -38,7 +38,9 @@ function Row({ label, value, strong, red, yellow }) {
           {value ?? '-'}
         </span>
       )}
-      <span className={`urdu text-[10px] ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>{label} :</span>
+      {/* rcpt-label: keep bold on screen; print CSS neutralizes it — do not
+          revert during styling work. */}
+      <span className={`urdu text-[10px] ${red ? 'text-red-600 font-bold' : 'rcpt-label font-bold text-gray-900'}`}>{label} :</span>
     </div>
   )
 }
@@ -47,10 +49,14 @@ function Row({ label, value, strong, red, yellow }) {
 function RateRow({ rates }) {
   return (
     <div className="flex justify-between items-center border-b border-dotted border-gray-300 px-1 py-[1px]">
-      <span className="urdu text-[10px] text-gray-700">
+      {/* rcpt-label: keep bold on screen; print CSS neutralizes it — do not
+          revert during styling work. */}
+      <span className="urdu text-[10px] rcpt-label font-bold text-gray-900">
         <b>{fmtNum(rates.rate_tezabi_gram, 0)}</b> ریٹ فی گرام
       </span>
-      <span className="urdu text-[10px] text-gray-700">
+      {/* rcpt-label: keep bold on screen; print CSS neutralizes it — do not
+          revert during styling work. */}
+      <span className="urdu text-[10px] rcpt-label font-bold text-gray-900">
         <b>{fmtMoney(rates.rate_tezabi_tola)}</b> : ریٹ فی تولہ
       </span>
     </div>
@@ -116,7 +122,9 @@ function Fld({ label, value, yellow, red, strong, fit, autoWidth, redBox }) {
   const boxSize = autoWidth ? 'max-w-full min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
   return (
     <div className={`flex items-center gap-1 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] ${autoWidth ? 'justify-between' : ''}`}>
-      <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
+      {/* rcpt-label: keep bold on screen; print CSS neutralizes it — do not
+          revert during styling work. */}
+      <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'rcpt-label font-bold text-gray-900'}`}>
         {label} :
       </span>
       {yellow ? (

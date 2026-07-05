@@ -494,6 +494,13 @@ input[type='number'] {
     -webkit-text-fill-color: #000 !important;
     opacity: 1 !important;
   }
+  /* rcpt-label = SCREEN-only bold/dark receipt labels. Print pins the exact
+     forcing this path has always applied (700 / pure black), so the printed
+     slip stays pixel-identical no matter what screen styling does. */
+  body.slip-print .print-area .rcpt-label {
+    font-weight: 700 !important;
+    color: #000 !important;
+  }
 }
 
 /* ── Customer statement (کسٹمر کی تفصیلی رسید): wide A4 portrait page (NOT the 80mm
