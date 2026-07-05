@@ -931,9 +931,15 @@ const api = {
       cash_out: 0
     }
     for (const t of txns) {
-      // کچا سونا لیا carries a khalis (the ticked row's) for the report only; it
-      // must not count toward the daybook gold totals. The row still lists.
-      if (t.category === 'kacha_gold_take') continue
+      // کچا سونا لیا: the slip's khalis_sona stays OUT of the gold totals (it is
+      // report-only, per the original intent) — but the refined gold and cash
+      // actually HANDED OUT on the kacha deal are real outflows and must show
+      // in the day's برآمد totals.
+      if (t.category === 'kacha_gold_take') {
+        totals.gold_out += t.sona_diya || 0
+        totals.cash_out += t.cash_diya || 0
+        continue
+      }
       if (t.direction === 'in') {
         totals.gold_in += t.khalis_sona || 0
         totals.cash_in += (t.qeemat || 0) + (t.cash_amount || 0)
