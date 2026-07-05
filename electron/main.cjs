@@ -255,6 +255,28 @@ function printOnce(opts, timeoutMs) {
 // { silent: false } to force the dialog. Always resolves { ok, reason }.
 ipcMain.handle('print-page', async (_evt, opts = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
+  // Debug/support hook: with GOLDLAB_PRINT_PDF_DIR set, capture the EXACT
+  // print-media output (same @page rules the printer gets) to a PDF file
+  // instead of spooling — printer-fit problems can be verified on any machine
+  // without thermal hardware. Inert unless the env var is set.
+  if (process.env.GOLDLAB_PRINT_PDF_DIR) {
+    try {
+      // Fixed 80mm-wide page (inches) so the PDF maps 1:1 onto the thermal
+      // roll — `@page size: 80mm auto` is NOT honoured by printToPDF (the
+      // auto height makes Chromium fall back to the default paper), and a
+      // paper-exact capture is the whole point of this hook.
+      const data = await win.webContents.printToPDF({
+        printBackground: true,
+        pageSize: { width: 80 / 25.4, height: 297 / 25.4 },
+        margins: { top: 0, bottom: 0, left: 0, right: 0 }
+      })
+      const file = path.join(process.env.GOLDLAB_PRINT_PDF_DIR, `print-${Date.now()}-${Math.floor(Math.random() * 1e6)}.pdf`)
+      fs.writeFileSync(file, data)
+      return { ok: true, reason: `pdf:${file}` }
+    } catch (e) {
+      return { ok: false, reason: `pdf-capture-failed: ${e.message || e}` }
+    }
+  }
   const wantSilent = opts.silent !== false
   const base = { printBackground: true, ...opts }
   if (wantSilent) {

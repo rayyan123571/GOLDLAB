@@ -379,14 +379,18 @@ input[type='number'] {
 }
 
 /* ── Thermal receipt printing (Udhar). Toggled by adding `thermal-print` to
-   <body> just before window.print()/printToPDF; the width comes from the
-   --thermal-w custom property (default 80mm). Monochrome-friendly: forces black
-   text, drops grey fills/shadows, and uses simple 1px borders that thermal
-   heads render cleanly. Width/@page (size:<w>mm auto) is injected from JS. ── */
+   <body> just before window.print()/printToPDF; the CONTENT width comes from
+   the --thermal-w custom property. Monochrome-friendly: forces black text,
+   drops grey fills/shadows, and uses simple 1px borders that thermal heads
+   render cleanly. Width/@page (size:<paper>mm auto) is injected from JS.
+   Geometry: 80mm printers only print a ~72mm band whose position varies per
+   driver, so the content (64mm) sits 6mm from the paper's left edge — the
+   same 6..70mm safe window the main-screen slips use; the auto right margin
+   absorbs the rest. ── */
 @media print {
   body.thermal-print .print-area {
-    width: var(--thermal-w, 80mm) !important;
-    margin: 0 auto !important;
+    width: var(--thermal-w, 64mm) !important;
+    margin: 0 auto 0 var(--thermal-left, 6mm) !important;
     padding: 0 !important;
   }
   body.thermal-print .print-area * {

@@ -355,15 +355,26 @@ export function AppProvider({ children }) {
       const area = document.createElement('div')
       area.className = 'print-area'
       // Print the receipt EXACTLY as designed: render the clone at the panel's
-      // fixed DESIGN width and transform-scale it down to the 80mm roll (74mm
-      // content ≈ 280px), the same render-at-design-size-then-scale trick the
-      // statement view uses. Squeezing the clone directly to 74mm broke the
-      // internal fixed-px grids (لیب رسید columns) — scaling preserves them.
+      // fixed DESIGN width and transform-scale it down to the roll, the same
+      // render-at-design-size-then-scale trick the statement view uses.
+      // Squeezing the clone directly to the roll width broke the internal
+      // fixed-px grids (لیب رسید columns) — scaling preserves them.
+      //
+      // Printable-safety geometry: an "80mm" thermal printer physically prints
+      // only a ~72mm band (576 dots @ 203dpi) and every driver anchors that
+      // band differently — one shop printer swallowed the LEFT ~3mm (leading
+      // digits of گرام/فی تولہ lost), another clipped everything past ~72mm on
+      // the RIGHT (Urdu labels lost). The old 74mm-wide slip at 2mm could not
+      // survive either. Keep the WHOLE slip inside the 6mm..70mm window of the
+      // page so both failure modes hit blank margin, never text.
+      const PAPER_MM = 80 // physical roll width (@page size)
+      const CONTENT_MM = 64 // slip width — inside every common printable band
+      const LEFT_MM = 6 // slip's left edge, measured from the paper edge
       const DESIGN_W = 341 // the receipt panels' on-screen design width (px)
-      const targetPx = (74 * 96) / 25.4 // 74mm in CSS px ≈ 280
+      const targetPx = (CONTENT_MM * 96) / 25.4 // 64mm in CSS px ≈ 242
       const scale = targetPx / DESIGN_W
       const designH = panelEl.offsetHeight || 456 // layout (unscaled) height
-      area.style.cssText = 'width:74mm;max-width:100%;overflow:hidden'
+      area.style.cssText = `width:${CONTENT_MM}mm;margin-left:${LEFT_MM}mm;overflow:hidden`
       const inner = document.createElement('div')
       inner.style.cssText = `width:${DESIGN_W}px;transform:scale(${scale});transform-origin:top left`
       const clone = panelEl.cloneNode(true)
@@ -395,10 +406,12 @@ export function AppProvider({ children }) {
       // area to the VISUAL (scaled) height so no blank feed follows the slip.
       area.style.height = `${Math.ceil((inner.offsetHeight || designH) * scale)}px`
       // 80mm continuous-roll page (same technique as the thermal reports): the
-      // last @page rule wins over the global `@page { margin: 10mm }`.
+      // last @page rule wins over the global `@page { margin: 10mm }`. Side
+      // margins are 0 so LEFT_MM above is measured from the TRUE paper edge —
+      // the safe-window math must not shift with the page margin.
       pageStyle = document.createElement('style')
       pageStyle.id = 'slip-page-style'
-      pageStyle.textContent = '@page { size: 80mm auto; margin: 2mm; }'
+      pageStyle.textContent = `@page { size: ${PAPER_MM}mm auto; margin: 2mm 0; }`
       document.head.appendChild(pageStyle)
     }
     try {
