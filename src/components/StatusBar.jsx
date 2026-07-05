@@ -1,7 +1,40 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useApp } from '../state/store.jsx'
 import { fmtMoney, fmtNum } from '../logic/units.js'
+import useLiveGold from '../logic/useLiveGold.js'
 import DefaultsForm from './DefaultsForm.jsx'
+
+// Live gold spot box (display-only reference — no rates/receipts involvement).
+// Green/red flash on tick up/down (fades back after ~1.5s), grey stale state
+// with a tiny آف لائن hint when the feed drops, "--" before the first value.
+function GoldTicker() {
+  const { price, prevPrice, ok } = useLiveGold()
+  const [flash, setFlash] = useState(null) // 'up' | 'down' | null
+
+  useEffect(() => {
+    if (price == null || prevPrice == null || price === prevPrice) return undefined
+    setFlash(price > prevPrice ? 'up' : 'down')
+    const t = setTimeout(() => setFlash(null), 1500)
+    return () => clearTimeout(t)
+  }, [price, prevPrice])
+
+  // stale grey ALWAYS wins — a dead feed must never keep flashing green/red
+  const color = !ok ? '#9ca3af' : flash === 'up' ? '#16a34a' : flash === 'down' ? '#dc2626' : '#000000'
+  return (
+    <div
+      className="self-center flex items-center gap-1.5 h-[26px] px-2 w-[132px] flex-shrink-0 overflow-hidden rounded-md border border-gray-300 bg-white"
+      title="Live gold spot — صرف حوالہ، ریٹ/حساب سے الگ"
+      data-gold-ticker
+    >
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${ok ? 'bg-green-500' : 'bg-gray-400'}`} />
+      <span className="text-[13px] font-bold leading-none">Gold</span>
+      <span dir="ltr" className="text-[15px] font-bold tabular-nums whitespace-nowrap leading-none" style={{ color }}>
+        {price != null ? price.toFixed(2) : '--'}
+      </span>
+      {!ok && price != null && <span className="urdu text-[9px] text-gray-400 whitespace-nowrap leading-none">آف لائن</span>}
+    </div>
+  )
+}
 
 export default function StatusBar() {
   const { totals, resetEntry, loadReceipt, resetKachaCounter, cashDisplay } = useApp()
@@ -106,6 +139,8 @@ export default function StatusBar() {
         </svg>
         Defaults
       </button>
+
+      <GoldTicker />
 
       <DefaultsForm open={showDefaults} onClose={() => setShowDefaults(false)} />
 

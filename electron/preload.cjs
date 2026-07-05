@@ -63,5 +63,13 @@ contextBridge.exposeInMainWorld('api', {
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
   captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
   // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.
-  openWhatsApp: (opts) => ipcRenderer.invoke('open-whatsapp', opts)
+  openWhatsApp: (opts) => ipcRenderer.invoke('open-whatsapp', opts),
+  // Live gold spot ticker (display-only). Subscribe to main's poll pushes;
+  // returns an unsubscribe function. getLiveGold does one fetch+parse now.
+  onLiveGold: (cb) => {
+    const handler = (_evt, data) => cb(data)
+    ipcRenderer.on('live-gold', handler)
+    return () => ipcRenderer.removeListener('live-gold', handler)
+  },
+  getLiveGold: () => ipcRenderer.invoke('get-live-gold')
 })
