@@ -563,13 +563,16 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
           </div>
         </>
       ) : (thermal && !isStatement && !isNaqad) ? (
-        // Thermal preview — the white strip is the PAPER (80mm); the content
-        // inside sits exactly where it will print (64mm wide, 6mm from the left
-        // edge — the printable-safe window), so what you check is what prints.
+        // Thermal preview — the white strip is the PAPER (80mm). The content is
+        // CENTERED on the strip for DISPLAY only (mx-auto), so no report looks
+        // glued to one edge; the `print:` classes reinstate the exact print
+        // offset (left 6mm / right 0 — THERMAL_LEFT_MM) so the PRINTED output
+        // stays byte-identical to before. Print geometry itself is driven by
+        // applyThermal()/--thermal-* and is untouched.
         // (The statement is excluded — it always uses the wide A4 layout below.)
         <div className="flex-1 min-h-0 overflow-auto bg-gray-200 p-4">
           <div className="mx-auto bg-white border border-gray-400 shadow-md" style={{ width: `${THERMAL_PAPER_MM}mm` }}>
-            <div style={{ width: `${THERMAL_CONTENT_MM}mm`, margin: `2mm 0 2mm ${THERMAL_LEFT_MM}mm` }}><ThermalReceipt report={report} /></div>
+            <div className="my-[2mm] mx-auto print:mx-0 print:ml-[6mm]" style={{ width: `${THERMAL_CONTENT_MM}mm` }}><ThermalReceipt report={report} /></div>
           </div>
         </div>
       ) : (
