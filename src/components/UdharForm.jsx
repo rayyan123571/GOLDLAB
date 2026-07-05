@@ -202,7 +202,9 @@ export default function UdharForm({ open, onClose }) {
       const day = from || to || todayISO
       if (from && to && from !== to) { if (!silent) setMsg({ ok: false, text: 'اس رپورٹ کے لیے فرام اور ٹو ڈیٹ ایک ہی دن ہونی چاہیے' }); return }
       const res = await getReport({ category: a.category, from: day, to: day, ...customerFilter() })
-      setReport({ group: 2, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldColumns({ parchi: true, date: true }) : cashColumns({ parchi: true, date: true }), title: a.label, meta: { customer: customerLabel(), dateNote: day } })
+      // noActions: the four daily GROUP2 reports never show the ایکشن column
+      // (thermal on OR off) — view-only lists.
+      setReport({ group: 2, kind: a.kind, gold: a.kind === 'gold', noActions: true, rows: res.rows || [], columns: a.kind === 'gold' ? goldColumns({ parchi: true, date: true }) : cashColumns({ parchi: true, date: true }), title: a.label, meta: { customer: customerLabel(), dateNote: day } })
     } else if (d.type === 'g3') {
       if (!(custCode.trim() || custName.trim())) { if (!silent) setMsg({ ok: false, text: 'پہلے کسٹمر منتخب کریں / نام درج کریں' }); return }
       if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
@@ -479,7 +481,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
   const isNaqad = report.group === 'naqad'
   // The statement (کسٹمر کی تفصیلی رسید) is ALWAYS the wide A4 layout — never thermal.
   const useThermal = thermal && !isKacha && !isStatement && !isNaqad
-  const canRowEdit = !isKacha && !isNaqad && (report.rows || []).some((r) => r.id != null)
+  const canRowEdit = !isKacha && !isNaqad && !report.noActions && (report.rows || []).some((r) => r.id != null)
 
   // The statement forces the wide A4 page; other reports honour the thermal toggle.
   const applyPrintMode = (on) => {
