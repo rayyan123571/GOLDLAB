@@ -173,6 +173,29 @@ body {
   color: #000;
 }
 
+/* --------------------------------------------------------------------------
+   باقی تیزابی دینا ہے (udhaar receipt) — SCREEN-ONLY red alert: red label chip +
+   red value box, white text. Print pipelines override this back to plain black
+   (see the slip-print block below and the raster CSS in store.jsx), because a
+   1-bit thermal head drops backgrounds → white text would vanish.
+   -------------------------------------------------------------------------- */
+.redbox-label {
+  background: #d32f2f;
+  color: #fff !important;
+  padding: 0 5px;
+  border-radius: 2px;
+}
+.redbox-value {
+  background: #d32f2f !important;
+  border-color: #b71c1c !important;
+}
+.redbox-value,
+.redbox-value * {
+  color: #fff !important;
+  -webkit-text-fill-color: #fff;
+  opacity: 1;
+}
+
 /* Editable purity cells get a subtle affordance + override highlight */
 .editable {
   background: #fff;
@@ -465,6 +488,17 @@ input[type='number'] {
     font-weight: 700 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+  /* The red باقی تیزابی دینا ہے alert is screen-only: on paper the background
+     would not survive 1-bit printing and white text would vanish — force the
+     row back to plain black-on-clear like every other printed field. */
+  body.slip-print .print-area .redbox-label,
+  body.slip-print .print-area .redbox-value,
+  body.slip-print .print-area .redbox-value * {
+    background: transparent !important;
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+    opacity: 1 !important;
   }
 }
 

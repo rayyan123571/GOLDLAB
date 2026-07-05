@@ -106,18 +106,20 @@ function FitValue({ value, align = 'right', strong, red, min = 6, fit = false, a
 // right-aligned against the label. Values can never spill the panel border:
 // min-w-0 lets the value box shrink, overflow-hidden clips, and FitValue keeps
 // numbers readable (shrink-to-fit) and text tidy (ellipsis).
-function Fld({ label, value, yellow, red, strong, fit, autoWidth }) {
+function Fld({ label, value, yellow, red, strong, fit, autoWidth, redBox }) {
   // autoWidth: the value box hugs its content (small value → small box) and sits at
   // the far LEFT via justify-between, label stays far RIGHT. Default: box fills the
   // space to the left of the label (flex-1). Only the box sizing differs.
+  // redBox: SCREEN-ONLY alert styling (red bg / white text) via the redbox-*
+  // classes — both print pipelines override them back to black-on-clear.
   const boxSize = autoWidth ? 'max-w-full min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
   return (
     <div className={`flex items-center gap-1 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] ${autoWidth ? 'justify-between' : ''}`}>
-      <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
+      <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}${redBox ? ' redbox-label' : ''}`}>
         {label} :
       </span>
       {yellow ? (
-        <div className={`bg-yellowCell border border-line text-[9px] leading-tight px-2 py-[1px] box-border ${boxSize}`}>
+        <div className={`bg-yellowCell border border-line text-[9px] leading-tight px-2 py-[1px] box-border ${boxSize}${redBox ? ' redbox-value' : ''}`}>
           <FitValue value={value} align="right" fit={fit} autoWidth={autoWidth} />
         </div>
       ) : (
@@ -521,7 +523,7 @@ export function CreditReceipt({ ctx, embed }) {
         <R><CRow right={{ label: 'پوائنٹ', value: activePoint != null ? fmtNum(Number(activePoint), 0) : '-' }} left={udharComment ? { bare: true, value: udharComment, fit: true } : null} /></R>
         <R><Fld label="باقی" value={netGold ? fmtNum(netGold) : '-'} /></R>
         <R><Fld label="سابقہ سونا بیلنس" value={customer.id ? fmtNum(prevGold) : '-'} autoWidth /></R>
-        <R><Fld label="باقی تیزابی دینا ہے" value={finalGold < 0 ? fmtNum(Math.abs(finalGold)) : '-'} yellow autoWidth /></R>
+        <R><Fld label="باقی تیزابی دینا ہے" value={finalGold < 0 ? fmtNum(Math.abs(finalGold)) : '-'} yellow autoWidth redBox /></R>
         <R><Fld label="باقی تیزابی لینا ہے" value={finalGold > 0 ? fmtNum(finalGold) : '-'} yellow autoWidth /></R>
 
         <div className="border-t border-line my-[1px]" />
