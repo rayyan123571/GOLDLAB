@@ -33,7 +33,7 @@ body,
 body {
   font-family: 'Segoe UI', Tahoma, sans-serif;
   background: #f3f3f3;
-  color: #111;
+  color: #000; /* pure black baseline — table labels/values inherit rgb(0,0,0) */
   user-select: none;
   font-size: 12px;
 }
@@ -135,6 +135,42 @@ body {
   .panel-title {
     @apply bg-gradient-to-b from-gray-200 to-gray-300 border border-line text-center font-bold text-[12px] py-[2px];
   }
+}
+
+/* --------------------------------------------------------------------------
+   MICRO-FIX: displayed values must be PURE BLACK (rgb(0,0,0), opacity 1).
+   Why they were grey:
+   1. The purity table shows every non-overridden COMPUTED value through the
+      input's `placeholder` (PurityTable.jsx), and the نقد/ادھار ریٹ column
+      shows the effective default rate the same way — browsers paint
+      placeholders grey (~#757575) by default. Scoped to these two sections
+      only, so real HINT placeholders elsewhere (e.g. نام / موبائل search)
+      stay grey.
+   2. The locked نقد rows use <input disabled> + opacity-50 — browsers grey
+      disabled text, and Chrome ignores plain `color` there, so
+      -webkit-text-fill-color forces it; opacity restored to 1 (the grey
+      BACKGROUND + blocked cursor still show the lock).
+   Colour only — no layout/size/weight/border change. ---------------------- */
+.purity-table input::placeholder,
+.cash-udhar input::placeholder {
+  color: #000;
+  opacity: 1;
+}
+.cash-udhar input:disabled {
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+  opacity: 1 !important;
+}
+/* The shared value/label cell classes resolve to pure black even if a parent
+   ever carries a grey text colour (these classes are exactly the "value
+   styling" reused across the app's grids). */
+.cell,
+.hdr,
+.lbl,
+.inp,
+.inp-g,
+.inp-y {
+  color: #000;
 }
 
 /* Editable purity cells get a subtle affordance + override highlight */
