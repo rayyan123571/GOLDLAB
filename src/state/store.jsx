@@ -80,17 +80,24 @@ function showToast(text, ok) {
 
 // ── Thermal slip header/footer — STATIC shop-identity text printed above/below
 // the cloned receipt panel. Display-only markup: never touches any value.
+// Classic bordered header block (reference-receipt style): one clean outer
+// rectangle, internal horizontal rules separating name / tagline / phones /
+// address. Sizes are DESIGN px — the raster path scales them ×~1.63 onto the
+// 576-dot canvas (name ≈ 42px printed, the largest text on the slip).
 function buildSlipHeader() {
   const el = document.createElement('div')
   el.dir = 'rtl'
-  el.className = 'urdu'
-  el.style.cssText = 'text-align:center;color:#000;padding:0 2px 5px;border-bottom:2px solid #000;margin-bottom:5px'
+  el.className = 'urdu slip-header'
+  el.style.cssText = 'text-align:center;color:#000;border:2px solid #000;padding:3px 4px 0;margin-bottom:5px'
   el.innerHTML =
-    '<div style="font-size:23px;font-weight:800;line-height:1.5">چوہدری گولڈ لیبارٹری</div>' +
-    '<div style="font-size:12px;font-weight:700;line-height:1.9">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز  (جیولری چوڑی میکر)</div>' +
-    '<div style="font-size:13px;font-weight:700;line-height:1.7">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">0300-7301839</span></div>' +
-    '<div style="font-size:13px;font-weight:700;line-height:1.6"><span dir="ltr">0302-7330000</span>&nbsp;&nbsp;&nbsp;&nbsp;<span dir="ltr">0302-3334440</span></div>' +
-    '<div style="font-size:12px;font-weight:700;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>'
+    '<div style="font-size:26px;font-weight:800;line-height:1.55">چوہدری گولڈ لیبارٹری</div>' +
+    // classic double rule under the name (top margin keeps clear of Nastaliq tails)
+    '<div style="border-top:2px solid #000;border-bottom:1px solid #000;height:3px;margin:3px 6px 3px"></div>' +
+    '<div style="font-size:12px;font-weight:500;line-height:1.9">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز  (جیولری چوڑی میکر)</div>' +
+    '<div style="font-size:13.5px;font-weight:600;line-height:1.8">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">0300-7301839</span></div>' +
+    '<div style="font-size:14px;font-weight:600;line-height:1.7"><span dir="ltr">0302-7330000</span>&nbsp;&nbsp;&nbsp;&nbsp;<span dir="ltr">0302-3334440</span></div>' +
+    // address in its own ruled strip at the bottom of the box
+    '<div style="border-top:1.5px solid #000;margin-top:3px;padding:2px 0 4px;font-size:12.5px;font-weight:500;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>'
   return el
 }
 
@@ -102,14 +109,14 @@ function buildSlipFooter(kind) {
   el.className = 'urdu'
   el.style.cssText = 'color:#000;margin-top:5px'
   const fee = kind === 'lab'
-    ? '<div style="font-size:11px;font-weight:700;line-height:1.9;text-align:right;border:1px solid #000;padding:3px 6px;margin-bottom:5px">' +
+    ? '<div style="font-size:12.5px;font-weight:500;line-height:2;text-align:right;border:1.5px solid #000;padding:3px 6px;margin-bottom:5px">' +
       'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔' +
       '</div>'
     : ''
   el.innerHTML = fee +
-    '<div style="font-size:11px;font-weight:700;line-height:1.9;text-align:center;border-top:2px solid #000;padding-top:4px">' +
+    '<div style="font-size:12px;font-weight:500;line-height:1.9;text-align:center;border-top:2px solid #000;padding-top:4px">' +
     'لیبارٹری، کاسٹنگ سنٹر، ہول سیل شاپ، جیولری شاپ، چوڑی کڑے اور کارخانے کے سوفٹ ویئر دستیاب ہیں۔' +
-    '<div dir="ltr" style="font-size:12.5px;font-weight:800;margin-top:2px">Rayyan&nbsp;&nbsp;0307-6965231</div>' +
+    '<div dir="ltr" style="font-size:13px;font-weight:800;margin-top:2px">Rayyan&nbsp;&nbsp;0307-6965231</div>' +
     '</div>'
   return el
 }
@@ -145,8 +152,11 @@ function buildRasterSlipHtml(panelEl) {
         f.setAttribute('value', s.value)
       }
     })
-    // fix the clone at its on-screen height so flex rows keep their spacing
-    clone.style.height = `${panelEl.offsetHeight || 456}px`
+    // Rows are flex-1 inside a fixed panel height, so give the clone 1.35× the
+    // on-screen height: the larger print typography (below) gets matching row
+    // room with tidy (not airy) spacing — width/geometry untouched, the slip
+    // just runs a little longer down the roll.
+    clone.style.height = `${Math.round((panelEl.offsetHeight || 456) * 1.35)}px`
     // The offscreen page needs the app's real stylesheet (tailwind utilities,
     // receipt-panel rules). Serialize every reachable rule; same-origin in dev
     // (vite) and prod (file://) alike.
@@ -165,10 +175,27 @@ function buildRasterSlipHtml(panelEl) {
     const footer = buildSlipFooter(panelEl.getAttribute('data-receipt') || '').outerHTML
     return '<!doctype html><html dir="ltr"><head><meta charset="utf-8"><style>' + css +
       '\nhtml,body{margin:0!important;padding:0!important;background:#fff!important}' +
-      // 1-bit print rules — the same forcing body.slip-print applies on the
-      // driver path: pure black text, black cell borders, full bold.
+      // ── Print typography (203dpi thermal): BIGGER regular/medium text, not
+      // bold — small bold Nastaliq bleeds on a 1-bit head; size carries the
+      // readability. Design px here land ×1.63 on the 576-dot canvas:
+      // values 17px → ≈28 dots, Urdu labels 16px → ≈26 dots. The only bold
+      // that remains is the final boxed بقایا رقم amount.
       '\n.print-area *{color:#000!important}' +
-      '\n.print-area .receipt-panel,.print-area .receipt-panel *{border-color:#000!important;font-weight:700!important}' +
+      '\n.print-area .receipt-panel,.print-area .receipt-panel *{border-color:#000!important;font-weight:500!important}' +
+      '\n.print-area .receipt-panel .cell,.print-area .receipt-panel .lbl,.print-area .receipt-panel .inp,' +
+      '.print-area .receipt-panel .inp-g,.print-area .receipt-panel .inp-y,.print-area .receipt-panel [class*="text-["]{font-size:17px!important;line-height:1.35!important}' +
+      '\n.print-area .receipt-panel .urdu{font-size:16px!important;line-height:1.55!important}' +
+      '\n.print-area .receipt-panel .panel-title{font-size:18px!important;font-weight:600!important;padding:3px 0!important}' +
+      '\n.print-area .receipt-panel .laib-baqaya-row .num,.print-area .receipt-panel .laib-baqaya-row .bg-yellowCell *{font-weight:700!important}' +
+      // ── Solid printable rules: 1px design lines raster to <2 dots and print
+      // broken on thermal heads. Outer panel border ≈3 dots, inner separators
+      // ≈2.4 dots. Dotted field underlines keep their style, just heavier.
+      '\n.print-area .receipt-panel{border-width:2px!important}' +
+      '\n.print-area .receipt-panel [class~="border-b"]{border-bottom-width:1.5px!important}' +
+      '\n.print-area .receipt-panel [class~="border-t"]{border-top-width:1.5px!important}' +
+      '\n.print-area .receipt-panel [class~="border-l"]{border-left-width:1.5px!important}' +
+      '\n.print-area .receipt-panel [class~="border-r"]{border-right-width:1.5px!important}' +
+      '\n.print-area .receipt-panel .panel-title{border-bottom-width:1.5px!important}' +
       // the offscreen page renders SCREEN media, so the @media print rule that
       // hides action bars (WhatsApp/print buttons, Saved tick) never fires —
       // hide them here explicitly
@@ -185,9 +212,20 @@ function buildRasterSlipHtml(panelEl) {
       '<div data-measure style="width:' + DESIGN_W + 'px;transform:scale(' + scale + ');transform-origin:top left">' +
       header + clone.outerHTML + footer +
       '</div></div>' +
-      // report the VISUAL (scaled) bottom so the canvas covers the whole slip
+      // In-page passes after fonts load, before measuring:
+      // 1) FIT PASS — FitValue spans were fitted at SCREEN sizes; at the larger
+      //    print typography a long value (e.g. "4:27 PM 05-07-26") can overflow
+      //    its box and get clipped. Re-run the same shrink-until-fits loop at
+      //    print sizes so every digit always survives.
+      // 2) HEIGHT — report the VISUAL (scaled) bottom so the canvas covers the
+      //    whole slip.
       '<script>window.__ready=(async()=>{try{if(document.fonts&&document.fonts.ready){await document.fonts.ready}}catch(e){}' +
       'await new Promise(r=>setTimeout(r,80));' +
+      'document.querySelectorAll(".receipt-panel span[dir=ltr]").forEach(function(s){' +
+      'if(!/whitespace-nowrap/.test(s.className))return;' +
+      'var sz=parseFloat(getComputedStyle(s).fontSize)||17,g=0;' +
+      'while(s.scrollWidth>s.clientWidth&&sz>10&&g<40){sz-=0.5;s.style.setProperty("font-size",sz+"px","important");g++}' +
+      '});' +
       'var el=document.querySelector("[data-measure]")||document.body;' +
       'var h=Math.ceil(el.getBoundingClientRect().bottom)+8;' +
       'var pa=document.querySelector(".print-area");if(pa){pa.style.height=h+"px"}' +
