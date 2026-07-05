@@ -515,6 +515,83 @@ const api = {
     return { rows, total_gold, total_cash }
   },
 
+  // ── NET balance reports for the four GROUP1 buttons ────────────────────────
+  // (تیزابی لینا ہے / تیزابی دینا ہے / رقم لینی ہے / رقم دینی ہے)
+  // reportGroup1 sums ONE category and never nets give against take — a customer
+  // who took 5g and returned 4.65g still showed 5g under لینا. These net the
+  // PAIR per customer in ONE SQL pass, with the sign convention copied from
+  // getCustomerLedger: sign = direction 'out' ? +1 : -1 (positive net = the
+  // customer owes the shop). side 'lena' keeps nets > +EPS, 'dena' keeps nets
+  // < -EPS and returns the magnitude. Amounts come back under the SAME field
+  // names reportGroup1 used (total_khalis / total_cash) so the existing report
+  // columns work unchanged. EPS kills float-dust ghost rows; a settled (zero)
+  // customer appears in NEITHER list. reportGroup1 itself stays untouched.
+  _netBalanceReport({ side, opts, cats, col, out, eps, round }) {
+    const { customerId, name } = opts || {}
+    const where = [`t.category IN ('${cats[0]}','${cats[1]}')`]
+    const params = []
+    if (customerId != null && customerId !== '') { where.push('t.customer_id = ?'); params.push(customerId) }
+    else if (name && String(name).trim()) { where.push('c.name LIKE ?'); params.push(`%${String(name).trim()}%`) }
+    const raw = query(
+      `SELECT t.customer_id, c.name AS customer_name,
+              SUM((CASE WHEN t.direction = 'out' THEN 1 ELSE -1 END) * COALESCE(t.${col}, 0)) AS net,
+              MAX(t.date) AS date,
+              MAX(t.updated_at) AS updated_at,
+              COUNT(*) AS cnt
+       FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id
+       WHERE ${where.join(' AND ')}
+       GROUP BY t.customer_id, c.name
+       ORDER BY c.name ASC`,
+      params
+    )
+    const rows = []
+    let total = 0
+    for (const r of raw) {
+      const net = Number(r.net) || 0
+      if (side === 'lena' ? net <= eps : net >= -eps) continue
+      const amount = round(Math.abs(net))
+      rows.push({
+        customer_id: r.customer_id,
+        customer_name: r.customer_name,
+        [out]: amount,
+        date: r.date,
+        updated_at: r.updated_at,
+        cnt: r.cnt
+      })
+      total += amount
+    }
+    return {
+      rows,
+      total_gold: out === 'total_khalis' ? total : 0,
+      total_cash: out === 'total_cash' ? total : 0
+    }
+  },
+
+  // side = 'lena' (net > 0: customer owes gold) | 'dena' (net < 0: shop owes)
+  reportGoldBalanceNet(side, opts = {}) {
+    return api._netBalanceReport({
+      side,
+      opts,
+      cats: ['gold_give', 'gold_take'],
+      col: 'khalis_sona',
+      out: 'total_khalis',
+      eps: 0.0005, // grams
+      round: (v) => Math.round(v * 1000) / 1000 // 3dp — no float-dust in the list
+    })
+  },
+
+  reportCashBalanceNet(side, opts = {}) {
+    return api._netBalanceReport({
+      side,
+      opts,
+      cats: ['cash_give', 'cash_take'],
+      col: 'cash_amount',
+      out: 'total_cash',
+      eps: 0.5, // rupees — display rounding stays with fmtMoney
+      round: (v) => v
+    })
+  },
+
   // "کچا سونا لیا" report — ONE ROW PER kacha_gold_take TRANSACTION (per-entry, NO
   // per-customer aggregation). A customer with N kacha parchis appears in N rows,
   // each showing that single entry's own values, read ENTIRELY from that record

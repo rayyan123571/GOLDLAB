@@ -184,7 +184,16 @@ export default function UdharForm({ open, onClose }) {
   const loadReport = async (d, silent = false) => {
     if (d.type === 'g1') {
       const a = d.a
-      const res = await getReportGroup1({ category: a.category, ...customerFilter() })
+      // NET balance per customer: give netted against take with the
+      // getCustomerLedger sign (لینا = customer owes, دینا = shop owes).
+      // The old per-category reportGroup1 stays available for other callers.
+      const side = (a.category === 'gold_give' || a.category === 'cash_give') ? 'lena' : 'dena'
+      const fn = a.kind === 'gold'
+        ? (window.api && window.api.reportGoldBalanceNet)
+        : (window.api && window.api.reportCashBalanceNet)
+      const res = (hasApi && fn)
+        ? await fn(side, { ...customerFilter() })
+        : await getReportGroup1({ category: a.category, ...customerFilter() })
       setReport({ group: 1, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldBalanceColumns() : cashColumns({}), title: a.label, meta: { customer: customerLabel(), dateNote: 'تمام تواریخ (بیلنس)' } })
     } else if (d.type === 'g2') {
       const a = d.a

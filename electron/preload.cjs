@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld('api', {
   getReceiptByNo: (n) => call('getReceiptByNo', n),
   getReport: (opts) => call('getReport', opts),
   reportGroup1: (opts) => call('reportGroup1', opts),
+  // NET per-customer balance for the four GROUP1 buttons (give netted against
+  // take, getCustomerLedger sign). side = 'lena' | 'dena'.
+  reportGoldBalanceNet: (side, opts) => call('reportGoldBalanceNet', side, opts),
+  reportCashBalanceNet: (side, opts) => call('reportCashBalanceNet', side, opts),
   reportKachaGold: (opts) => call('reportKachaGold', opts),
   getKachaTotalForDate: (date) => call('getKachaTotalForDate', date),
   getCustomerLedger: (id) => call('getCustomerLedger', id),
