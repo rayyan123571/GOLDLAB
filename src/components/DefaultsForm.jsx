@@ -24,6 +24,8 @@ export default function DefaultsForm({ open, onClose }) {
   const [saved, setSaved] = useState(false)
   const [kachaMsg, setKachaMsg] = useState('')
   const [expenseMsg, setExpenseMsg] = useState('')
+  const [testMsg, setTestMsg] = useState('')
+  const [testBusy, setTestBusy] = useState(false)
   const savedTimer = useRef(null)
   const saveTimer = useRef(null)
 
@@ -86,6 +88,27 @@ export default function DefaultsForm({ open, onClose }) {
     commit({ ...form, slip_count: v })
   }
 
+  // Direct-thermal test pages (کیلیبریشن / ورسٹ کیس) — print via the raw
+  // ESC/POS raster path to the DEFAULT printer so the paper itself proves the
+  // geometry: full border, mm ticks, 10mm reference square, edge texts.
+  const runTest = async (kind, label) => {
+    if (!hasApi || !window.api.rasterTestPrint || testBusy) return
+    setTestBusy(true)
+    setTestMsg(`${label} پرنٹ ہو رہا ہے…`)
+    try {
+      const res = await window.api.rasterTestPrint(kind)
+      setTestMsg(res && res.ok
+        ? `${label} پرنٹ ہو گیا ✓${res.printer ? ` (${res.printer})` : ''}`
+        : `ناکام: ${res && res.reason ? res.reason : 'نامعلوم مسئلہ'}`)
+    } catch (e) {
+      setTestMsg(`ناکام: ${e && e.message ? e.message : e}`)
+    } finally {
+      setTestBusy(false)
+      if (savedTimer.current) clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setTestMsg(''), 6000)
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-[60] bg-black/50 flex items-start justify-center p-4 pt-[8vh]"
@@ -139,6 +162,38 @@ export default function DefaultsForm({ open, onClose }) {
               placeholder="1"
             />
           </Row>
+
+          {/* Direct-thermal printer test pages: calibration sheet (border, mm
+              ticks, 10mm square, edge texts) + worst-case receipt. Paper-level
+              proof that width/sharpness are correct on THIS shop's printer. */}
+          <div className="mt-1 pt-4 border-t border-gray-200">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="urdu font-bold text-[13px] text-gray-700">پرنٹر ٹیسٹ (ڈائریکٹ تھرمل)</div>
+                {testMsg
+                  ? <div className="urdu text-[12px] text-emerald-600 break-all">{testMsg}</div>
+                  : <div className="urdu text-[11px] text-gray-500">چوڑائی اور صفائی جانچنے کے لیے ٹیسٹ پرچی نکالیں</div>}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={testBusy}
+                  onClick={() => runTest('calibration', 'کیلیبریشن')}
+                  className="urdu text-[13px] font-bold text-white bg-slate-700 rounded-md px-3 py-2 hover:bg-slate-800 active:bg-slate-900 transition-colors disabled:opacity-50"
+                >
+                  کیلیبریشن
+                </button>
+                <button
+                  type="button"
+                  disabled={testBusy}
+                  onClick={() => runTest('worstcase', 'ورسٹ کیس')}
+                  className="urdu text-[13px] font-bold text-white bg-slate-700 rounded-md px-3 py-2 hover:bg-slate-800 active:bg-slate-900 transition-colors disabled:opacity-50"
+                >
+                  ورسٹ کیس
+                </button>
+              </div>
+            </div>
+          </div>
 
           {/* کچا سونا لیا reset — clears only the kacha data (report → empty, total 0). */}
           <div className="mt-1 pt-4 border-t border-gray-200 flex items-center justify-between gap-3">

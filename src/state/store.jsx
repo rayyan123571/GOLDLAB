@@ -114,6 +114,90 @@ function buildSlipFooter(kind) {
   return el
 }
 
+// Build the standalone HTML document the DIRECT thermal raster path renders:
+// exactly 576px wide (72.1mm × 8 dots @ 203dpi — the printer's full printable
+// band), with a 10px inner safe padding per side so ink never touches the
+// physical edge. The receipt keeps its EXACT on-screen layout: the panel is
+// cloned at its 341px design width and vector-scaled once to the 556px content
+// box — Chromium rasterizes glyphs at the FINAL size (no bitmap resize), and
+// the main process hard-thresholds that single render to 1-bit.
+function buildRasterSlipHtml(panelEl) {
+  try {
+    const clone = panelEl.cloneNode(true)
+    // cloneNode copies attributes, NOT live input state — and outerHTML only
+    // serializes ATTRIBUTES, so live values must be written back as attributes.
+    const src = panelEl.querySelectorAll('input, textarea, select')
+    const dst = clone.querySelectorAll('input, textarea, select')
+    dst.forEach((f, i) => {
+      const s = src[i]
+      if (!s) return
+      if (f.type === 'checkbox' || f.type === 'radio') {
+        if (s.checked) f.setAttribute('checked', '')
+        else f.removeAttribute('checked')
+      } else if (f.tagName === 'TEXTAREA') {
+        f.textContent = s.value
+      } else if (f.tagName === 'SELECT') {
+        Array.from(f.options).forEach((o, j) => {
+          if (j === s.selectedIndex) o.setAttribute('selected', '')
+          else o.removeAttribute('selected')
+        })
+      } else {
+        f.setAttribute('value', s.value)
+      }
+    })
+    // fix the clone at its on-screen height so flex rows keep their spacing
+    clone.style.height = `${panelEl.offsetHeight || 456}px`
+    // The offscreen page needs the app's real stylesheet (tailwind utilities,
+    // receipt-panel rules). Serialize every reachable rule; same-origin in dev
+    // (vite) and prod (file://) alike.
+    let css = ''
+    try {
+      css = Array.from(document.styleSheets)
+        .map((ss) => { try { return Array.from(ss.cssRules).map((r) => r.cssText).join('\n') } catch { return '' } })
+        .join('\n')
+    } catch {}
+    // Packaged builds may refuse CSSOM access on file:// stylesheets — leave a
+    // marker and the main process injects the built stylesheet from disk.
+    if (!css || css.length < 500) css = '/*__APP_CSS__*/'
+    const DOTS = 576, PAD = 10, DESIGN_W = 341
+    const scale = (DOTS - 2 * PAD) / DESIGN_W
+    const header = buildSlipHeader().outerHTML
+    const footer = buildSlipFooter(panelEl.getAttribute('data-receipt') || '').outerHTML
+    return '<!doctype html><html dir="ltr"><head><meta charset="utf-8"><style>' + css +
+      '\nhtml,body{margin:0!important;padding:0!important;background:#fff!important}' +
+      // 1-bit print rules — the same forcing body.slip-print applies on the
+      // driver path: pure black text, black cell borders, full bold.
+      '\n.print-area *{color:#000!important}' +
+      '\n.print-area .receipt-panel,.print-area .receipt-panel *{border-color:#000!important;font-weight:700!important}' +
+      // the offscreen page renders SCREEN media, so the @media print rule that
+      // hides action bars (WhatsApp/print buttons, Saved tick) never fires —
+      // hide them here explicitly
+      '\n.no-print{display:none!important}' +
+      '</style></head><body>' +
+      // dir="ltr" wrapper for the same reason the print overlay uses it: the
+      // clone must keep its on-screen anchoring/column order; the header,
+      // footer and the receipts' internal RTL blocks set dir="rtl" themselves.
+      // NO overflow:hidden here — transform:scale does not grow the wrapper's
+      // LAYOUT box, so clipping to it would chop the slip at its unscaled
+      // height (bottom rows lost). The ready script pins explicit heights to
+      // the VISUAL (scaled) extent instead.
+      '<div class="print-area" dir="ltr" style="width:' + DOTS + 'px;box-sizing:border-box;padding:6px ' + PAD + 'px 0;background:#fff">' +
+      '<div data-measure style="width:' + DESIGN_W + 'px;transform:scale(' + scale + ');transform-origin:top left">' +
+      header + clone.outerHTML + footer +
+      '</div></div>' +
+      // report the VISUAL (scaled) bottom so the canvas covers the whole slip
+      '<script>window.__ready=(async()=>{try{if(document.fonts&&document.fonts.ready){await document.fonts.ready}}catch(e){}' +
+      'await new Promise(r=>setTimeout(r,80));' +
+      'var el=document.querySelector("[data-measure]")||document.body;' +
+      'var h=Math.ceil(el.getBoundingClientRect().bottom)+8;' +
+      'var pa=document.querySelector(".print-area");if(pa){pa.style.height=h+"px"}' +
+      'document.body.style.height=h+"px";return h})()</scr' + 'ipt>' +
+      '</body></html>'
+  } catch {
+    return null
+  }
+}
+
 // Flip to true to trace the parchi save/load path in the devtools console
 // (Save button → saveParchi → replaceReceipt, and loadReceipt reconstruction).
 const DEBUG_SAVE = false
@@ -327,6 +411,25 @@ export function AppProvider({ children }) {
   // print, 2 → two, etc. Each call opens the print dialog for that copy.
   const printSlips = useCallback(async (panelEl) => {
     const n = Math.max(1, parseInt(rates.slip_count, 10) || 1)
+    // ── PRIMARY: direct 1-bit thermal raster (ESC/POS, RAW spool). The slip is
+    // rendered ONCE at exactly 576 dots = the full 72.1mm printable band, hard-
+    // thresholded to pure black/white and written straight to the printer — no
+    // driver scaling, no left/right drift, no anti-alias blur. If the printer
+    // isn't reachable this way (non-ESC/POS device, no default printer), fall
+    // through to the driver-based path below unchanged.
+    if (panelEl && hasApi && window.api.rasterPrintSlip) {
+      const rasterHtml = buildRasterSlipHtml(panelEl)
+      if (rasterHtml) {
+        try {
+          const res = await window.api.rasterPrintSlip({ html: rasterHtml, copies: n })
+          if (res && res.ok) return
+          console.warn('raster print unavailable, using driver path:', res && res.reason)
+        } catch (e) {
+          console.warn('raster print failed, using driver path:', e)
+        }
+      }
+    }
+    // ── FALLBACK: Windows-driver print (silent → dialog), safe-window geometry.
     // The global @media print CSS shows ONLY `.print-area` content — and the main
     // screen has none, so receipt prints came out BLANK. Fix: clone the clicked
     // receipt panel into a temporary body-level .print-area (the same overlay

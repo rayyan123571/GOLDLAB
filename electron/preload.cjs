@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('api', {
   // Print through the main process (native dialog) — avoids Electron's renderer
   // "does not support print preview" error.
   printPage: (opts) => ipcRenderer.invoke('print-page', opts),
+  // Direct 1-bit ESC/POS raster print of a slip HTML (576 dots, RAW spool) —
+  // the sharp, never-clips receipt path; callers fall back to printPage on !ok.
+  rasterPrintSlip: (opts) => ipcRenderer.invoke('raster-print-slip', opts),
+  // Calibration / worst-case printer test pages from the settings dialog.
+  rasterTestPrint: (kind) => ipcRenderer.invoke('raster-test-print', { kind }),
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
   captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
   // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.

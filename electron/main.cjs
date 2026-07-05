@@ -4,6 +4,7 @@ const fs = require('fs')
 const { spawn } = require('child_process')
 const db = require('./db.cjs')
 const backup = require('./backup.cjs')
+const raster = require('./rasterPrint.cjs')
 
 const isDev = process.env.NODE_ENV === 'development'
 let win = null
@@ -253,6 +254,24 @@ function printOnce(opts, timeoutMs) {
 // reports an explicit failure, we fall back to the dialog once so the user still
 // has a path (e.g. printing to a different printer). Callers may pass
 // { silent: false } to force the dialog. Always resolves { ok, reason }.
+// ── Direct thermal raster printing (see rasterPrint.cjs) ────────────────────
+// Primary receipt path: render at exactly 576 dots (72.1mm @ 203dpi), hard
+// 1-bit threshold, ESC/POS raster, RAW spool. The renderer falls back to the
+// driver-based 'print-page' below when this returns ok:false.
+ipcMain.handle('raster-print-slip', async (_evt, { html, copies } = {}) => {
+  if (!win) return { ok: false, reason: 'no-window' }
+  try { return await raster.printHtml({ html, copies, win, tag: 'slip' }) }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// Printer test pages (settings → پرنٹر ٹیسٹ): calibration sheet + worst-case
+// receipt, straight through the raster pipeline to the DEFAULT printer.
+ipcMain.handle('raster-test-print', async (_evt, { kind } = {}) => {
+  if (!win) return { ok: false, reason: 'no-window' }
+  try { return await raster.testPrint({ kind, win }) }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
 ipcMain.handle('print-page', async (_evt, opts = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
   // Debug/support hook: with GOLDLAB_PRINT_PDF_DIR set, capture the EXACT
