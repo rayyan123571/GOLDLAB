@@ -335,8 +335,14 @@ export default function UdharForm({ open, onClose }) {
   )
 }
 
-// ═══ THERMAL RECEIPT (Udhar). Default 80mm roll — change to 58 for the small one.
-const THERMAL_WIDTH_MM = 80
+// ═══ THERMAL RECEIPT (Udhar). Default 80mm roll — change PAPER to 58 for the
+// small one. An "80mm" printer physically prints only a ~72mm band anchored
+// differently per driver, so the CONTENT is kept at 64mm starting 6mm from the
+// paper's left edge (the 6..70mm safe window — same as the main-screen slips);
+// otherwise some printers clip the right edge, others the left.
+const THERMAL_PAPER_MM = 80
+const THERMAL_CONTENT_MM = 64
+const THERMAL_LEFT_MM = 6
 
 // Which date to show in the تاریخ column: the last time this row was touched.
 // Group-1 rows carry a pre-computed last_updated (MAX over the customer's
@@ -365,11 +371,14 @@ const thermalColumns = (report) => report.gold
 function applyThermal(on) {
   const body = document.body
   body.classList.toggle('thermal-print', on)
-  body.style.setProperty('--thermal-w', `${THERMAL_WIDTH_MM}mm`)
+  body.style.setProperty('--thermal-w', `${THERMAL_CONTENT_MM}mm`)
+  body.style.setProperty('--thermal-left', `${THERMAL_LEFT_MM}mm`)
   let style = document.getElementById('thermal-page-style')
   if (on) {
     if (!style) { style = document.createElement('style'); style.id = 'thermal-page-style'; document.head.appendChild(style) }
-    style.textContent = `@page { size: ${THERMAL_WIDTH_MM}mm auto; margin: 2mm; }`
+    // Side margins 0: the CSS keeps the content inside the 6..70mm safe window
+    // measured from the TRUE paper edge, so the page must not add its own.
+    style.textContent = `@page { size: ${THERMAL_PAPER_MM}mm auto; margin: 2mm 0; }`
   } else if (style) {
     style.remove()
   }
@@ -508,10 +517,10 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
           <button
             type="button"
             onClick={() => setThermal((v) => !v)}
-            title={`تھرمل رول ${THERMAL_WIDTH_MM}mm`}
+            title={`تھرمل رول ${THERMAL_PAPER_MM}mm`}
             className={`urdu text-[12px] font-semibold border rounded-md px-3 py-1.5 transition-colors ${thermal ? 'bg-slate-700 text-white border-slate-700' : 'text-gray-700 border-gray-300 hover:bg-gray-100'}`}
           >
-            تھرمل ({THERMAL_WIDTH_MM}mm)
+            تھرمل ({THERMAL_PAPER_MM}mm)
           </button>
         )}
         <div className="flex-1" />
@@ -531,12 +540,13 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
           </div>
         </>
       ) : (thermal && !isStatement && !isNaqad) ? (
-        // Thermal preview — the receipt shown on screen at the exact roll width so
-        // the user can check it before printing. This same narrow content prints.
+        // Thermal preview — the white strip is the PAPER (80mm); the content
+        // inside sits exactly where it will print (64mm wide, 6mm from the left
+        // edge — the printable-safe window), so what you check is what prints.
         // (The statement is excluded — it always uses the wide A4 layout below.)
         <div className="flex-1 min-h-0 overflow-auto bg-gray-200 p-4">
-          <div className="mx-auto bg-white border border-gray-400 shadow-md" style={{ width: `${THERMAL_WIDTH_MM}mm` }}>
-            <div className="p-2"><ThermalReceipt report={report} /></div>
+          <div className="mx-auto bg-white border border-gray-400 shadow-md" style={{ width: `${THERMAL_PAPER_MM}mm` }}>
+            <div style={{ width: `${THERMAL_CONTENT_MM}mm`, margin: `2mm 0 2mm ${THERMAL_LEFT_MM}mm` }}><ThermalReceipt report={report} /></div>
           </div>
         </div>
       ) : (
@@ -889,7 +899,7 @@ function StRow({ k, v, bold }) {
 // fit the roll. This is the same "render at design size, transform-scale to fit"
 // trick FitScreen uses for the main screen.
 const RECEIPT_DESIGN_W = 341 // = main-screen لیب/وصولی panel width (Left column / 2)
-const THERMAL_TILE_PX = Math.round(THERMAL_WIDTH_MM * 96 / 25.4) // 80mm ≈ 302px
+const THERMAL_TILE_PX = Math.round(THERMAL_CONTENT_MM * 96 / 25.4) // 64mm ≈ 242px — must fit the thermal print-area's CONTENT width
 const WIDE_TILE_PX = Math.round(RECEIPT_DESIGN_W * 0.75) // ~256px — shrink so several fit the row
 
 function ParchiReceipts({ p, thermal }) {
