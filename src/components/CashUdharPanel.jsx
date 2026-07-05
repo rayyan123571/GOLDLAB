@@ -110,7 +110,7 @@ export default function CashUdharPanel() {
   return (
     <div
       dir="rtl"
-      className="flex flex-col h-full gap-y-1"
+      className="cash-udhar flex flex-col h-full gap-y-1"
     >
       {/* نقد (Cash) */}
       <div className="flex flex-col border border-line bg-white overflow-hidden flex-[3]">
