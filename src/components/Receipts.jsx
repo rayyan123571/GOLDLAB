@@ -110,12 +110,13 @@ function Fld({ label, value, yellow, red, strong, fit, autoWidth, redBox }) {
   // autoWidth: the value box hugs its content (small value → small box) and sits at
   // the far LEFT via justify-between, label stays far RIGHT. Default: box fills the
   // space to the left of the label (flex-1). Only the box sizing differs.
-  // redBox: SCREEN-ONLY alert styling (red bg / white text) via the redbox-*
-  // classes — both print pipelines override them back to black-on-clear.
+  // redBox: SCREEN-ONLY alert styling on the VALUE BOX only (light red bg /
+  // white text) via the redbox-value class — the label stays a normal label,
+  // and both print pipelines override the box back to black-on-clear.
   const boxSize = autoWidth ? 'max-w-full min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
   return (
     <div className={`flex items-center gap-1 w-full min-w-0 px-2 border-b border-dotted border-gray-300 min-h-[19px] ${autoWidth ? 'justify-between' : ''}`}>
-      <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}${redBox ? ' redbox-label' : ''}`}>
+      <span dir="rtl" className={`urdu shrink-0 whitespace-nowrap ${yellow ? 'text-[9px]' : 'text-[10px]'} ${red ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
         {label} :
       </span>
       {yellow ? (
@@ -532,7 +533,7 @@ export function CreditReceipt({ ctx, embed }) {
         <R><CRow right={{ label: 'کیش۔ دیا', value: cGive ? fmtMoney(cGive) : '-' }} left={{ label: 'کیش۔ لیا', value: cTake ? fmtMoney(cTake) : '-' }} /></R>
         <R><Fld label="باقی" value={netCash ? fmtMoney(netCash) : '-'} /></R>
         <R><Fld label="سابقہ کیش بیلنس" value={customer.id ? fmtMoney(prevCash) : '-'} autoWidth /></R>
-        <R><Fld label="باقی کیش دینا ہے" value={finalCash < 0 ? fmtMoney(Math.abs(finalCash)) : '-'} yellow autoWidth /></R>
+        <R><Fld label="باقی کیش دینا ہے" value={finalCash < 0 ? fmtMoney(Math.abs(finalCash)) : '-'} yellow autoWidth redBox /></R>
         <R><Fld label="باقی کیش لینا ہے" value={finalCash > 0 ? fmtMoney(finalCash) : '-'} yellow autoWidth /></R>
       </div>
       {!embed && (

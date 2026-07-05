@@ -196,11 +196,11 @@ function buildRasterSlipHtml(panelEl) {
       '\n.print-area .receipt-panel [class~="border-l"]{border-left-width:1.5px!important}' +
       '\n.print-area .receipt-panel [class~="border-r"]{border-right-width:1.5px!important}' +
       '\n.print-area .receipt-panel .panel-title{border-bottom-width:1.5px!important}' +
-      // The red باقی تیزابی دینا ہے alert is SCREEN-only: this offscreen page
-      // renders screen media, and #d32f2f would hard-threshold to a SOLID
-      // BLACK BLOCK swallowing its (forced-black) text — strip it back to
-      // plain black-on-clear like every other printed field.
-      '\n.print-area .redbox-label,.print-area .redbox-value,.print-area .redbox-value *{background:transparent!important;color:#000!important;-webkit-text-fill-color:#000!important;opacity:1!important}' +
+      // The red دینا ہے value-box alerts (تیزابی + کیش) are SCREEN-only: this
+      // offscreen page renders screen media, and the red would hard-threshold
+      // to a SOLID BLACK BLOCK swallowing its (forced-black) text — strip it
+      // back to plain black-on-clear like every other printed field.
+      '\n.print-area .redbox-value,.print-area .redbox-value *{background:transparent!important;color:#000!important;-webkit-text-fill-color:#000!important;opacity:1!important}' +
       // the offscreen page renders SCREEN media, so the @media print rule that
       // hides action bars (WhatsApp/print buttons, Saved tick) never fires —
       // hide them here explicitly
