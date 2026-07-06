@@ -139,21 +139,20 @@ function migrateSchema() {
     db.run("ALTER TABLE settings ADD COLUMN raw_print_mode TEXT")
     db.run("UPDATE settings SET raw_print_mode = 'auto' WHERE raw_print_mode IS NULL")
   }
-  // settings.print_scale — thermal render magnification (1.0–1.35). Default 1.0:
-  // the receipt template now carries its own (larger) size, so no extra scaling
-  // is needed by default; the setting stays available for fine-tuning.
+  // settings.print_scale — thermal render magnification (1.0–1.35). Default 1.15:
+  // the approved final receipt design was approved printed at printScale 1.15, so
+  // real receipts match that physical size. The setting stays adjustable.
   if (!sCols.includes('print_scale')) {
     db.run('ALTER TABLE settings ADD COLUMN print_scale REAL')
-    db.run('UPDATE settings SET print_scale = 1.0 WHERE print_scale IS NULL')
+    db.run('UPDATE settings SET print_scale = 1.15 WHERE print_scale IS NULL')
   }
-  // ONE-TIME: earlier builds seeded print_scale = 1.15 as the auto-default. Now
-  // that the template carries the size itself, reset that specific old default to
-  // 1.0. Guarded by a flag column so it runs exactly once and never stomps a
-  // value the user deliberately picks later.
-  if (!sCols.includes('print_scale_reset')) {
-    db.run('ALTER TABLE settings ADD COLUMN print_scale_reset INTEGER')
-    db.run('UPDATE settings SET print_scale = 1.0 WHERE print_scale = 1.15')
-    db.run('UPDATE settings SET print_scale_reset = 1')
+  // ONE-TIME: align existing DBs with the approved 1.15 default (older builds had
+  // 1.0). Guarded by a flag column so it runs exactly once and never stomps a
+  // value the user deliberately picks later in Defaults.
+  if (!sCols.includes('print_scale_115')) {
+    db.run('ALTER TABLE settings ADD COLUMN print_scale_115 INTEGER')
+    db.run('UPDATE settings SET print_scale = 1.15')
+    db.run('UPDATE settings SET print_scale_115 = 1')
   }
 
   // expenses.ts — full timestamp. Patch DBs that had expenses before it existed.
@@ -184,7 +183,7 @@ function seedSettings() {
     db.run(
       `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count, raw_print_mode, print_scale)
        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.0]
+      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15]
     )
   }
 }
@@ -287,11 +286,20 @@ const api = {
     }
     const s = q.trim()
     const like = `%${s}%`
+    const prefix = `${s}%`
     // Also match on a numeric id so users can search by record number.
     const idNum = /^\d+$/.test(s) ? Number(s) : -1
+    // Rank NAME-prefix matches FIRST, then other (contains / mobile) matches, then
+    // alphabetical. Without this a plain "%z%" ordered by name + LIMIT 50 could push
+    // the "Zafer…" prefix hits the user actually wants past the 50-row cut-off in a
+    // large customer list — so typing "z" showed nothing. (SQLite LIKE is
+    // case-insensitive for ASCII, so 'z%' matches 'Zafer'.)
     return query(
-      'SELECT * FROM customers WHERE name LIKE ? OR mobile LIKE ? OR id = ? ORDER BY name LIMIT 50',
-      [like, like, idNum]
+      `SELECT * FROM customers
+       WHERE name LIKE ? OR mobile LIKE ? OR id = ?
+       ORDER BY (CASE WHEN name LIKE ? THEN 0 ELSE 1 END), name
+       LIMIT 50`,
+      [like, like, idNum, prefix]
     )
   },
 
@@ -495,6 +503,7 @@ const api = {
     if (from) { where.push('t.date >= ?'); params.push(from) }
     if (to) { where.push('t.date <= ?'); params.push(to) }
     if (category) { where.push('t.category = ?'); params.push(category) }
+    where.push("t.category <> 'adjustment'") // manual اندراج never shows in reports
     const rows = query(
       `SELECT t.*, c.name AS customer_name
        FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id
@@ -510,6 +519,24 @@ const api = {
       if (t.category === 'cash_give' || t.category === 'cash_take') total_cash += sign * (t.cash_amount || 0)
     }
     return { rows, total_gold, total_cash }
+  },
+
+  // اندراج رپورٹ — the ONE place manual adjustments (category 'adjustment') are
+  // shown; every other report/ledger excludes them. Returns adjustment rows only,
+  // newest first, optionally within a date range. cash_amount = رقم لی/دی amount,
+  // khalis_sona = تیزابی لیا/دیا grams; direction 'in'/'out' gives the sign.
+  getAdjustmentsReport(opts = {}) {
+    const { from, to } = opts || {}
+    const where = ["category = 'adjustment'"]
+    const params = []
+    if (from) { where.push('date >= ?'); params.push(from) }
+    if (to) { where.push('date <= ?'); params.push(to) }
+    const rows = query(
+      `SELECT id, date, ts, direction, cash_amount, khalis_sona, note
+       FROM transactions WHERE ${where.join(' AND ')} ORDER BY date DESC, id DESC`,
+      params
+    )
+    return { rows }
   },
 
   // Group-1 (balance style) report: one aggregated row PER CUSTOMER for a single
@@ -766,6 +793,32 @@ const api = {
     return { id: lastInsertId() }
   },
 
+  // Manual balance adjustment (دستی اندراج) — a ONE-SHOT transaction that nudges
+  // the bottom-bar کیش (cash) or تیزابی (gold) total by a fixed amount. category
+  // 'adjustment' is applied ONLY by getShopTotals and is EXCLUDED from every
+  // ledger / report / listing, so it can never re-apply or leak into a customer's
+  // account. No customer, no receipt. target 'cash' → cash_amount, 'gold' →
+  // khalis_sona; direction 'in' adds to the total, 'out' subtracts.
+  addAdjustment(a = {}) {
+    const target = a.target === 'gold' ? 'gold' : 'cash'
+    const direction = a.direction === 'out' ? 'out' : 'in'
+    const amount = Number(a.amount) || 0
+    if (!(amount > 0)) return { ok: false, message: 'amount must be positive' }
+    run(
+      `INSERT INTO transactions
+        (receipt_no, customer_id, date, ts, kind, direction, category,
+         sona_wazan, point, khalis_sona, rate, qeemat, cash_amount, sona_diya, cash_diya, updated_at, note, meta)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        null, null, todayISO(), new Date().toISOString(), 'adjustment', direction, 'adjustment',
+        0, 0, target === 'gold' ? amount : 0, 0, 0, target === 'cash' ? amount : 0, 0, 0,
+        todayISO(), a.note || 'دستی اندراج', null
+      ]
+    )
+    flush() // immediate persist: adjustments must survive a restart
+    return { ok: true, id: lastInsertId(), target, direction, amount }
+  },
+
   // Edit an existing transaction by id (Part 1). Only whitelisted columns can be
   // changed. Missing/unknown id is a graceful no-op.
   updateTransaction(id, fields = {}) {
@@ -969,8 +1022,9 @@ const api = {
   },
 
   getCustomerLedger(customerId) {
+    // manual اندراج rows carry no customer_id, but exclude by category too for safety.
     const txns = query(
-      'SELECT * FROM transactions WHERE customer_id = ? ORDER BY ts ASC, id ASC',
+      "SELECT * FROM transactions WHERE customer_id = ? AND category <> 'adjustment' ORDER BY ts ASC, id ASC",
       [customerId]
     )
     let gold = 0
@@ -1028,7 +1082,7 @@ const api = {
 
   getDaybook(date) {
     const txns = query(
-      'SELECT t.*, c.name AS customer_name FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id WHERE t.date = ? ORDER BY t.ts ASC, t.id ASC',
+      "SELECT t.*, c.name AS customer_name FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id WHERE t.date = ? AND t.category <> 'adjustment' ORDER BY t.ts ASC, t.id ASC",
       [date]
     )
     const totals = {
@@ -1059,7 +1113,7 @@ const api = {
   },
 
   listDates() {
-    return query('SELECT DISTINCT date FROM transactions ORDER BY date DESC')
+    return query("SELECT DISTINCT date FROM transactions WHERE category <> 'adjustment' ORDER BY date DESC")
   },
 
   getShopTotals() {
@@ -1075,6 +1129,15 @@ const api = {
         kacha += t.sona_wazan || 0
         gold -= t.sona_diya || 0 // refined gold handed out for the kacha → reduces تیزابی
         cash -= t.cash_diya || 0 // cash paid out for the kacha → reduces کیش
+        continue
+      }
+      // Manual balance adjustment (اندراج): direction-signed into کیش / تیزابی
+      // ONLY. `continue` so the general gold line below never double-counts it,
+      // and it never touches kacha_sona or parchun.
+      if (t.category === 'adjustment') {
+        const s = t.direction === 'in' ? 1 : -1
+        cash += s * (t.cash_amount || 0)
+        gold += s * (t.khalis_sona || 0)
         continue
       }
       const goldSign = t.direction === 'in' ? 1 : -1

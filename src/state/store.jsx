@@ -29,6 +29,10 @@ const todayISO = () => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
+// Each receipt component builds its own slip DATA (title + tables) from its
+// already-computed values and passes it to printSlips, which forwards it to the
+// shared electron template (buildReceiptHtml). One design, four receipts.
+
 // Fallback rates if the DB bridge isn't ready (e.g. running renderer in a
 // plain browser without Electron). Keeps the UI alive for development.
 const FALLBACK_RATES = {
@@ -468,7 +472,7 @@ export function AppProvider({ children }) {
 
   // Print the current view once per configured slip copy (سلپ پرنٹ). 1 → one
   // print, 2 → two, etc. Each call opens the print dialog for that copy.
-  const printSlips = useCallback(async (panelEl) => {
+  const printSlips = useCallback(async (panelEl, slipData) => {
     const n = Math.max(1, parseInt(rates.slip_count, 10) || 1)
     // ── PRIMARY: direct 1-bit thermal raster (ESC/POS, RAW spool). The slip is
     // rendered ONCE at exactly 576 dots = the full 72.1mm printable band, hard-
@@ -477,10 +481,19 @@ export function AppProvider({ children }) {
     // isn't reachable this way (non-ESC/POS device, no default printer), fall
     // through to the driver-based path below unchanged.
     if (panelEl && hasApi && window.api.rasterPrintSlip) {
-      const rasterHtml = buildRasterSlipHtml(panelEl)
-      if (rasterHtml) {
+      // slipData (from the receipt component) → the shared table template
+      // (buildReceiptHtml, one source of truth with the worst-case test page).
+      // No slipData → fall back to the older clone-based HTML path.
+      let payload = null
+      if (slipData) {
+        payload = { data: slipData, copies: n }
+      } else {
+        const rasterHtml = buildRasterSlipHtml(panelEl)
+        if (rasterHtml) payload = { html: rasterHtml, copies: n }
+      }
+      if (payload) {
         try {
-          const res = await window.api.rasterPrintSlip({ html: rasterHtml, copies: n })
+          const res = await window.api.rasterPrintSlip(payload)
           if (res && res.ok) return
           console.warn('raster print unavailable, using driver path:', res && res.reason)
         } catch (e) {
@@ -1226,6 +1239,23 @@ export function AppProvider({ children }) {
     return res || { ok: true }
   }, [refresh])
 
+  // Manual bottom-bar balance adjustment (اندراج): inserts a ONE-SHOT 'adjustment'
+  // transaction (never a persisted setting → never re-applies), refresh()es the
+  // bottom bar, and returns the resulting bottom-bar totals so the modal can show
+  // the new value. target 'cash' → کیش, 'gold' → تیزابی; direction 'in'/'out'.
+  const addAdjustment = useCallback(async ({ target, direction, amount, note }) => {
+    if (!hasApi) return { ok: false }
+    const res = await window.api.addAdjustment({ target, direction, amount, note })
+    refresh() // bottom bar re-derives from getShopTotals
+    let fresh = null
+    try { fresh = await window.api.getShopTotals() } catch {}
+    return {
+      ok: !!(res && res.ok),
+      newCash: fresh ? (Number(fresh.cash) || 0) - expensesToday : null, // matches bottom-bar کیش
+      newTezabi: fresh ? (Number(fresh.tezabi_sona) || 0) : null
+    }
+  }, [refresh, expensesToday])
+
   // Stage 4/5 — fetch a filtered customer report ({ rows, total_gold, total_cash }).
   const getReport = useCallback(async (opts) => {
     if (!hasApi) return { rows: [], total_gold: 0, total_cash: 0 }
@@ -1244,6 +1274,12 @@ export function AppProvider({ children }) {
     const empty = { rows: [], totals: { kacha_sona: 0, khalis_sona: 0, sona_diya: 0, cash_diya: 0 } }
     if (!hasApi) return empty
     return (await window.api.reportKachaGold(opts)) || empty
+  }, [])
+
+  // اندراج رپورٹ: all manual adjustment transactions (the one place they show).
+  const getAdjustmentsReport = useCallback(async (opts) => {
+    if (!hasApi) return { rows: [] }
+    return (await window.api.getAdjustmentsReport(opts)) || { rows: [] }
   }, [])
 
   // Part 1 — edit / delete a saved transaction. Both refresh() so balances +
@@ -1289,7 +1325,7 @@ export function AppProvider({ children }) {
     receiptNo, setReceiptNo,
     customer, setCustomer, newCustomer, saveCustomer,
     totals, refresh, bump,
-    cashDisplay, addExpense, editExpense, removeExpense, resetExpensesData,
+    cashDisplay, addExpense, editExpense, removeExpense, resetExpensesData, addAdjustment,
     input, setInput, setWeight,
     overrides, setCell, clearCell, toggleParchi, resetEntry,
     ujratKaSona, toggleUjratKaSona,
@@ -1310,7 +1346,7 @@ export function AppProvider({ children }) {
     hasNextReceipt: receiptBounds.hasNext,
     gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt,
     addTransaction,
-    saveParchi, saveUdharTxn, newParchi, resetData, resetKachaData, resetKachaCounter, getReport, getReportGroup1, getKachaReport,
+    saveParchi, saveUdharTxn, newParchi, resetData, resetKachaData, resetKachaCounter, getReport, getReportGroup1, getKachaReport, getAdjustmentsReport,
     editTransaction, removeTransaction, recordSettle,
     savedFlags, setSavedFlags,
     udharOpen, openUdhar, closeUdhar,

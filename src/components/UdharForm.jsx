@@ -93,6 +93,36 @@ const naqadColumns = () => [
   { label: 'قیمت', get: (r) => fmtMoney(r.qeemat), num: true, total: true, raw: (r) => Number(r.qeemat) || 0, fmtTotal: (t) => fmtMoney(t) }
 ]
 
+// اندراج رپورٹ columns — تاریخ | قسم | رقم | تیزابی (گرام). A row is a gold
+// adjustment when it carries khalis_sona (> 0), else a cash one; قسم is derived
+// from that + direction. رقم / تیزابی each carry a fmtTotal so TableReport's
+// multi-total footer shows the NET (لی − دی) via signed `raw`.
+const adjIsGold = (r) => Number(r.khalis_sona) > 0
+const adjKind = (r) => {
+  const inn = r.direction === 'in'
+  return adjIsGold(r) ? (inn ? 'تیزابی لیا' : 'تیزابی دیا') : (inn ? 'رقم لی' : 'رقم دی')
+}
+const adjustmentColumns = () => [
+  { label: 'تاریخ', get: (r) => isoToDisp(r.date), num: true },
+  { label: 'قسم', get: (r) => adjKind(r) },
+  {
+    label: 'رقم',
+    num: true,
+    get: (r) => (adjIsGold(r) ? '-' : fmtMoney(r.cash_amount)),
+    total: true,
+    raw: (r) => (adjIsGold(r) ? 0 : (r.direction === 'in' ? 1 : -1) * (Number(r.cash_amount) || 0)),
+    fmtTotal: (t) => fmtMoney(t)
+  },
+  {
+    label: 'تیزابی (گرام)',
+    num: true,
+    get: (r) => (adjIsGold(r) ? fmtNum(r.khalis_sona, 3) : '-'),
+    total: true,
+    raw: (r) => (adjIsGold(r) ? (r.direction === 'in' ? 1 : -1) * (Number(r.khalis_sona) || 0) : 0),
+    fmtTotal: (t) => `${fmtNum(t, 3)} گرام`
+  }
+]
+
 const INP = 'w-full bg-white border border-gray-300 rounded-md text-[13px] px-2 py-1.5 text-start tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500'
 const hasApiFn = () => typeof window !== 'undefined' && window.api
 
@@ -123,7 +153,7 @@ function ActionButton({ a, onClick }) {
 }
 
 export default function UdharForm({ open, onClose }) {
-  const { getReport, getReportGroup1, getKachaReport, editTransaction, removeTransaction, resetData, hasApi, rates } = useApp()
+  const { getReport, getReportGroup1, getKachaReport, getAdjustmentsReport, editTransaction, removeTransaction, resetData, hasApi, rates } = useApp()
 
   const [custCode, setCustCode] = useState('')
   const [custName, setCustName] = useState('')
@@ -251,6 +281,21 @@ export default function UdharForm({ open, onClose }) {
         title: d.a.label,
         meta: { customer: customerLabel(), dateNote: `${from || 'ابتدا'} تا ${to || 'آج تک'}` }
       })
+    } else if (d.type === 'adjustment') {
+      // اندراج رپورٹ — ALL manual adjustments (the one dedicated place they show).
+      // No customer filter (adjustments have none). Date range like the naqad
+      // report: blank = all dates, else the set range. noActions → view-only
+      // (corrected by an opposite اندراج entry, never edited/deleted here).
+      if (from && to && from > to) { if (!silent) setMsg({ ok: false, text: 'فرام ڈیٹ ٹو ڈیٹ سے بڑی نہیں ہو سکتی' }); return }
+      const res = await getAdjustmentsReport({ from: from || undefined, to: to || undefined })
+      setReport({
+        group: 'adjustment',
+        noActions: true,
+        rows: res.rows || [],
+        columns: adjustmentColumns(),
+        title: 'اندراج رپورٹ',
+        meta: { customer: '—', dateNote: `${from || 'ابتدا'} تا ${to || 'آج تک'}` }
+      })
     }
     setMsg(null); setDesc(d); setView('report')
   }
@@ -318,6 +363,15 @@ export default function UdharForm({ open, onClose }) {
                   className="col-span-2 urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors"
                 >
                   کچا سونا لیا
+                </button>
+                {/* اندراج رپورٹ — manual adjustments; neutral amber, distinct from
+                    the gray in/out report buttons (matches the اندراج feature). */}
+                <button
+                  type="button"
+                  onClick={() => loadReport({ type: 'adjustment' })}
+                  className="col-span-2 urdu text-[16px] font-bold text-amber-900 bg-amber-100 border border-amber-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-amber-200 active:bg-amber-300 transition-colors"
+                >
+                  اندراج رپورٹ
                 </button>
               </div>
 
@@ -491,9 +545,11 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
   // row edit: the edit modal only offers the ادھار categories, so editing a naqad
   // row there would silently convert it into an ادھار entry.
   const isNaqad = report.group === 'naqad'
+  // اندراج رپورٹ — like naqad: always the wide TableReport, never thermal, no edit.
+  const isAdjust = report.group === 'adjustment'
   // The statement (کسٹمر کی تفصیلی رسید) is ALWAYS the wide A4 layout — never thermal.
-  const useThermal = thermal && !isKacha && !isStatement && !isNaqad
-  const canRowEdit = !isKacha && !isNaqad && !report.noActions && (report.rows || []).some((r) => r.id != null)
+  const useThermal = thermal && !isKacha && !isStatement && !isNaqad && !isAdjust
+  const canRowEdit = !isKacha && !isNaqad && !isAdjust && !report.noActions && (report.rows || []).some((r) => r.id != null)
 
   // The statement forces the wide A4 page; other reports honour the thermal toggle.
   const applyPrintMode = (on) => {
@@ -536,7 +592,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
     <div className="print-area flex flex-col min-h-0 flex-1">
       <div className="no-print shrink-0 flex items-center gap-2 bg-white border-b border-gray-200 px-4 py-2.5">
         <button type="button" onClick={onBack} className="urdu text-[12px] font-semibold text-blue-700 border border-blue-200 rounded-md px-3 py-1.5 hover:bg-blue-50 transition-colors">← واپس</button>
-        {!isKacha && !isStatement && !isNaqad && (
+        {!isKacha && !isStatement && !isNaqad && !isAdjust && (
           <button
             type="button"
             onClick={() => setThermal((v) => !v)}
@@ -562,7 +618,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
             <KachaReport report={report} />
           </div>
         </>
-      ) : (thermal && !isStatement && !isNaqad) ? (
+      ) : (thermal && !isStatement && !isNaqad && !isAdjust) ? (
         // Thermal preview — the white strip is the PAPER (80mm). The content is
         // CENTERED on the strip for DISPLAY only (mx-auto), so no report looks
         // glued to one edge; the `print:` classes reinstate the exact print

@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('api', {
   resetKachaGold: () => call('resetKachaGold'),
   resetKachaCounter: () => call('resetKachaCounter'),
   addTransaction: (t) => call('addTransaction', t),
+  // Manual bottom-bar balance adjustment (اندراج) — one-shot 'adjustment' txn.
+  addAdjustment: (a) => call('addAdjustment', a),
   updateTransaction: (id, fields) => call('updateTransaction', id, fields),
   deleteTransaction: (id) => call('deleteTransaction', id),
   settleTransaction: (t) => call('settleTransaction', t),
@@ -44,6 +46,8 @@ contextBridge.exposeInMainWorld('api', {
   reportGoldBalanceNet: (side, opts) => call('reportGoldBalanceNet', side, opts),
   reportCashBalanceNet: (side, opts) => call('reportCashBalanceNet', side, opts),
   reportKachaGold: (opts) => call('reportKachaGold', opts),
+  // اندراج رپورٹ — manual adjustment transactions only (date range optional).
+  getAdjustmentsReport: (opts) => call('getAdjustmentsReport', opts),
   getKachaTotalForDate: (date) => call('getKachaTotalForDate', date),
   getCustomerLedger: (id) => call('getCustomerLedger', id),
   listCustomersWithBalances: () => call('listCustomersWithBalances'),

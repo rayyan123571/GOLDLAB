@@ -27,14 +27,14 @@ const MAX_ROWS = 2376                // 297mm × 8 — printer's max receipt len
 // solid while light greys/yellows (screen-only shading) drop to white.
 const THRESHOLD = Math.min(250, Math.max(60, parseInt(process.env.GOLDLAB_RASTER_THRESHOLD, 10) || 170))
 
-// Print magnification: 1.0–1.35 in 0.05 steps (default 1.0 — the template now
-// carries its own larger size). Vertical-only stretch that never widens the frame
-// past 576 dots (see renderBitmap); available in Defaults for fine-tuning.
+// Print magnification: 1.0–1.35 in 0.05 steps (default 1.15 — the scale the final
+// receipt design was approved at). Vertical-only stretch that never widens the
+// frame past 576 dots (see renderBitmap); available in Defaults for fine-tuning.
 const SCALE_MIN = 1.0
 const SCALE_MAX = 1.35
 function clampScale(v) {
   let s = Number(v)
-  if (!Number.isFinite(s)) s = 1.0
+  if (!Number.isFinite(s)) s = 1.15
   s = Math.round(s / 0.05) * 0.05
   return Math.min(SCALE_MAX, Math.max(SCALE_MIN, s))
 }
@@ -384,22 +384,39 @@ function calibrationHtml() {
     '</div>' + READY_SCRIPT + '</body></html>'
 }
 
-// Worst-case receipt: the lab-receipt structure at native 576px with every
-// field at its maximum plausible length — proves the real template survives
-// full-width Urdu labels + 7-digit amounts without overflow or blur.
-// Typography per the layout spec: body ~27-28px REGULAR/medium (bold small
-// text bleeds at 203dpi; size carries readability), bordered classic header,
-// 3px outer / 2px inner table rules, bold only on the boxed بقایا رقم.
-function worstCaseHtml() {
-  // 27px overflowed the 556px content box by ~10px (RTL tables spill LEFT off
-  // the paper) — per spec, stepped down until the widest row fits: 26px values
-  // / 25px labels with 4-5px cell padding keeps both tables inside 556.
-  const td = (v, extra) => '<td style="border:2px solid #000;padding:4px 5px;font:500 26px Arial;text-align:center;white-space:nowrap;' + (extra || '') + '">' + v + '</td>'
-  const th = (v) => '<td style="border:2px solid #000;padding:3px 5px;font:500 25px ' + FONT_STACK + ';text-align:center;white-space:nowrap">' + v + '</td>'
-  // dir=rtl table: FIRST cell lands on the RIGHT — labels lead each row so the
-  // label column sits rightmost like the real receipt, values run leftwards.
-  const row = (label, cells) =>
-    '<tr>' + th(label) + cells.map((c) => td(c)).join('') + '</tr>'
+// ── SINGLE SOURCE OF TRUTH for EVERY printed receipt (lab / وصولی / ادھار / نقد) ─
+// buildReceiptHtml(d) renders the approved classic design (native 576px): bordered
+// header (name / double rule / tagline / phones / address strip), section title
+// bar (d.title), one or more bordered tables (d.tables), an optional lab terms box
+// (d.showFee), then the services line + Rayyan footer. It is table-DRIVEN: every
+// receipt supplies its own rows in the SAME styling, so there is one template.
+//   d = { title, showFee, tables: [ table, ... ] }
+//   table = [ row, ... ]   row = [ cell, ... ]
+//   cell = { l:'label', s?:span }               → Urdu LABEL cell (28px Nastaliq)
+//        | { v:'value', box?, s?:span, wrap?, u? } → value cell (26px Arial; box =
+//          the 3px-bordered bold treatment like بقایا رقم; wrap = allow wrapping
+//          (long names); u = render the value in the Nastaliq font)
+// Typography (per the layout spec): value cells 26px Arial 500, Urdu LABEL cells
+// 28px Nastaliq 500 (+3 over the approved 25 — verified to still fit the 556px box),
+// 3px outer / 2px inner table rules, bold only on the shop name and boxed amounts
+// (bold small text bleeds at 203dpi; size carries readability). `d` is DATA only.
+function buildReceiptHtml(d) {
+  const LBL_PX = 28 // Urdu label/header cells (+3 over the approved 25px)
+  const th = (l, s) => '<td ' + (s ? 'colspan="' + s + '" ' : '') + 'style="border:2px solid #000;padding:3px 5px;font:500 ' + LBL_PX + 'px ' + FONT_STACK + ';text-align:center;white-space:nowrap">' + (l == null ? '' : l) + '</td>'
+  const td = (c) => {
+    const val = (c.v == null || c.v === '') ? '-' : c.v
+    const inner = c.box ? '<span style="border:3px solid #000;padding:2px 14px;display:inline-block;font-weight:700">' + val + '</span>' : val
+    const extra = (c.wrap ? 'font-family:' + FONT_STACK + ';white-space:normal;' : '') + (c.u ? 'font-family:' + FONT_STACK + ';' : '')
+    return '<td ' + (c.s ? 'colspan="' + c.s + '" ' : '') + 'style="border:2px solid #000;padding:4px 5px;font:500 26px Arial;text-align:center;white-space:nowrap;' + extra + '">' + inner + '</td>'
+  }
+  // dir=rtl table: the FIRST cell of each row lands on the RIGHT, so a leading
+  // label cell puts the label column rightmost like the reference receipt.
+  const cell = (c) => (c && c.l !== undefined) ? th(c.l, c.s) : td(c || { v: '' })
+  const table = (rows) => '<table style="margin-top:8px">' + (rows || []).map((r) => '<tr>' + (r || []).map(cell).join('') + '</tr>').join('') + '</table>'
+  const feeBox = d.showFee
+    ? '<div class="u" dir="rtl" style="font-size:20px;line-height:2.1;border:2px solid #000;padding:5px 9px;margin-top:9px;text-align:right">' +
+      'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔</div>'
+    : ''
   return '<!doctype html><html><head><meta charset="utf-8"><style>' +
     'html,body{margin:0;padding:0;background:#fff;color:#000}' +
     'table{border-collapse:collapse;width:100%;border:3px solid #000}' +
@@ -415,26 +432,45 @@ function worstCaseHtml() {
     '<div style="font:600 23px Arial;line-height:1.6"><span dir="ltr">0302-7330000</span>&nbsp;&nbsp;&nbsp;&nbsp;<span dir="ltr">0302-3334440</span></div>' +
     '<div style="border-top:2px solid #000;margin-top:5px;padding:3px 0 6px;font-size:20px;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>' +
     '</div>' +
-    '<div class="u" style="font-size:28px;font-weight:600;text-align:center;border:3px solid #000;border-top:none;background:#000;color:#fff;padding:3px 0">لیب رسید — ورسٹ کیس ٹیسٹ</div>' +
-    '<table style="margin-top:8px">' +
-    '<tr>' + ['', 'رتی', 'ماشہ', 'تولہ', 'ملی گرام', 'گرام'].map((h) => th(h)).join('') + '</tr>' +
-    row('آمد وزن', ['8.88', '11', '99', '9999', '9999']) +
-    row('ملاوٹ وزن', ['8.88', '11', '99', '9999', '9999']) +
-    row('خالص وزن', ['8.88', '11', '99', '9999', '9999']) +
-    row('ملاوٹ فی تولہ', ['8.88', '11', '99', 'فی گرام', '0.9999']) +
-    '</table>' +
-    '<table style="margin-top:8px">' +
-    '<tr>' + th('کیرٹ') + td('21.16') + th('ریٹ فی تولہ') + td('434,500') + '</tr>' +
-    '<tr>' + th('ٹوٹل رقم') + td('9,151,688') + th('چارجز') + td('433,000') + '</tr>' +
-    '<tr>' + th('بقایا رقم') + td('<span style="border:3px solid #000;padding:2px 14px;display:inline-block;font-weight:700">9,151,126</span>') + th('پوائنٹ') + td('0.8818') + '</tr>' +
-    '<tr>' + th('نام') + td('محمد عبدالرحمٰن چوہدری اینڈ سنز', 'font-family:' + FONT_STACK + ';white-space:normal') + th('رتی') + td('11.35 رتی', 'font-family:' + FONT_STACK) + '</tr>' +
-    '<tr>' + th('تاریخ') + td('05-07-26') + th('وقت') + td('12:58 PM') + '</tr>' +
-    '</table>' +
-    '<div class="u" dir="rtl" style="font-size:20px;line-height:2.1;border:2px solid #000;padding:5px 9px;margin-top:9px;text-align:right">' +
-    'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔</div>' +
+    // section title bar — e.g. "لیب رسید", "وصولی رسید", "ادھار کی رسید", "نقد کی رسید"
+    '<div class="u" style="font-size:28px;font-weight:600;text-align:center;border:3px solid #000;border-top:none;background:#000;color:#fff;padding:3px 0">' + (d.title || 'رسید') + '</div>' +
+    (d.tables || []).map(table).join('') +
+    // footer: (lab-only terms box) + services line + Rayyan
+    feeBox +
     '<div class="u" style="font-size:20px;text-align:center;border-top:3px solid #000;margin-top:9px;padding-top:7px;line-height:1.9">لیبارٹری، کاسٹنگ سنٹر، ہول سیل شاپ، جیولری شاپ، چوڑی کڑے اور کارخانے کے سوفٹ ویئر دستیاب ہیں۔</div>' +
     '<div style="font:800 23px Arial;text-align:center;padding:2px 0 10px">Rayyan&nbsp;&nbsp;0307-6965231</div>' +
     '</div>' + READY_SCRIPT + '</body></html>'
+}
+
+// Max-length dummy data (the لیب رسید layout) — proves the template survives
+// full-width Urdu labels + 7-digit amounts without overflow. The test page IS the
+// real template, exercised through the exact same buildReceiptHtml() path.
+const L = (l, s) => (s ? { l, s } : { l })
+const V = (v, o) => Object.assign({ v }, o || {})
+const WORST_CASE_DATA = {
+  title: 'لیب رسید ورسٹ کیس ٹیسٹ',
+  showFee: true,
+  tables: [
+    [[L('رسید نمبر'), V('99999'), L('ریٹ فی گرام'), V('99,999')]],
+    [
+      [L(''), L('رتی'), L('ماشہ'), L('تولہ'), L('ملی گرام'), L('گرام')],
+      [L('آمد وزن'), V('8.88'), V('11'), V('99'), V('9999'), V('9999')],
+      [L('ملاوٹ وزن'), V('8.88'), V('11'), V('99'), V('9999'), V('9999')],
+      [L('خالص وزن'), V('8.88'), V('11'), V('99'), V('9999'), V('9999')],
+      [L('ملاوٹ فی تولہ'), V('8.88'), V('11'), V('99'), V('فی گرام'), V('0.9999')]
+    ],
+    [
+      [L('کیرٹ'), V('21.16'), L('ریٹ فی تولہ'), V('434,500')],
+      [L('ٹوٹل رقم'), V('9,151,688'), L('چارجز'), V('433,000')],
+      [L('بقایا رقم'), V('9,151,126', { box: true }), L('پوائنٹ'), V('0.8818')],
+      [L('نام'), V('محمد عبدالرحمٰن چوہدری اینڈ سنز', { wrap: true }), L('رتی'), V('11.35 رتی', { u: true })],
+      [L('تاریخ'), V('05-07-26'), L('وقت'), V('12:58 PM')]
+    ]
+  ]
+}
+
+function worstCaseHtml() {
+  return buildReceiptHtml(WORST_CASE_DATA)
 }
 
 async function testPrint({ kind, win, printScale }) {
@@ -445,4 +481,4 @@ async function testPrint({ kind, win, printScale }) {
   return printHtml({ html, copies: 1, win, tag: kind || 'calibration', requireThermal: false, printScale })
 }
 
-module.exports = { printHtml, testPrint, DOTS, clampScale }
+module.exports = { printHtml, testPrint, DOTS, clampScale, buildReceiptHtml }
