@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS settings (
   fc_per_gram REAL,
   rate_tezabi_gram REAL,
   point REAL,
-  slip_count INTEGER
+  slip_count INTEGER,
+  raw_print_mode TEXT,   -- 'auto' (regex-match thermal) | 'force' (always raw)
+  print_scale REAL       -- thermal render magnification, 1.0–1.35 (default 1.15)
 );
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -131,6 +133,19 @@ function migrateSchema() {
     db.run('UPDATE settings SET kacha_baseline = 0 WHERE kacha_baseline IS NULL')
   }
 
+  // settings.raw_print_mode — thermal routing: 'auto' (regex-match the default
+  // printer name) or 'force' (always use the raw ESC/POS path). Default 'auto'.
+  if (!sCols.includes('raw_print_mode')) {
+    db.run("ALTER TABLE settings ADD COLUMN raw_print_mode TEXT")
+    db.run("UPDATE settings SET raw_print_mode = 'auto' WHERE raw_print_mode IS NULL")
+  }
+  // settings.print_scale — thermal render magnification (1.0–1.35). Default 1.15
+  // reproduces the larger/longer look the shop preferred from the old driver path.
+  if (!sCols.includes('print_scale')) {
+    db.run('ALTER TABLE settings ADD COLUMN print_scale REAL')
+    db.run('UPDATE settings SET print_scale = 1.15 WHERE print_scale IS NULL')
+  }
+
   // expenses.ts — full timestamp. Patch DBs that had expenses before it existed.
   const xCols = query('PRAGMA table_info(expenses)').map((r) => r.name)
   if (xCols.length && !xCols.includes('ts')) db.run('ALTER TABLE expenses ADD COLUMN ts TEXT')
@@ -157,9 +172,9 @@ function seedSettings() {
     const p = (n) => String(n).padStart(2, '0')
     const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
     db.run(
-      `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
-      [today, 9000, 100, 80, 772, 100, 1]
+      `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count, raw_print_mode, print_scale)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15]
     )
   }
 }
@@ -236,8 +251,11 @@ const api = {
   },
 
   saveRates(rates) {
+    // raw_print_mode / print_scale use COALESCE so a caller that omits them keeps
+    // the stored value (never nulls a print setting it didn't mean to touch).
     run(
-      `UPDATE settings SET date=?, rate_tezabi_tola=?, parchi_charges=?, fc_per_gram=?, rate_tezabi_gram=?, point=?, slip_count=? WHERE id=1`,
+      `UPDATE settings SET date=?, rate_tezabi_tola=?, parchi_charges=?, fc_per_gram=?, rate_tezabi_gram=?, point=?, slip_count=?,
+              raw_print_mode=COALESCE(?, raw_print_mode), print_scale=COALESCE(?, print_scale) WHERE id=1`,
       [
         rates.date,
         rates.rate_tezabi_tola,
@@ -245,7 +263,9 @@ const api = {
         rates.fc_per_gram,
         rates.rate_tezabi_gram,
         rates.point,
-        rates.slip_count != null ? rates.slip_count : 1
+        rates.slip_count != null ? rates.slip_count : 1,
+        rates.raw_print_mode != null ? rates.raw_print_mode : null,
+        rates.print_scale != null ? Number(rates.print_scale) : null
       ]
     )
     return api.getRates()

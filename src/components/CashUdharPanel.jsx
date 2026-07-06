@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useApp } from '../state/store.jsx'
 import { fmtMoney, fmtNum, GRAMS_PER_TOLA, GRAMS_PER_RATTI, round } from '../logic/units.js'
 
@@ -28,6 +28,12 @@ const hasData = (st) => String(st.wazan).trim() !== '' && Number(st.wazan) > 0
 // One gold line: label (right) + سونا وزن | پوائنٹ | خالص سونا | ریٹ | قیمت.
 // `disabled` locks/greys all three inputs (used for نقد mutual exclusion).
 function GoldRow({ label, st, set, rateTola, disabled = false }) {
+  // Enter-to-advance focus flow (per-row ref, so wazan → this row's own rate):
+  // wazan → (Enter) → rate → (Enter) → blur. point is skipped in the flow —
+  // Enter inside point just blurs. Purely focus movement; no data changes.
+  const rateRef = useRef(null)
+  const onEnterFocusRate = (e) => { if (e.key === 'Enter') { e.preventDefault(); if (rateRef.current) rateRef.current.focus() } }
+  const onEnterBlur = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }
   const wazan = Number(st.wazan) || 0
   const point = Number(st.point) || 0
   // "point" is a purity reading where 100 = maiyar/standard. It adjusts gold on
@@ -45,12 +51,12 @@ function GoldRow({ label, st, set, rateTola, disabled = false }) {
         {label}
       </div>
       <input className={`inp-g text-center text-[15px] font-bold${lock}`} value={st.wazan} disabled={disabled}
-        onChange={(e) => set({ ...st, wazan: e.target.value })} placeholder="-" />
+        onChange={(e) => set({ ...st, wazan: e.target.value })} onKeyDown={onEnterFocusRate} placeholder="-" />
       <input className={`inp text-center text-[15px] font-bold${lock}`} value={st.point} disabled={disabled}
-        onChange={(e) => set({ ...st, point: e.target.value })} />
+        onChange={(e) => set({ ...st, point: e.target.value })} onKeyDown={onEnterBlur} />
       <div className="cell cell-c text-[15px] font-bold">{khalis ? fmtNum(khalis) : '-'}</div>
-      <input className={`inp text-center text-[15px] font-bold${lock}`} value={st.rate} disabled={disabled}
-        onChange={(e) => set({ ...st, rate: e.target.value })} placeholder={fmtMoney(rateTola)} />
+      <input ref={rateRef} className={`inp text-center text-[15px] font-bold${lock}`} value={st.rate} disabled={disabled}
+        onChange={(e) => set({ ...st, rate: e.target.value })} onKeyDown={onEnterBlur} placeholder={fmtMoney(rateTola)} />
       <div className="cell cell-c text-[15px] font-bold">{q ? fmtMoney(q) : '-'}</div>
     </div>
   )
@@ -67,7 +73,9 @@ function CashRow({ label, st, set }) {
       {/* merged empty cell spanning سونا وزن + پوائنٹ + خالص سونا + ریٹ */}
       <div className="cell bg-white" style={{ gridColumn: 'span 4' }}>&nbsp;</div>
       <input className="inp-g text-center text-[15px] font-bold" value={st}
-        onChange={(e) => set(e.target.value)} placeholder="-" />
+        onChange={(e) => set(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
+        placeholder="-" />
     </div>
   )
 }

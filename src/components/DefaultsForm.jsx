@@ -20,7 +20,7 @@ function Row({ label, children, alignTop }) {
 // settings table via the store's saveRates (which also refreshes the live UI).
 export default function DefaultsForm({ open, onClose }) {
   const { rates, saveRates, resetKachaData, resetExpensesData, hasApi } = useApp()
-  const [form, setForm] = useState({ rate_tezabi_tola: '', fc_per_gram: '', parchi_charges: '', slip_count: '1' })
+  const [form, setForm] = useState({ rate_tezabi_tola: '', fc_per_gram: '', parchi_charges: '', slip_count: '1', raw_print_mode: 'auto', print_scale: 1.15 })
   const [saved, setSaved] = useState(false)
   const [kachaMsg, setKachaMsg] = useState('')
   const [expenseMsg, setExpenseMsg] = useState('')
@@ -41,7 +41,9 @@ export default function DefaultsForm({ open, onClose }) {
         rate_tezabi_tola: src.rate_tezabi_tola ?? '',
         fc_per_gram: src.fc_per_gram ?? '',
         parchi_charges: src.parchi_charges ?? '',
-        slip_count: src.slip_count != null ? String(src.slip_count) : '1'
+        slip_count: src.slip_count != null ? String(src.slip_count) : '1',
+        raw_print_mode: src.raw_print_mode === 'force' ? 'force' : 'auto',
+        print_scale: src.print_scale != null ? Number(src.print_scale) : 1.15
       })
     }
     if (hasApi) window.api.getRates().then(seed)
@@ -63,7 +65,9 @@ export default function DefaultsForm({ open, onClose }) {
       rate_tezabi_tola: Number(next.rate_tezabi_tola) || 0,
       fc_per_gram: Number(next.fc_per_gram) || 0,
       parchi_charges: Number(next.parchi_charges) || 0,
-      slip_count: Math.max(1, parseInt(next.slip_count, 10) || 1)
+      slip_count: Math.max(1, parseInt(next.slip_count, 10) || 1),
+      raw_print_mode: next.raw_print_mode === 'force' ? 'force' : 'auto',
+      print_scale: Number(next.print_scale) || 1.15
     })
     setSaved(true)
     if (savedTimer.current) clearTimeout(savedTimer.current)
@@ -161,6 +165,36 @@ export default function DefaultsForm({ open, onClose }) {
               min={1}
               placeholder="1"
             />
+          </Row>
+
+          {/* تھرمل پرنٹر پر براہِ راست (raw ESC/POS) — when ON, every default
+              printer is treated as thermal and uses the raw path (bypasses the
+              name check). Leave OFF to auto-detect by printer name. */}
+          <Row label="تھرمل پرنٹر پر براہِ راست پرنٹ">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="w-4 h-4 cursor-pointer"
+                checked={form.raw_print_mode === 'force'}
+                onChange={(e) => commit({ ...form, raw_print_mode: e.target.checked ? 'force' : 'auto' })}
+              />
+              <span className="urdu text-[12px] text-gray-600">
+                {form.raw_print_mode === 'force' ? 'ہر پرنٹر پر براہِ راست (فورس)' : 'خودکار (پرنٹر کے نام سے پہچان)'}
+              </span>
+            </label>
+          </Row>
+
+          {/* پرنٹ سائز — thermal render magnification 1.00–1.35 (bigger/longer slip). */}
+          <Row label="پرنٹ سائز">
+            <select
+              className={`${INPUT} w-28`}
+              value={Number(form.print_scale).toFixed(2)}
+              onChange={(e) => commit({ ...form, print_scale: Number(e.target.value) })}
+            >
+              {['1.00', '1.05', '1.10', '1.15', '1.20', '1.25', '1.30', '1.35'].map((v) => (
+                <option key={v} value={v}>{v}×</option>
+              ))}
+            </select>
           </Row>
 
           {/* Direct-thermal printer test pages: calibration sheet (border, mm
