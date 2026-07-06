@@ -89,13 +89,22 @@ function buildSlipHeader() {
   el.dir = 'rtl'
   el.className = 'urdu slip-header'
   el.style.cssText = 'text-align:center;color:#000;border:2px solid #000;padding:3px 4px 0;margin-bottom:5px'
+  // Reference-receipt decorations: a sharp ZIGZAG rule under the tagline and a
+  // ☎ before each phone number. The zigzag is inline SVG (rasterizes crisply to
+  // 1-bit; non-scaling stroke keeps an even line width under the ×1.63 clone
+  // scale); ☎ (U+260E) is a monochrome glyph that thresholds cleanly on thermal.
+  let zz = 'M0 5'
+  for (let x = 0; x <= 240; x += 6) zz += ' L' + (x + 3) + ' 1 L' + (x + 6) + ' 5'
+  const wave = '<svg width="100%" height="6" viewBox="0 0 240 6" preserveAspectRatio="none" style="display:block;margin:3px 2px">' +
+    '<path d="' + zz + '" fill="none" stroke="#000" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>'
+  const tel = '☎' // ☎
   el.innerHTML =
-    '<div style="font-size:26px;font-weight:800;line-height:1.55">چوہدری گولڈ لیبارٹری</div>' +
-    // classic double rule under the name (top margin keeps clear of Nastaliq tails)
-    '<div style="border-top:2px solid #000;border-bottom:1px solid #000;height:3px;margin:3px 6px 3px"></div>' +
-    '<div style="font-size:12px;font-weight:500;line-height:1.9">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز  (جیولری چوڑی میکر)</div>' +
-    '<div style="font-size:13.5px;font-weight:600;line-height:1.8">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">0300-7301839</span></div>' +
-    '<div style="font-size:14px;font-weight:600;line-height:1.7"><span dir="ltr">0302-7330000</span>&nbsp;&nbsp;&nbsp;&nbsp;<span dir="ltr">0302-3334440</span></div>' +
+    '<div style="font-size:26px;font-weight:800;line-height:1.5">چوہدری گولڈ لیبارٹری</div>' +
+    '<div style="font-size:12.5px;font-weight:500;line-height:1.7">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز  (جیولری چوڑی میکر)</div>' +
+    // sharp zigzag decorative rule (as in the reference receipt)
+    wave +
+    '<div style="font-size:13.5px;font-weight:600;line-height:1.8">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">' + tel + '&nbsp;0300-7301839</span></div>' +
+    '<div style="font-size:14px;font-weight:600;line-height:1.7"><span dir="ltr">' + tel + '&nbsp;0302-7330000</span>&nbsp;&nbsp;&nbsp;<span dir="ltr">' + tel + '&nbsp;0302-3334440</span></div>' +
     // address in its own ruled strip at the bottom of the box
     '<div style="border-top:1.5px solid #000;margin-top:3px;padding:2px 0 4px;font-size:12.5px;font-weight:500;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>'
   return el
@@ -114,9 +123,9 @@ function buildSlipFooter(kind) {
       '</div>'
     : ''
   el.innerHTML = fee +
-    '<div style="font-size:12px;font-weight:500;line-height:1.9;text-align:center;border-top:2px solid #000;padding-top:4px">' +
+    '<div style="font-size:12.5px;font-weight:500;line-height:1.9;text-align:center;border-top:2px solid #000;padding-top:4px">' +
     'لیبارٹری، کاسٹنگ سنٹر، ہول سیل شاپ، جیولری شاپ، چوڑی کڑے اور کارخانے کے سوفٹ ویئر دستیاب ہیں۔' +
-    '<div dir="ltr" style="font-size:13px;font-weight:800;margin-top:2px">Rayyan&nbsp;&nbsp;0307-6965231</div>' +
+    '<div dir="ltr" style="font-size:14px;font-weight:800;margin-top:2px">Rayyan&nbsp;&nbsp;0307-6965231</div>' +
     '</div>'
   return el
 }
@@ -152,11 +161,11 @@ function buildRasterSlipHtml(panelEl) {
         f.setAttribute('value', s.value)
       }
     })
-    // Rows are flex-1 inside a fixed panel height, so give the clone 1.35× the
-    // on-screen height: the larger print typography (below) gets matching row
-    // room with tidy (not airy) spacing — width/geometry untouched, the slip
-    // just runs a little longer down the roll.
-    clone.style.height = `${Math.round((panelEl.offsetHeight || 456) * 1.35)}px`
+    // Rows are flex-1 inside a fixed panel height, so give the clone extra room
+    // over the on-screen height so the larger print typography gets matching row
+    // space. 1.15× keeps the rows tidy (not airy) and lands a normal slip near
+    // the ~7in (≈1422-dot) target at printScale 1.0 — width/geometry untouched.
+    clone.style.height = `${Math.round((panelEl.offsetHeight || 456) * 1.15)}px`
     // The offscreen page needs the app's real stylesheet (tailwind utilities,
     // receipt-panel rules). Serialize every reachable rule; same-origin in dev
     // (vite) and prod (file://) alike.
@@ -187,6 +196,9 @@ function buildRasterSlipHtml(panelEl) {
       '\n.print-area .receipt-panel .urdu{font-size:16px!important;line-height:1.55!important}' +
       '\n.print-area .receipt-panel .panel-title{font-size:18px!important;font-weight:600!important;padding:3px 0!important}' +
       '\n.print-area .receipt-panel .laib-baqaya-row .num,.print-area .receipt-panel .laib-baqaya-row .bg-yellowCell *{font-weight:700!important}' +
+      // بقایا رقم gets the reference's boxed treatment: a heavy ~3-dot border
+      // (2px design × ~1.63 scale) around the amount, weight 700 (above).
+      '\n.print-area .receipt-panel .laib-baqaya-row .bg-yellowCell{border-width:2px!important}' +
       // ── Solid printable rules: 1px design lines raster to <2 dots and print
       // broken on thermal heads. Outer panel border ≈3 dots, inner separators
       // ≈2.4 dots. Dotted field underlines keep their style, just heavier.

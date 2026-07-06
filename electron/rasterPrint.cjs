@@ -27,14 +27,14 @@ const MAX_ROWS = 2376                // 297mm × 8 — printer's max receipt len
 // solid while light greys/yellows (screen-only shading) drop to white.
 const THRESHOLD = Math.min(250, Math.max(60, parseInt(process.env.GOLDLAB_RASTER_THRESHOLD, 10) || 170))
 
-// Print magnification: 1.0–1.35 in 0.05 steps (default 1.15). Reproduces the
-// larger/longer look the shop preferred from the old driver path, deterministically
-// — WITHOUT ever widening the frame past 576 dots (see renderBitmap).
+// Print magnification: 1.0–1.35 in 0.05 steps (default 1.0 — the template now
+// carries its own larger size). Vertical-only stretch that never widens the frame
+// past 576 dots (see renderBitmap); available in Defaults for fine-tuning.
 const SCALE_MIN = 1.0
 const SCALE_MAX = 1.35
 function clampScale(v) {
   let s = Number(v)
-  if (!Number.isFinite(s)) s = 1.15
+  if (!Number.isFinite(s)) s = 1.0
   s = Math.round(s / 0.05) * 0.05
   return Math.min(SCALE_MAX, Math.max(SCALE_MIN, s))
 }

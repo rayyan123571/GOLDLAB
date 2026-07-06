@@ -269,7 +269,7 @@ function printOnce(opts, timeoutMs) {
 // touching the DB. Always safe — falls back to sane defaults on any error.
 function printSettings() {
   let rawMode = 'auto'
-  let printScale = 1.15
+  let printScale = 1.0
   try {
     const r = db.api.getRates() || {}
     if (r.raw_print_mode === 'force') rawMode = 'force'
@@ -285,10 +285,18 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, copies } = {}) => {
   const { rawMode, printScale } = printSettings()
   try {
     const res = await raster.printHtml({ html, copies, win, tag: 'slip', printScale, rawMode })
-    // Log (main process) when the raster path can't be used and the renderer is
-    // about to fall back to the Windows driver — printer name + reason.
+    // LOUD log (main process) when the raster path can't be used and the renderer
+    // is about to fall back to the Windows driver (the driver stretches/blurs the
+    // slip — this is the #1 cause of a wrong-length / faint print). Printer name +
+    // reason are surfaced prominently so the routing problem is easy to spot.
     if (res && res.ok === false) {
-      console.warn(`[raster-print-slip] raster path unavailable → driver fallback. printer=${res.printer || 'unknown'} rawMode=${rawMode} reason=${res.reason}`)
+      console.warn('\n' + '='.repeat(72))
+      console.warn('[raster-print-slip] ⚠️  RAW THERMAL PATH FAILED → falling back to Windows driver')
+      console.warn(`[raster-print-slip] printer = ${res.printer || 'unknown'}   rawMode = ${rawMode}   printScale = ${printScale}`)
+      console.warn(`[raster-print-slip] reason  = ${res.reason}`)
+      console.warn('[raster-print-slip] The driver path can print the WRONG LENGTH / faint. Fix: make the')
+      console.warn('[raster-print-slip] default printer match a thermal name, or enable Defaults → براہِ راست (force).')
+      console.warn('='.repeat(72) + '\n')
     }
     return res
   } catch (e) {

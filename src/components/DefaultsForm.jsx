@@ -20,7 +20,7 @@ function Row({ label, children, alignTop }) {
 // settings table via the store's saveRates (which also refreshes the live UI).
 export default function DefaultsForm({ open, onClose }) {
   const { rates, saveRates, resetKachaData, resetExpensesData, hasApi } = useApp()
-  const [form, setForm] = useState({ rate_tezabi_tola: '', fc_per_gram: '', parchi_charges: '', slip_count: '1', raw_print_mode: 'auto', print_scale: 1.15 })
+  const [form, setForm] = useState({ rate_tezabi_tola: '', fc_per_gram: '', parchi_charges: '', slip_count: '1', raw_print_mode: 'auto', print_scale: 1.0 })
   const [saved, setSaved] = useState(false)
   const [kachaMsg, setKachaMsg] = useState('')
   const [expenseMsg, setExpenseMsg] = useState('')
@@ -43,7 +43,7 @@ export default function DefaultsForm({ open, onClose }) {
         parchi_charges: src.parchi_charges ?? '',
         slip_count: src.slip_count != null ? String(src.slip_count) : '1',
         raw_print_mode: src.raw_print_mode === 'force' ? 'force' : 'auto',
-        print_scale: src.print_scale != null ? Number(src.print_scale) : 1.15
+        print_scale: src.print_scale != null ? Number(src.print_scale) : 1.0
       })
     }
     if (hasApi) window.api.getRates().then(seed)
@@ -67,7 +67,7 @@ export default function DefaultsForm({ open, onClose }) {
       parchi_charges: Number(next.parchi_charges) || 0,
       slip_count: Math.max(1, parseInt(next.slip_count, 10) || 1),
       raw_print_mode: next.raw_print_mode === 'force' ? 'force' : 'auto',
-      print_scale: Number(next.print_scale) || 1.15
+      print_scale: Number(next.print_scale) || 1.0
     })
     setSaved(true)
     if (savedTimer.current) clearTimeout(savedTimer.current)
