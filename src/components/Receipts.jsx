@@ -5,6 +5,14 @@ import { fmtMoney, fmtNum, round, GRAMS_PER_TOLA, GRAMS_PER_RATTI, gramsToTMR } 
 import { useClock } from '../logic/useClock.js'
 import LeftSidebar from './LeftSidebar.jsx'
 
+// Slip-template cell builders (match electron/rasterPrint.cjs buildReceiptHtml):
+// L = a bordered Urdu LABEL cell, V = a bordered value cell. Each receipt builds
+// its rows with these and passes { title, showFee, tables } to ctx.printSlips so
+// every printed receipt shares the ONE approved design. opts: { box, s (colspan),
+// wrap (long names), u (Nastaliq value) }.
+const L = (l, s) => (s ? { l, s } : { l })
+const V = (v, o) => Object.assign({ v: v == null || v === '' ? '-' : String(v) }, o || {})
+
 // AM/PM time string from a live Date (passed in so the component re-renders).
 const fmtTime = (d) => {
   let h = d.getHours()
@@ -225,6 +233,24 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
       {children}
     </div>
   )
+  // Printed وصولی رسید (shared approved template). Same values the form shows.
+  const slipData = {
+    title: 'وصولی رسید',
+    showFee: false,
+    tables: [
+      [[L('رسید نمبر'), V(receiptNo), L('تاریخ'), V(`${fmtTime(now)}  ${showDate(rates, now)}`)]],
+      [
+        [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true, s: 3 })],
+        [L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola)), L('پرچون وزن'), V(ctx.parchunLiya === undefined ? fmtNum(row?.malawat) : (ctx.parchunLiya ? fmtNum(ctx.input?.wazan) : '-'))],
+        [L('خالص وزن'), V(fmtNum(row?.khalisSona), { s: 3 })],
+        [L('اجرت کی رقم'), V(ujratKaSona ? '-' : fmtMoney(row?.labCharges)), L('اجرت کا سونا'), V(ujratKaSona ? fmtNum(ujratGold) : '-')],
+        [L('سونا دینا ہے'), V(lab?.ratePerTola ? fmtNum(ujratKaSona ? ((Number(row?.khalisSona) || 0) - ujratGold) : (Number(row?.khalisSona) || 0)) : '-', { s: 3 })],
+        [L('کیش دیا'), V(Number(cashDiya) ? fmtMoney(Number(cashDiya)) : '-'), L('کیش کا سونا'), V(cashKaSona ? fmtNum(cashKaSona) : '-')],
+        [L('اجرت لینی ہے'), V(fmtMoney(row?.labCharges)), L('خالص سونا دیا'), V(Number(sonaDiya) ? fmtNum(Number(sonaDiya)) : '-')],
+        [L('باقی'), V(fmtMoney(row?.baqiRaqam), { box: true, s: 3 })]
+      ]
+    ]
+  }
   return (
     <div data-receipt="wasooli" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu flex items-center justify-center relative">
@@ -293,7 +319,7 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
       {!embed && (
         <ActionBar
           onWa={(e) => waSlip(ctx, e, customer.mobile, `وصولی رسید نمبر ${receiptNo}\nخالص سونا: ${fmtNum(row?.khalisSona)}\nباقی: ${fmtMoney(row?.baqiRaqam)}`)}
-          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}
+          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
         >
           <SavedChk on={ctx.savedFlags?.wasooli} />
         </ActionBar>
@@ -331,6 +357,31 @@ export function LabReceipt({ row, lab, ctx, embed }) {
     <div className="grid border-b border-gray-300 flex-1" style={LG}>{children}</div>
   )
   const div = 'border-l border-gray-400' // faint vertical divider after ملی گرام
+  // Printed لیب رسید (shared approved template). Same values the grid above shows.
+  const wRow = (label, grams, tmr) => [
+    L(label), V(fmtNum(tmr?.ratti, 2)), V(fmtNum(tmr?.masha, 0)), V(fmtNum(tmr?.tola, 0)), V(mg(grams)), V(String(gWhole(grams)))
+  ]
+  const slipData = {
+    title: 'لیب رسید',
+    showFee: true,
+    tables: [
+      [[L('رسید نمبر'), V(receiptNo), L('ریٹ فی گرام'), V(fmtNum(rates.rate_tezabi_gram, 0))]],
+      [
+        [L(''), L('رتی'), L('ماشہ'), L('تولہ'), L('ملی گرام'), L('گرام')],
+        wRow('آمد وزن', lab?.aamadWazan, lab?.grossTMR),
+        wRow('ملاوٹ وزن', lab?.malawatWazan, lab?.malawatTMR),
+        wRow('خالص وزن', lab?.khalisWazan, lab?.khalisTMR),
+        [L('ملاوٹ فی تولہ'), V(fmtNum(lab?.milawatFiTolaTMR?.ratti, 2)), V(fmtNum(lab?.milawatFiTolaTMR?.masha, 0)), V(fmtNum(lab?.milawatFiTolaTMR?.tola, 0)), V('فی گرام'), V(fmtNum(lab?.malawatPerGram, 4))]
+      ],
+      [
+        [L('کیرٹ'), V(fmtNum(lab?.keerat, 2)), L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola))],
+        [L('ٹوٹل رقم'), V(fmtMoney(lab?.totalRaqam)), L('چارجز'), V(fmtMoney(lab?.charges))],
+        [L('بقایا رقم'), V(fmtMoney(lab?.baqi), { box: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
+        [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true }), L('رتی'), V(fmtNum(lab?.milawatTotalRatti, 2), { u: true })],
+        [L('تاریخ'), V(showDate(rates, now)), L('وقت'), V(fmtTime(now))]
+      ]
+    ]
+  }
   return (
     <div data-receipt="lab" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">لیب رسید</div>
@@ -416,7 +467,7 @@ export function LabReceipt({ row, lab, ctx, embed }) {
       {!embed && (
         <ActionBar
           onWa={(e) => waSlip(ctx, e, customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`)}
-          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}
+          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
         >
           <SavedChk on={ctx.savedFlags?.lab} />
           <span className="urdu text-[10px]">رسید</span>
@@ -511,6 +562,29 @@ export function CreditReceipt({ ctx, embed }) {
   const R = ({ children }) => (
     <div className="flex-1 flex flex-col justify-center">{children}</div>
   )
+  // Printed ادھار کی رسید (shared approved template). Same values the form shows.
+  const slipData = {
+    title: 'ادھار کی رسید',
+    showFee: false,
+    tables: [
+      [[L('رسید نمبر'), V(receiptNo), L('تاریخ'), V(`${fmtTime(now)}  ${showDate(rates, now)}`)]],
+      [
+        [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true, s: 3 })],
+        [L('تیزابی دیا'), V(gGive ? fmtNum(gGive.wazan) : '-'), L('خالص وزن'), V(gGive ? fmtNum(gGive.khalis) : '-')],
+        [L('تیزابی لیا'), V(gTake ? fmtNum(gTake.wazan) : '-'), L('خالص وزن'), V(gTake ? fmtNum(gTake.khalis) : '-')],
+        [L('پوائنٹ'), V(activePoint != null ? fmtNum(Number(activePoint), 0) : '-'), V(udharComment || '-', { wrap: true, s: 2 })],
+        [L('باقی'), V(netGold ? fmtNum(netGold) : '-', { s: 3 })],
+        [L('سابقہ سونا بیلنس'), V(customer.id ? fmtNum(prevGold) : '-', { s: 3 })],
+        [L('باقی تیزابی دینا ہے'), V(finalGold < 0 ? fmtNum(Math.abs(finalGold)) : '-', { box: finalGold < 0 }), L('باقی تیزابی لینا ہے'), V(finalGold > 0 ? fmtNum(finalGold) : '-', { box: finalGold > 0 })]
+      ],
+      [
+        [L('کیش دیا'), V(cGive ? fmtMoney(cGive) : '-'), L('کیش لیا'), V(cTake ? fmtMoney(cTake) : '-')],
+        [L('باقی'), V(netCash ? fmtMoney(netCash) : '-', { s: 3 })],
+        [L('سابقہ کیش بیلنس'), V(customer.id ? fmtMoney(prevCash) : '-', { s: 3 })],
+        [L('باقی کیش دینا ہے'), V(finalCash < 0 ? fmtMoney(Math.abs(finalCash)) : '-', { box: finalCash < 0 }), L('باقی کیش لینا ہے'), V(finalCash > 0 ? fmtMoney(finalCash) : '-', { box: finalCash > 0 })]
+      ]
+    ]
+  }
   return (
     <div data-receipt="udhar" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">ادھار کی رسید</div>
@@ -547,7 +621,7 @@ export function CreditReceipt({ ctx, embed }) {
       {!embed && (
         <ActionBar
           onWa={(e) => waSlip(ctx, e, customer.mobile, `ادھار رسید\nنام: ${customer.id ? customer.name : ''}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
-          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}
+          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
         >
           <SavedChk on={ctx.savedFlags?.udhar} />
           {/* Full page reload — re-reads saved SQLite data from disk. Trade-off:
@@ -593,6 +667,28 @@ export function CashReceipt({ ctx, embed }) {
   const R = ({ children }) => (
     <div className="flex-1 flex flex-col justify-center">{children}</div>
   )
+  // Printed نقد کی رسید (shared approved template). Same values the form shows.
+  const slipData = {
+    title: `نقد کی رسید — سونا ${v ? v.kind : 'خرید'}`,
+    showFee: false,
+    tables: [
+      [[L('رسید نمبر'), V(receiptNo), L('تاریخ'), V(`${fmtTime(now)}  ${showDate(rates, now)}`)]],
+      [
+        [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true, s: 3 })],
+        [L('ریٹ فی تولہ'), V(v ? fmtMoney(v.rate) : (rates.rate_tezabi_tola ?? '-')), L('ریٹ فی گرام'), V(v ? fmtMoney(round(v.rate / GRAMS_PER_TOLA, 0)) : '-')]
+      ],
+      [
+        [L(''), L('رتی'), L('ماشہ'), L('تولہ'), L('وزن')],
+        [L('سونا وزن'), V(v ? fmtNum(v.grossTMR.ratti, 2) : '-'), V(v ? fmtNum(v.grossTMR.masha, 0) : '-'), V(v ? fmtNum(v.grossTMR.tola, 0) : '-'), V(v ? fmtNum(v.wazan) : '-')],
+        [L('خالص وزن'), V(v ? fmtNum(v.khalisTMR.ratti, 2) : '-'), V(v ? fmtNum(v.khalisTMR.masha, 0) : '-'), V(v ? fmtNum(v.khalisTMR.tola, 0) : '-'), V(v ? fmtNum(v.khalis) : '-')],
+        [L('پوائنٹ'), V(v ? fmtNum(v.point, 0) : '-', { s: 4 })]
+      ],
+      [
+        [L('کل قیمت'), V(v ? fmtMoney(v.qeemat) : '-', { box: true, s: 3 })],
+        [L('رقم دی'), V(v ? fmtMoney(v.qeemat) : '-', { s: 3 })]
+      ]
+    ]
+  }
   return (
     <div data-receipt="naqad" className="receipt-panel border border-line bg-white flex flex-col h-full">
       <div className="panel-title urdu">نقد کی رسید</div>
@@ -659,7 +755,7 @@ export function CashReceipt({ ctx, embed }) {
           <div className="flex-1 min-w-0" />
           <Btn variant="green"
             onClick={(e) => waSlip(ctx, e, customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.id ? customer.name : ''}`)}>WhatsApp</Btn>
-          <Btn title="پرنٹ" onClick={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'))}>🖨</Btn>
+          <Btn title="پرنٹ" onClick={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}>🖨</Btn>
         </div>
       )}
     </div>

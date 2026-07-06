@@ -269,7 +269,7 @@ function printOnce(opts, timeoutMs) {
 // touching the DB. Always safe — falls back to sane defaults on any error.
 function printSettings() {
   let rawMode = 'auto'
-  let printScale = 1.0
+  let printScale = 1.15
   try {
     const r = db.api.getRates() || {}
     if (r.raw_print_mode === 'force') rawMode = 'force'
@@ -280,11 +280,15 @@ function printSettings() {
   return { rawMode, printScale }
 }
 
-ipcMain.handle('raster-print-slip', async (_evt, { html, copies } = {}) => {
+ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
   const { rawMode, printScale } = printSettings()
+  // `data` (the lab receipt) → build HTML from the shared template here so the
+  // real slip and the worst-case test page use ONE source of truth. `html` (the
+  // other receipts) still comes pre-built from the renderer's clone path.
   try {
-    const res = await raster.printHtml({ html, copies, win, tag: 'slip', printScale, rawMode })
+    const slipHtml = data ? raster.buildReceiptHtml(data) : html
+    const res = await raster.printHtml({ html: slipHtml, copies, win, tag: 'slip', printScale, rawMode })
     // LOUD log (main process) when the raster path can't be used and the renderer
     // is about to fall back to the Windows driver (the driver stretches/blurs the
     // slip — this is the #1 cause of a wrong-length / faint print). Printer name +

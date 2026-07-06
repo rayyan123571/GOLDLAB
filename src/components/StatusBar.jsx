@@ -3,6 +3,7 @@ import { useApp } from '../state/store.jsx'
 import { fmtMoney, fmtNum } from '../logic/units.js'
 import useLiveGold from '../logic/useLiveGold.js'
 import DefaultsForm from './DefaultsForm.jsx'
+import IndrajForm from './IndrajForm.jsx'
 
 // Live gold spot box (display-only reference — no rates/receipts involvement).
 // MT5 Market-Watch style: bid (bold, larger) / ask (smaller, muted) side by
@@ -53,6 +54,7 @@ export default function StatusBar() {
   const [search, setSearch] = useState('')
   const [searchMsg, setSearchMsg] = useState('')
   const [showDefaults, setShowDefaults] = useState(false)
+  const [showIndraj, setShowIndraj] = useState(false) // اندراج (manual balance adjust) modal
   const [showKachaConfirm, setShowKachaConfirm] = useState(false) // کچا سونا reset gate
 
   // A negative bottom-bar value turns the box BACKGROUND red (text stays the
@@ -139,6 +141,15 @@ export default function StatusBar() {
       >
         رسید نکالیں
       </button>
+      {/* اندراج — manual bottom-bar کیش / تیزابی balance adjustment */}
+      <button
+        type="button"
+        title="دستی اندراج (کیش / تیزابی)"
+        onClick={() => setShowIndraj(true)}
+        className="self-center flex items-center px-4 h-[26px] rounded-md bg-amber-600 text-white text-[12px] font-bold urdu shadow-sm hover:bg-amber-700 active:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-400 transition-colors"
+      >
+        اندراج
+      </button>
       <button
         type="button"
         title="ڈیفالٹ سیٹنگز"
@@ -155,6 +166,7 @@ export default function StatusBar() {
       <GoldTicker />
 
       <DefaultsForm open={showDefaults} onClose={() => setShowDefaults(false)} />
+      <IndrajForm open={showIndraj} onClose={() => setShowIndraj(false)} />
 
       {/* کچا سونا COUNTER reset confirmation — zeroes the bottom-bar counter only,
           کچا سونا لیا records are KEPT (اُدھار report stays intact). */}
