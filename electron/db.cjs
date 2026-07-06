@@ -139,11 +139,21 @@ function migrateSchema() {
     db.run("ALTER TABLE settings ADD COLUMN raw_print_mode TEXT")
     db.run("UPDATE settings SET raw_print_mode = 'auto' WHERE raw_print_mode IS NULL")
   }
-  // settings.print_scale — thermal render magnification (1.0–1.35). Default 1.15
-  // reproduces the larger/longer look the shop preferred from the old driver path.
+  // settings.print_scale — thermal render magnification (1.0–1.35). Default 1.0:
+  // the receipt template now carries its own (larger) size, so no extra scaling
+  // is needed by default; the setting stays available for fine-tuning.
   if (!sCols.includes('print_scale')) {
     db.run('ALTER TABLE settings ADD COLUMN print_scale REAL')
-    db.run('UPDATE settings SET print_scale = 1.15 WHERE print_scale IS NULL')
+    db.run('UPDATE settings SET print_scale = 1.0 WHERE print_scale IS NULL')
+  }
+  // ONE-TIME: earlier builds seeded print_scale = 1.15 as the auto-default. Now
+  // that the template carries the size itself, reset that specific old default to
+  // 1.0. Guarded by a flag column so it runs exactly once and never stomps a
+  // value the user deliberately picks later.
+  if (!sCols.includes('print_scale_reset')) {
+    db.run('ALTER TABLE settings ADD COLUMN print_scale_reset INTEGER')
+    db.run('UPDATE settings SET print_scale = 1.0 WHERE print_scale = 1.15')
+    db.run('UPDATE settings SET print_scale_reset = 1')
   }
 
   // expenses.ts — full timestamp. Patch DBs that had expenses before it existed.
@@ -174,7 +184,7 @@ function seedSettings() {
     db.run(
       `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count, raw_print_mode, print_scale)
        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15]
+      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.0]
     )
   }
 }
