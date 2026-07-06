@@ -145,6 +145,7 @@ function createWindow() {
     minWidth: 1200,
     minHeight: 720,
     title: 'چوہدری گولڈ لیبارٹری — Chaudhry Gold Laboratory',
+    icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     // Frameless TRUE full-screen: covers the whole screen (Windows taskbar hidden),
     // no title bar. show:false + ready-to-show avoids a white flash. The in-app red
     // "X" (window.api.quitApp) and Alt+F4 are the ways out; Esc exits full-screen so
@@ -263,17 +264,45 @@ function printOnce(opts, timeoutMs) {
 // Primary receipt path: render at exactly 576 dots (72.1mm @ 203dpi), hard
 // 1-bit threshold, ESC/POS raster, RAW spool. The renderer falls back to the
 // driver-based 'print-page' below when this returns ok:false.
+// Read the two thermal-print settings from the DB (raw_print_mode, print_scale),
+// with an env override for print_scale so dry-runs can sweep scales without
+// touching the DB. Always safe — falls back to sane defaults on any error.
+function printSettings() {
+  let rawMode = 'auto'
+  let printScale = 1.15
+  try {
+    const r = db.api.getRates() || {}
+    if (r.raw_print_mode === 'force') rawMode = 'force'
+    if (r.print_scale != null && Number.isFinite(Number(r.print_scale))) printScale = Number(r.print_scale)
+  } catch (e) { console.warn('[print] settings read failed, using defaults:', e && e.message || e) }
+  const envScale = parseFloat(process.env.GOLDLAB_PRINT_SCALE)
+  if (Number.isFinite(envScale)) printScale = envScale
+  return { rawMode, printScale }
+}
+
 ipcMain.handle('raster-print-slip', async (_evt, { html, copies } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
-  try { return await raster.printHtml({ html, copies, win, tag: 'slip' }) }
-  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+  const { rawMode, printScale } = printSettings()
+  try {
+    const res = await raster.printHtml({ html, copies, win, tag: 'slip', printScale, rawMode })
+    // Log (main process) when the raster path can't be used and the renderer is
+    // about to fall back to the Windows driver — printer name + reason.
+    if (res && res.ok === false) {
+      console.warn(`[raster-print-slip] raster path unavailable → driver fallback. printer=${res.printer || 'unknown'} rawMode=${rawMode} reason=${res.reason}`)
+    }
+    return res
+  } catch (e) {
+    console.warn('[raster-print-slip] threw → driver fallback:', e && e.message || e)
+    return { ok: false, reason: String(e && e.message || e) }
+  }
 })
 
 // Printer test pages (settings → پرنٹر ٹیسٹ): calibration sheet + worst-case
 // receipt, straight through the raster pipeline to the DEFAULT printer.
 ipcMain.handle('raster-test-print', async (_evt, { kind } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
-  try { return await raster.testPrint({ kind, win }) }
+  const { printScale } = printSettings()
+  try { return await raster.testPrint({ kind, win, printScale }) }
   catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 

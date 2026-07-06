@@ -27,12 +27,24 @@ const MAX_ROWS = 2376                // 297mm × 8 — printer's max receipt len
 // solid while light greys/yellows (screen-only shading) drop to white.
 const THRESHOLD = Math.min(250, Math.max(60, parseInt(process.env.GOLDLAB_RASTER_THRESHOLD, 10) || 170))
 
+// Print magnification: 1.0–1.35 in 0.05 steps (default 1.15). Reproduces the
+// larger/longer look the shop preferred from the old driver path, deterministically
+// — WITHOUT ever widening the frame past 576 dots (see renderBitmap).
+const SCALE_MIN = 1.0
+const SCALE_MAX = 1.35
+function clampScale(v) {
+  let s = Number(v)
+  if (!Number.isFinite(s)) s = 1.15
+  s = Math.round(s / 0.05) * 0.05
+  return Math.min(SCALE_MAX, Math.max(SCALE_MIN, s))
+}
+
 // ── Render HTML at its final size in an offscreen window ────────────────────
 // Offscreen windows paint at deviceScaleFactor 1 regardless of the desktop's
 // DPI scaling, so 1 CSS px == 1 captured px == 1 printer dot. The page should
 // define `window.__ready` resolving to its content height in px (after fonts);
 // otherwise scrollHeight is used.
-async function renderBitmap(html) {
+async function renderBitmap(html, printScale) {
   // OSR frames come out at (window DIP size × desktop scale factor) physical
   // pixels — and the page rasters at that same physical resolution. To get a
   // frame of EXACTLY 576 physical px on any DPI setting, size the window to
@@ -40,6 +52,17 @@ async function renderBitmap(html) {
   // viewport, glyphs rasterize once at effective scale 1.0 (zoom × DPI = 1),
   // and the frame lands at 576(+rounding) px which we CROP — never resize —
   // to exactly 576.
+  //
+  // printScale (P) magnifies the slip to the preferred larger/longer look. The
+  // hard constraint is width EXACTLY 576 physical dots (centering + complete
+  // borders + no left/right clip — non-negotiable). A UNIFORM zoom (both axes ×P)
+  // would widen the fixed-576 content past the head and clip the right edge —
+  // verified with dry-run PNGs. So we hold the HORIZONTAL effective scale at 1.0
+  // (zoom = 1/scale ⇒ 576 css → 576 dots, no overflow) and magnify VERTICALLY
+  // only: a scaleY(P) transform on <body> makes the slip P× taller (bigger,
+  // longer, more readable) with the width — and every border — untouched. This
+  // reproduces the vertical "stretch" the shop preferred from the old driver.
+  const P = clampScale(printScale)
   const scale = (screen.getPrimaryDisplay() && screen.getPrimaryDisplay().scaleFactor) || 1
   const dipW = Math.ceil(DOTS / scale)
   const w = new BrowserWindow({
@@ -54,7 +77,10 @@ async function renderBitmap(html) {
   try {
     w.webContents.setFrameRate(30)
     await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
-    if (scale !== 1) w.webContents.setZoomFactor(1 / scale)
+    // DPI-compensation zoom only (horizontal + vertical effective scale = 1.0).
+    // The vertical magnification is a separate scaleY transform below, so width
+    // is never touched and can't overflow/clip.
+    w.webContents.setZoomFactor(1 / scale)
     let h = 0
     try {
       h = await w.webContents.executeJavaScript(
@@ -62,7 +88,31 @@ async function renderBitmap(html) {
     } catch {
       h = await w.webContents.executeJavaScript('Math.ceil(document.documentElement.scrollHeight)', true)
     }
-    const rowsWanted = Math.min(Math.max(Math.ceil(h) || 8, 8), MAX_ROWS) // in page px == printer dots
+    // Diagnostics (dry-run only): scrollWidth must stay ≤ innerWidth (no
+    // horizontal overflow ⇒ nothing right-clipped by the 576 crop).
+    if (process.env.GOLDLAB_PRINT_PDF_DIR) {
+      try {
+        const d = await w.webContents.executeJavaScript(
+          '({iw:window.innerWidth,sw:document.documentElement.scrollWidth,bw:document.body.scrollWidth})', true)
+        console.log(`[raster] P=${P} scale=${scale} innerWidth=${d.iw} scrollWidth=${d.sw} bodyW=${d.bw} measuredH=${Math.ceil(h)}`)
+      } catch {}
+    }
+    // Vertical-only magnification: scaleY(P) on <body> makes the slip P× taller
+    // (bigger/longer) while the width stays exactly 576 — borders complete, no
+    // left/right clip. Layout height (scrollHeight) is unchanged by a transform,
+    // so we multiply the measured CSS height by P to size the frame.
+    if (P !== 1) {
+      try {
+        await w.webContents.executeJavaScript(
+          "(function(){var b=document.body;b.style.transformOrigin='top left';b.style.transform='scaleY(" + P + ")';})()", true)
+      } catch {}
+    }
+    // Measured h is CSS px; the scaleY(P) makes the frame h×P physical rows tall.
+    const wantRaw = Math.ceil((Math.ceil(h) || 8) * P)
+    const rowsWanted = Math.min(Math.max(wantRaw, 8), MAX_ROWS) // device px == printer dots
+    if (wantRaw > MAX_ROWS) {
+      console.warn(`[raster] receipt height ${wantRaw} dots exceeds MAX_ROWS ${MAX_ROWS} at scale ${P} — clamped (bottom may be cut)`)
+    }
     const dipH = Math.ceil(rowsWanted / scale) + 1
     // Offscreen windows don't support capturePage (empty image) — the
     // compositor delivers frames through 'paint' events instead. Tiles paint
@@ -206,13 +256,19 @@ function rawSpool(printerName, bytes) {
 // default) would print pages of garbage — only auto-use the raw path when the
 // default printer LOOKS like a thermal/receipt printer. Test prints (explicit
 // user action from settings) skip the guard. GOLDLAB_FORCE_RAW=1 also skips it.
-const THERMAL_RX = /(thermal|receipt|\bpos\b|pos-?\d|80\s?mm|58\s?mm|\btm[- ]?\w|xp[- ]?\d|rp[- ]?\d|zj[- ]?\d|gp[- ]?\d|rongta|goojprt|hoin|sprt|black\s?copper|bixolon|citizen\s?ct|star\s?tsp|panda|zebra\s?zd|epos|xprinter)/i
+// Conservative: match receipt/80mm-thermal makes & models, NEVER office lasers/
+// inkjets (HP LaserJet, Canon, Epson L-series, Brother …). Additions for the
+// common clones seen in the field — speedx / bt-600 (this shop's SpeedX BT-600M),
+// munbyn, netum, hprt, gprinter, posiflex, sam4s — plus the existing set.
+const THERMAL_RX = /(thermal|receipt|\bpos\b|pos-?\d|pos-?80|80\s?mm|58\s?mm|\btm[- ]?\w|xp[- ]?\d|rp[- ]?\d|zj[- ]?\d|gp[- ]?\d|bt[- ]?600|bt[- ]?\d{3}|speed\s?-?x|rongta|goojprt|hoin|sprt|munbyn|netum|hprt|gprinter|posiflex|sam4s|black\s?copper|bixolon|citizen\s?ct|star\s?tsp|panda|zebra\s?zd|epos|xprinter)/i
 async function defaultPrinter(win) {
   const list = await win.webContents.getPrintersAsync()
   return list.find((p) => p.isDefault) || null
 }
-function looksThermal(p) {
-  if (process.env.GOLDLAB_FORCE_RAW === '1') return true
+// rawMode 'force' → always treat as thermal (like the GOLDLAB_FORCE_RAW=1 hook);
+// 'auto' (default) → match the printer NAME against THERMAL_RX.
+function looksThermal(p, rawMode) {
+  if (rawMode === 'force' || process.env.GOLDLAB_FORCE_RAW === '1') return true
   const hay = `${p.name} ${p.displayName || ''} ${p.description || ''}`
   return THERMAL_RX.test(hay)
 }
@@ -257,7 +313,7 @@ function loadAppCss() {
   return appCssCache
 }
 
-async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal = true }) {
+async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal = true, printScale, rawMode = 'auto' }) {
   if (!html) return { ok: false, reason: 'no-html' }
   if (html.includes('/*__APP_CSS__*/')) {
     const css = loadAppCss()
@@ -265,7 +321,7 @@ async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal =
     html = html.replace('/*__APP_CSS__*/', css)
   }
   let rendered
-  try { rendered = await renderBitmap(html) } catch (e) { return { ok: false, reason: 'render: ' + (e.message || e) } }
+  try { rendered = await renderBitmap(html, printScale) } catch (e) { return { ok: false, reason: 'render: ' + (e.message || e) } }
   if (rendered.width !== DOTS) return { ok: false, reason: 'render-width-mismatch: ' + rendered.width + 'px (expected ' + DOTS + ')' }
   const { bytes, bits, bpr } = toEscPos(rendered)
   const n = Math.max(1, Math.min(5, parseInt(copies, 10) || 1))
@@ -279,12 +335,15 @@ async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal =
   let printer
   try { printer = await defaultPrinter(win) } catch (e) { return { ok: false, reason: 'printer-list: ' + (e.message || e) } }
   if (!printer) return { ok: false, reason: 'no-default-printer' }
-  if (requireThermal && !looksThermal(printer)) return { ok: false, reason: 'default-printer-not-thermal: ' + printer.name }
+  // printer name carried on failure returns too, so the main process can log it.
+  if (requireThermal && !looksThermal(printer, rawMode)) {
+    return { ok: false, printer: printer.name, reason: 'default-printer-not-thermal: ' + printer.name }
+  }
   try {
     await rawSpool(printer.name, payload)
     return { ok: true, printer: printer.name, widthDots: rendered.width, heightDots: rendered.height }
   } catch (e) {
-    return { ok: false, reason: 'spool: ' + (e.message || e) }
+    return { ok: false, printer: printer.name, reason: 'spool: ' + (e.message || e) }
   }
 }
 
@@ -378,11 +437,12 @@ function worstCaseHtml() {
     '</div>' + READY_SCRIPT + '</body></html>'
 }
 
-async function testPrint({ kind, win }) {
+async function testPrint({ kind, win, printScale }) {
   const html = kind === 'worstcase' ? worstCaseHtml() : calibrationHtml()
   // explicit user action from settings — skip the thermal-name guard so the
-  // operator can test whatever printer is set as default
-  return printHtml({ html, copies: 1, win, tag: kind || 'calibration', requireThermal: false })
+  // operator can test whatever printer is set as default. printScale honours the
+  // saved setting so the test page matches what real receipts will look like.
+  return printHtml({ html, copies: 1, win, tag: kind || 'calibration', requireThermal: false, printScale })
 }
 
-module.exports = { printHtml, testPrint, DOTS }
+module.exports = { printHtml, testPrint, DOTS, clampScale }

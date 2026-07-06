@@ -1,18 +1,21 @@
 // ─── Live gold spot ticker (display-only reference) ─────────────────────────
-// Fetches the spot price from netdania's server-rendered mobile page in the
-// MAIN process (renderer would hit CORS), parses it with a tolerant regex,
-// sanity-gates it, and pushes {price, ts, ok} to the window on every poll.
+// Fetches the XAUUSD spot as JSON in the MAIN process (renderer would hit CORS)
+// from a fast quote feed, sanity-gates it, and pushes {bid, ask, ts, ok} to the
+// window on every tick — near real-time like MT5's Market Watch.
 // It touches NOTHING else — no rates, no settings, no receipts, no printing.
-// Robustness rules: on ANY failure keep the last good value (ok:false so the
-// UI greys it out); never let a bad parse through (1000 < price < 20000);
-// never block or delay startup (first poll fires after the window loaded).
+// Robustness rules (kept exactly): on ANY failure keep the last good value
+// (ok:false so the UI greys it out); never let a bad number through
+// (1000 < price < 20000); never block or delay startup (first poll fires after
+// the window loaded); log a warning only once per outage.
 const https = require('https')
 const http = require('http')
 const { URL } = require('url')
 
-const GOLD_URL = process.env.GOLDLAB_GOLD_URL || 'https://m.netdania.com/commodities/xauusdoz/idc'
+// Primary: Swissquote public BBO feed — JSON, no API key. Fallback: goldprice.org.
+const PRIMARY_URL = process.env.GOLDLAB_GOLD_URL || 'https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD'
+const FALLBACK_URL = process.env.GOLDLAB_GOLD_URL_FALLBACK || 'https://data-asg.goldprice.org/dbXRates/USD'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
-const FOCUSED_MS = 5000   // poll every 5s while the window is focused
+const FOCUSED_MS = 1000   // poll every 1s while the window is focused (MT5-like)
 const BLURRED_MS = 60000  // back off to 60s when blurred/minimized
 const TIMEOUT_MS = 6000
 
@@ -20,10 +23,10 @@ let win = null
 let timer = null
 let stopped = false
 let warned = false
-let last = { price: null, ts: null, ok: false }
+let last = { bid: null, ask: null, price: null, ts: null, ok: false }
 
 // GET with browser-ish headers, 6s timeout, up to 3 redirects. Resolves the
-// HTML string or null — it never rejects (failures are a normal state here).
+// body string or null — it never rejects (failures are a normal state here).
 function httpGet(url, redirectsLeft = 3) {
   return new Promise((resolve) => {
     let settled = false
@@ -31,7 +34,7 @@ function httpGet(url, redirectsLeft = 3) {
     try {
       const mod = url.startsWith('http:') ? http : https
       const req = mod.get(url, {
-        headers: { 'User-Agent': UA, 'Cache-Control': 'no-cache', Accept: 'text/html,*/*' },
+        headers: { 'User-Agent': UA, 'Cache-Control': 'no-cache', Accept: 'application/json,text/html,*/*' },
         timeout: TIMEOUT_MS
       }, (res) => {
         const sc = res.statusCode || 0
@@ -44,13 +47,13 @@ function httpGet(url, redirectsLeft = 3) {
           return
         }
         if (sc !== 200) { res.resume(); return done(null) }
-        let html = ''
+        let body = ''
         res.setEncoding('utf8')
         res.on('data', (d) => {
-          html += d
-          if (html.length > 3e6) { try { req.destroy() } catch {}; done(null) }
+          body += d
+          if (body.length > 3e6) { try { req.destroy() } catch {}; done(null) }
         })
-        res.on('end', () => done(html))
+        res.on('end', () => done(body))
         res.on('error', () => done(null))
       })
       req.on('timeout', () => { try { req.destroy() } catch {}; done(null) })
@@ -61,43 +64,45 @@ function httpGet(url, redirectsLeft = 3) {
   })
 }
 
-// Tolerant two-stage parse. A gold shop must never show parsed garbage, so
-// BOTH stages end at the same sanity gate (1000 < price < 20000).
-//   1. netdania's stable field id: <span id="recid-N-f6">4174.19</span> —
-//      f6 is the last-price field right under the "Gold, spot" <h1>.
-//   2. Fallback: scan EVERY "Gold, spot" occurrence (the first several live in
-//      <title>/<meta> tags — the page heading comes much later), take the
-//      chunk after it (cut at "Today's range" when present), strip tags and
-//      accept the first sane number.
-const sane = (v) => (v > 1000 && v < 20000 ? v : null)
+// A gold shop must never show parsed garbage — BOTH sources end at the same
+// sanity gate (1000 < price < 20000).
+const sane = (v) => (Number.isFinite(v) && v > 1000 && v < 20000 ? v : null)
 
-function parseGold(html) {
-  if (!html) return null
-  const f6 = /id="recid-\d+-f6"[^>]*>\s*([\d,]+(?:\.\d{1,2})?)\s*</i.exec(html)
-  if (f6) {
-    const v = sane(parseFloat(f6[1].replace(/,/g, '')))
-    if (v != null) return v
-  }
-  const re = /Gold,\s*spot/gi
-  let m
-  while ((m = re.exec(html))) {
-    let seg = html.slice(m.index, m.index + 2500)
-    const cut = seg.search(/Today'?s\s*range/i)
-    if (cut > 0) seg = seg.slice(0, cut)
-    seg = seg.replace(/<[^>]*>/g, ' ')
-    const nums = seg.match(/\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{3,6}(?:\.\d{1,2})?/g) || []
-    for (const n of nums) {
-      const v = sane(parseFloat(n.replace(/,/g, '')))
-      if (v != null) return v
+// Swissquote: an array of platform objects, each with spreadProfilePrices[] of
+// {spreadProfile, bid, ask}. Take the FIRST profile's bid/ask.
+function parseSwissquote(body) {
+  if (!body) return null
+  let arr
+  try { arr = JSON.parse(body) } catch { return null }
+  if (!Array.isArray(arr)) return null
+  for (const entry of arr) {
+    const profs = entry && entry.spreadProfilePrices
+    if (Array.isArray(profs) && profs.length) {
+      const bid = sane(parseFloat(profs[0].bid))
+      const ask = sane(parseFloat(profs[0].ask))
+      if (bid != null && ask != null) return { bid, ask }
     }
   }
   return null
 }
 
+// goldprice.org: { items: [ { xauPrice } ] } — one spot number, used for both
+// bid and ask when the primary is unavailable.
+function parseGoldprice(body) {
+  if (!body) return null
+  let obj
+  try { obj = JSON.parse(body) } catch { return null }
+  const it = obj && Array.isArray(obj.items) && obj.items[0]
+  const v = it ? sane(parseFloat(it.xauPrice)) : null
+  return v != null ? { bid: v, ask: v } : null
+}
+
 async function fetchOnce() {
-  const price = parseGold(await httpGet(GOLD_URL))
-  if (price != null) {
-    last = { price, ts: new Date().toISOString(), ok: true }
+  let q = parseSwissquote(await httpGet(PRIMARY_URL))
+  if (!q) q = parseGoldprice(await httpGet(FALLBACK_URL))
+  if (q) {
+    // price === bid for backward compatibility so nothing else breaks.
+    last = { bid: q.bid, ask: q.ask, price: q.bid, ts: new Date().toISOString(), ok: true }
     warned = false
   } else {
     if (!warned) { console.warn('[live-gold] fetch/parse failed — keeping last good value'); warned = true }
@@ -108,8 +113,16 @@ async function fetchOnce() {
 
 async function tick() {
   if (stopped) return
+  const prevBid = last.bid
+  const prevOk = last.ok
   await fetchOnce()
-  try { if (win && !win.isDestroyed()) win.webContents.send('live-gold', last) } catch {}
+  // Safeguard: don't push a redundant frame when the bid is unchanged (ts/ok
+  // are still updated internally). Always push on an ok-state change so the UI
+  // can grey out / recover promptly even when the bid happens to be identical.
+  const shouldSend = last.bid !== prevBid || last.ok !== prevOk
+  try {
+    if (shouldSend && win && !win.isDestroyed()) win.webContents.send('live-gold', last)
+  } catch {}
   schedule()
 }
 
@@ -134,4 +147,4 @@ function stop() {
   if (timer) clearTimeout(timer)
 }
 
-module.exports = { start, stop, fetchOnce, getLast: () => last, parseGold }
+module.exports = { start, stop, fetchOnce, getLast: () => last, parseSwissquote, parseGoldprice }

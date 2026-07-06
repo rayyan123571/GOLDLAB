@@ -5,33 +5,45 @@ import useLiveGold from '../logic/useLiveGold.js'
 import DefaultsForm from './DefaultsForm.jsx'
 
 // Live gold spot box (display-only reference — no rates/receipts involvement).
-// Green/red flash on tick up/down (fades back after ~1.5s), grey stale state
-// with a tiny آف لائن hint when the feed drops, "--" before the first value.
+// MT5 Market-Watch style: bid (bold, larger) / ask (smaller, muted) side by
+// side, digits flash green/red on tick up/down and the whole box gets a subtle
+// tint, both fading over ~600ms so rapid 1s ticks stay visible. Grey stale
+// state with a tiny آف لائن hint when the feed drops; "--" before first value.
 function GoldTicker() {
-  const { price, prevPrice, ok } = useLiveGold()
+  const { bid, ask, prevBid, ok } = useLiveGold()
   const [flash, setFlash] = useState(null) // 'up' | 'down' | null
 
   useEffect(() => {
-    if (price == null || prevPrice == null || price === prevPrice) return undefined
-    setFlash(price > prevPrice ? 'up' : 'down')
-    const t = setTimeout(() => setFlash(null), 1500)
+    if (bid == null || prevBid == null || bid === prevBid) return undefined
+    setFlash(bid > prevBid ? 'up' : 'down')
+    const t = setTimeout(() => setFlash(null), 600) // short fade — rapid ticks visible
     return () => clearTimeout(t)
-  }, [price, prevPrice])
+  }, [bid, prevBid])
 
   // stale grey ALWAYS wins — a dead feed must never keep flashing green/red
-  const color = !ok ? '#9ca3af' : flash === 'up' ? '#16a34a' : flash === 'down' ? '#dc2626' : '#000000'
+  const bidColor = !ok ? '#9ca3af' : flash === 'up' ? '#16a34a' : flash === 'down' ? '#dc2626' : '#000000'
+  const askColor = !ok ? '#9ca3af' : '#6b7280'
+  // subtle per-tick background tint like MT5 rows; no tint while stale (grey wins)
+  const bg = !ok ? '#ffffff' : flash === 'up' ? 'rgba(22,163,74,0.12)' : flash === 'down' ? 'rgba(220,38,38,0.12)' : '#ffffff'
   return (
     <div
-      className="self-center flex items-center gap-1.5 h-[26px] px-2 w-[132px] flex-shrink-0 overflow-hidden rounded-md border border-gray-300 bg-white"
-      title="Live gold spot — صرف حوالہ، ریٹ/حساب سے الگ"
+      className="self-center flex items-center gap-1.5 h-[30px] px-3 min-w-[200px] flex-shrink-0 overflow-hidden rounded-md border border-gray-300"
+      style={{ backgroundColor: bg, transition: 'background-color 600ms ease-out' }}
+      title="Live gold spot (bid / ask) — صرف حوالہ، ریٹ/حساب سے الگ"
       data-gold-ticker
     >
-      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${ok ? 'bg-green-500' : 'bg-gray-400'}`} />
-      <span className="text-[13px] font-bold leading-none">Gold</span>
-      <span dir="ltr" className="text-[15px] font-bold tabular-nums whitespace-nowrap leading-none" style={{ color }}>
-        {price != null ? price.toFixed(2) : '--'}
+      <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${ok ? 'bg-green-500' : 'bg-gray-400'}`} />
+      <span className="text-[14px] font-bold leading-none">Gold</span>
+      <span dir="ltr" className="flex items-baseline gap-1 whitespace-nowrap leading-none">
+        <span className="text-[19px] font-extrabold tabular-nums" style={{ color: bidColor }}>
+          {bid != null ? bid.toFixed(2) : '--'}
+        </span>
+        <span className="text-[11px] tabular-nums" style={{ color: askColor }}>/</span>
+        <span className="text-[14px] font-semibold tabular-nums" style={{ color: askColor }}>
+          {ask != null ? ask.toFixed(2) : '--'}
+        </span>
       </span>
-      {!ok && price != null && <span className="urdu text-[9px] text-gray-400 whitespace-nowrap leading-none">آف لائن</span>}
+      {!ok && bid != null && <span className="urdu text-[9px] text-gray-400 whitespace-nowrap leading-none">آف لائن</span>}
     </div>
   )
 }
