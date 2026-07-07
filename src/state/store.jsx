@@ -314,11 +314,12 @@ export function AppProvider({ children }) {
   // So it reflects the actually-saved kacha parchis (one row each via replaceReceipt)
   // — counted once per parchi, and it drops when a parchi's kacha entry is removed.
 
-  // Bottom-bar "کیش" is DISPLAY-ONLY reduced by TODAY'S expenses: shown cash =
-  // totals.cash − (sum of today's کھرچہ). Expenses live in their own table and
-  // never touch cash transactions / ledger, so this is purely a display subtraction.
-  // Date-scoped to the app's current date (rates.date), like the کچا سونا counter.
-  const [expensesToday, setExpensesToday] = useState(0)
+  // Bottom-bar "کیش" is DISPLAY-ONLY reduced by ALL expenses up to & including the
+  // current settings date: shown cash = totals.cash − (sum of every کھرچہ with
+  // date ≤ rates.date). Expenses live in their own table and never touch cash
+  // transactions / ledger, so this is purely a display subtraction. It is cumulative
+  // (NOT per-day) so an expense stays subtracted after the date rolls forward.
+  const [expensesUpToDate, setExpensesUpToDate] = useState(0)
 
   // Purity table inputs + per-cell manual overrides.
   const [input, setInput] = useState({ wazan: '', malawat: '' })
@@ -391,6 +392,7 @@ export function AppProvider({ children }) {
       // stay on a fresh blank workbench.
       try {
         await refreshDraftsCache()
+        await pruneEmptyDrafts()  // drop any stale EMPTY draft row first (BUG 2 — see its comment)
         await dedupeDraftNumbers() // heal any duplicate/colliding draft numbers (old bug)
         const cache = draftsCacheRef.current
         if (cache.length) {
@@ -409,46 +411,45 @@ export function AppProvider({ children }) {
     window.api.getShopTotals().then(setTotals)
   }, [bump])
 
-  // Parchi nav boundary flags — whether an older/newer SAVED parchi exists relative
-  // to the one open. Recomputes when the open parchi changes or the saved set
-  // changes (bump). Drives DISABLING the ◀ (Prev) / ▶ (Next) nav buttons at edges.
+  // Parchi nav boundary flags — whether an older/newer item exists relative to the
+  // one open, walking the SAME merged timeline (saved receipts + unsaved drafts,
+  // ONE order by parchi number — see buildTimeline below) that gotoNextReceipt/
+  // gotoPrevReceipt step through, so the arrows never promise a step the handlers
+  // won't take. Recomputes when the open item changes or the saved/draft sets do.
+  // buildTimeline/currentTimelineIndex are defined further down (both are stable
+  // — their own deps never change identity — so, like the startup-restore effect
+  // above, they're referenced via closure and intentionally left out of the dep
+  // array; only the values that actually drive a re-run are listed).
   const [receiptBounds, setReceiptBounds] = useState({ hasPrev: false, hasNext: false })
   useEffect(() => {
     let alive = true
     ;(async () => {
       if (!hasApi) { setReceiptBounds({ hasPrev: false, hasNext: false }); return }
-      const first = await window.api.getFirstReceiptNo()
-      const last = await window.api.getLastReceiptNo()
-      const hasAny = first != null
-      let hasPrev, hasNext
-      if (openReceiptNo == null) {
-        // On an UNSAVED parchi. The unsaved timeline is [ …stored drafts (by seq)… ,
-        // then the brand-new blank (currentDraftSeq == null) as the newest slot].
-        const cur = draftSeqRef.current
-        const hasOlderDraft = cur == null ? draftSeqs.length > 0 : draftSeqs.some((s) => s < cur)
-        hasPrev = hasOlderDraft || hasAny // older unsaved parchi, else saved history
-        hasNext = cur != null // from a stored draft you can step forward (newer draft / blank); the blank itself is newest
-      } else {
-        hasPrev = openReceiptNo > first // an older saved parchi exists
-        // A newer SAVED parchi exists OR — at the newest saved receipt — the unsaved
-        // parchis / fresh blank sit ahead, so ▶ can always step forward.
-        hasNext = true
-      }
-      if (alive) setReceiptBounds({ hasPrev, hasNext })
+      const timeline = await buildTimeline()
+      let idx = currentTimelineIndex(timeline)
+      if (idx === -1) idx = timeline.length
+      if (!alive) return
+      // idx > 0: something sits before this position. idx < length: this position
+      // is a real entry (there's always a next — another entry, or the blank past
+      // the end); at the blank itself (idx === length) there's nothing further.
+      setReceiptBounds({ hasPrev: idx > 0, hasNext: idx < timeline.length })
     })()
     return () => { alive = false }
   }, [openReceiptNo, bump, currentDraftSeq, draftSeqs])
 
-  // Today's expenses total (read-only) — recomputed on every write (bump, e.g.
-  // after adding an expense) and on a date change. Reduces ONLY the cash DISPLAY.
+  // Cumulative expenses total (read-only) — sum of ALL expenses with date ≤ the
+  // current settings date. Recomputed on every write (bump, e.g. after adding an
+  // expense) and on a date change. Reduces ONLY the cash DISPLAY, so an expense
+  // stays subtracted even after the settings date moves past its entry day.
   useEffect(() => {
     if (!hasApi) return
-    window.api.getExpensesTotalForDate(rates.date).then((s) => setExpensesToday(Number(s) || 0))
+    window.api.getExpensesTotalUpTo(rates.date).then((s) => setExpensesUpToDate(Number(s) || 0))
   }, [rates.date, bump])
 
-  // Bottom-bar cash DISPLAY = live cash figure − today's expenses (display-only;
-  // the DB cash balance/ledger is never reduced by expenses).
-  const cashDisplay = (Number(totals.cash) || 0) - expensesToday
+  // Bottom-bar cash DISPLAY = live cash figure − ALL expenses up to & including the
+  // current settings date (display-only; the DB cash balance/ledger is never
+  // reduced by expenses).
+  const cashDisplay = (Number(totals.cash) || 0) - expensesUpToDate
 
   // PART 1: the sidebar "پرچوں لیا" checkbox DRIVES "اجرت کا سونا" — ticking پرچوں لیا
   // ticks اجرت کا سونا, unticking unticks it. اجرت کا سونا being on is what the
@@ -866,13 +867,37 @@ export function AppProvider({ children }) {
   // NOT used by a saved receipt AND NOT already shown on any OTHER open unsaved
   // parchi (draft). This guarantees every parchi — saved or not — carries a unique
   // receipt number, so New always shows the next one (9 → 10 → 11 …).
+  // BUG FIX: the increment loop used to check ONLY the draft-number set, so once
+  // it stepped past its nextReceiptNo() starting point (skipping numbers already
+  // claimed by drafts) it could land on a number that was SEPARATELY already a
+  // SAVED receipt — e.g. saved {1-12,15} + drafts {13,14}: nextReceiptNo() starts
+  // at 13 (lowest free ignoring drafts), the draft-only check steps 13→14→15 and
+  // stops at 15 WITHOUT noticing #15 is a saved receipt — handing a "new" blank
+  // the number of an existing parchi (a save there would have silently overwritten
+  // it). Now also re-checks receiptNoExists at every step, matching the same
+  // pattern dedupeDraftNumbers already uses correctly.
   const computeNextParchiNo = useCallback(async () => {
     let n = 1
     if (hasApi) { const r = await window.api.nextReceiptNo(); if (r) n = r }
     const used = new Set(draftsCacheRef.current.map((p) => Number(p.data?.receiptNo)).filter(Number.isFinite))
-    while (used.has(n)) n++
+    while (used.has(n) || (hasApi && await window.api.receiptNoExists(n))) n++
     return n
   }, [])
+
+  // BUG 2 fix (startup half): delete any stored draft whose snapshot is EMPTY.
+  // Normal operation never leaves one behind — persistCurrentDraft deletes a
+  // draft's row the moment it clears (see below) — but an abrupt exit (crash /
+  // force-quit) can close the app before that debounced write lands, leaving a
+  // stale pre-clear-or-never-typed row on disk. Runs once at startup, BEFORE
+  // dedupeDraftNumbers (no point assigning a unique number to a row we're about
+  // to delete). Idempotent; touches only rows that fail draftHasData.
+  const pruneEmptyDrafts = useCallback(async () => {
+    if (!hasApi) return
+    const dead = draftsCacheRef.current.filter((d) => !draftHasData(d.data || {}))
+    if (!dead.length) return
+    for (const d of dead) await window.api.deleteDraft(d.seq)
+    await refreshDraftsCache()
+  }, [refreshDraftsCache])
 
   // Self-heal: give every stored draft a UNIQUE receipt number. Older builds could
   // save two drafts with the SAME number (e.g. both #9); this walks the drafts in
@@ -996,24 +1021,60 @@ export function AppProvider({ children }) {
     setReceiptNo(nn)
   }, [resetFormBlank, setDraftSeq, computeNextParchiNo])
 
-  // Neighbours in the unsaved timeline (stored drafts asc, then the blank as newest).
-  const prevUnsavedSeq = useCallback((cur) => {
-    const seqs = draftsCacheRef.current.map((p) => p.seq)
-    if (!seqs.length) return null
-    if (cur == null) return seqs[seqs.length - 1]
-    const older = seqs.filter((s) => s < cur)
-    return older.length ? older[older.length - 1] : null
-  }, [])
-  const nextUnsavedSeq = useCallback((cur) => {
-    const seqs = draftsCacheRef.current.map((p) => p.seq)
-    if (cur == null) return null
-    const newer = seqs.filter((s) => s > cur)
-    return newer.length ? newer[0] : null
-  }, [])
-  const firstUnsavedSeq = useCallback(() => {
-    const seqs = draftsCacheRef.current.map((p) => p.seq)
-    return seqs.length ? seqs[0] : null
-  }, [])
+  // ── Merged navigation timeline (saved + unsaved, ONE chronological order) ───
+  // BUG 1 fix: ◀/▶/First/Last used to treat "all saved" then "all drafts" as two
+  // separate blocks, so a draft numbered BEFORE the newest saved receipt was
+  // unreachable until AFTER it (e.g. 1-12 saved, 13/14 drafted, 15 saved → ▶ from
+  // 12 jumped to 15, not 13; ⏭ Last jumped straight to 15, skipping 13/14 entirely).
+  // This walks ONE list ordered by PARCHI NUMBER regardless of saved/unsaved
+  // status: 12 → 13(draft) → 14(draft) → 15(saved) → blank. Used by ALL FOUR nav
+  // functions (gotoFirstReceipt/gotoLastReceipt/gotoNextReceipt/gotoPrevReceipt)
+  // and the receiptBounds arrow-enable effect, so every one of them agrees on the
+  // same order. Always rebuilt from FRESH reads (saved numbers from the DB,
+  // drafts via refreshDraftsCache) so a step never trusts stale state. A draft
+  // with no numeric receiptNo (very old rows) sorts after every numbered entry,
+  // by seq; the blank workbench is one PAST the end of this array, never an
+  // entry in it. A saved/draft tie at the SAME number (a reused number) keeps
+  // saved first — both are visited, never skipped, never looped.
+  const buildTimeline = useCallback(async () => {
+    const savedNos = (hasApi && window.api.listReceiptNos) ? (await window.api.listReceiptNos()) : []
+    await refreshDraftsCache()
+    const entries = savedNos.map((no) => ({ kind: 'saved', no: Number(no), seq: null }))
+    for (const d of draftsCacheRef.current) {
+      // Defensive: an empty draft has no business in the timeline — it should
+      // never have been persisted (persistCurrentDraft deletes on clear; see
+      // pruneEmptyDrafts for the startup case) — but this guards a leftover
+      // row regardless of how it got there.
+      if (!draftHasData(d.data || {})) continue
+      const no = Number(d.data?.receiptNo)
+      entries.push({ kind: 'draft', seq: d.seq, no: Number.isFinite(no) ? no : null })
+    }
+    entries.sort((a, b) => {
+      if (a.no == null && b.no == null) return a.seq - b.seq
+      if (a.no == null) return 1
+      if (b.no == null) return -1
+      if (a.no !== b.no) return a.no - b.no
+      if (a.kind !== b.kind) return a.kind === 'saved' ? -1 : 1 // same number: saved before draft
+      return (a.seq ?? 0) - (b.seq ?? 0)
+    })
+    return entries
+  }, [refreshDraftsCache])
+
+  // This app's CURRENT position in `timeline` — the index of the open saved
+  // receipt or stored draft, or `timeline.length` (one PAST the end) for the
+  // brand-new, never-persisted blank. -1 (not found) shouldn't happen since
+  // openReceiptNo/draftSeqRef only ever point at real rows, but callers treat
+  // it the same as the blank position, defensively.
+  const currentTimelineIndex = useCallback((timeline) => {
+    if (openReceiptNo != null) {
+      return timeline.findIndex((e) => e.kind === 'saved' && e.no === openReceiptNo)
+    }
+    const seq = draftSeqRef.current
+    if (seq != null) {
+      return timeline.findIndex((e) => e.kind === 'draft' && e.seq === seq)
+    }
+    return timeline.length
+  }, [openReceiptNo])
 
   // Save the given customer (e.g. the modal form's working copy) or, with no
   // argument, the current global customer (the inline Save button). The DB
@@ -1128,66 +1189,70 @@ export function AppProvider({ children }) {
   }, [loadReceipt])
 
   // ── Parchi navigation ───────────────────────────────────────────────────────
-  // Each resolves a target receipt_no on the backend (gap-tolerant), then loads
-  // it. No saved receipts → gentle Urdu note. At an edge (Next past last / Prev
-  // before first) → no-op note, no wrap-around. Next/Prev with nothing open load
-  // First/Last respectively.
+  // ALL FOUR (⏮ First / ◀ Prev / ▶ Next / ⏭ Last) now walk the SAME merged
+  // saved+draft timeline (see buildTimeline) — First/Last jump straight to its
+  // oldest/newest REAL entry (never the blank), Next/Prev step one at a time.
+  // Nothing saved or drafted anywhere → gentle Urdu note. At an edge (Next past
+  // newest / Prev before oldest) → no-op note, no wrap-around.
   const NONE = { ok: false, message: 'کوئی رسید محفوظ نہیں' }
   const gotoFirstReceipt = useCallback(async () => {
     if (!hasApi) return { ok: false }
-    const n = await window.api.getFirstReceiptNo()
-    if (n == null) return NONE
-    return loadReceiptNo(n)
-  }, [loadReceiptNo])
+    if (openReceiptNo == null) await flushDraft() // leaving an unsaved parchi: flush first, same as ◀/▶
+    const timeline = await buildTimeline()
+    if (!timeline.length) return NONE
+    const entry = timeline[0]
+    if (entry.kind === 'saved') return loadReceiptNo(entry.no)
+    loadDraftBySeq(entry.seq)
+    return { ok: true, receipt_no: null }
+  }, [openReceiptNo, flushDraft, buildTimeline, loadReceiptNo, loadDraftBySeq])
 
   const gotoLastReceipt = useCallback(async () => {
     if (!hasApi) return { ok: false }
-    const n = await window.api.getLastReceiptNo()
-    if (n == null) return NONE
-    return loadReceiptNo(n)
-  }, [loadReceiptNo])
+    if (openReceiptNo == null) await flushDraft()
+    const timeline = await buildTimeline()
+    if (!timeline.length) return NONE
+    const entry = timeline[timeline.length - 1]
+    if (entry.kind === 'saved') return loadReceiptNo(entry.no)
+    loadDraftBySeq(entry.seq)
+    return { ok: true, receipt_no: null }
+  }, [openReceiptNo, flushDraft, buildTimeline, loadReceiptNo, loadDraftBySeq])
 
-  // ▶ Next (NEWER). Timeline: [saved receipts…] → [unsaved drafts by seq…] → [blank].
+  // ▶ Next (NEWER). Walks the merged timeline (buildTimeline, above) one step
+  // forward: another saved/draft entry, or — past the newest entry — a fresh
+  // blank workbench. Already on that blank with nothing ahead → Urdu note.
   const gotoNextReceipt = useCallback(async () => {
     if (!hasApi) return { ok: false }
-    if (openReceiptNo != null) {
-      // On a saved receipt → a newer saved receipt, else the FIRST unsaved parchi,
-      // else a fresh blank workbench.
-      const n = await window.api.getNextReceiptNo(openReceiptNo)
-      if (n != null) return loadReceiptNo(n)
-      await refreshDraftsCache()
-      const first = firstUnsavedSeq()
-      if (first != null) { loadDraftBySeq(first); return { ok: true, receipt_no: null } }
-      await blankWorkbench()
-      return { ok: true, receipt_no: null }
-    }
-    // On an unsaved parchi → persist it, then a NEWER unsaved parchi, else the blank.
-    await flushDraft()
-    const cur = draftSeqRef.current
-    const nextSeq = nextUnsavedSeq(cur)
-    if (nextSeq != null) { loadDraftBySeq(nextSeq); return { ok: true, receipt_no: null } }
-    if (cur != null) { await blankWorkbench(); return { ok: true, receipt_no: null } }
-    return { ok: false, message: 'یہ آخری (نئی) پرچی ہے' } // already the newest blank
-  }, [openReceiptNo, loadReceiptNo, flushDraft, loadDraftBySeq, blankWorkbench,
-    refreshDraftsCache, firstUnsavedSeq, nextUnsavedSeq])
+    // Leaving an unsaved parchi: flush FIRST (persists real data / deletes an
+    // emptied draft) so the timeline we're about to build is accurate.
+    if (openReceiptNo == null) await flushDraft()
+    const timeline = await buildTimeline()
+    let idx = currentTimelineIndex(timeline)
+    if (idx === -1) idx = timeline.length
+    if (idx >= timeline.length) return { ok: false, message: 'یہ آخری (نئی) پرچی ہے' } // already the newest blank
+    const targetIdx = idx + 1
+    if (targetIdx >= timeline.length) { await blankWorkbench(); return { ok: true, receipt_no: null } }
+    const entry = timeline[targetIdx]
+    if (entry.kind === 'saved') return loadReceiptNo(entry.no)
+    loadDraftBySeq(entry.seq)
+    return { ok: true, receipt_no: null }
+  }, [openReceiptNo, flushDraft, buildTimeline, currentTimelineIndex, loadReceiptNo, loadDraftBySeq, blankWorkbench])
 
-  // ◀ Prev (OLDER). From an unsaved parchi step back through older drafts, then into
-  // the saved history; from a saved receipt step to the older saved receipt.
+  // ◀ Prev (OLDER). Same merged timeline, one step back. Past the start → an
+  // Urdu note ('پہلی رسید' if something exists at all, else NONE — nothing saved
+  // or drafted anywhere).
   const gotoPrevReceipt = useCallback(async () => {
     if (!hasApi) return { ok: false }
-    if (openReceiptNo != null) {
-      const n = await window.api.getPrevReceiptNo(openReceiptNo)
-      if (n == null) return { ok: false, message: 'پہلی رسید' }
-      return loadReceiptNo(n)
-    }
-    await flushDraft()
-    const cur = draftSeqRef.current
-    const prevSeq = prevUnsavedSeq(cur)
-    if (prevSeq != null) { loadDraftBySeq(prevSeq); return { ok: true, receipt_no: null } }
-    const n = await window.api.getLastReceiptNo()
-    if (n == null) return { ok: false, message: 'کوئی رسید محفوظ نہیں' }
-    return loadReceiptNo(n)
-  }, [openReceiptNo, loadReceiptNo, flushDraft, loadDraftBySeq, prevUnsavedSeq])
+    if (openReceiptNo == null) await flushDraft()
+    const timeline = await buildTimeline()
+    let idx = currentTimelineIndex(timeline)
+    if (idx === -1) idx = timeline.length
+    const targetIdx = idx - 1
+    if (targetIdx < 0) return timeline.length ? { ok: false, message: 'پہلی رسید' } : NONE
+    const entry = timeline[targetIdx]
+    if (entry.kind === 'saved') return loadReceiptNo(entry.no)
+    loadDraftBySeq(entry.seq)
+    return { ok: true, receipt_no: null }
+  }, [openReceiptNo, flushDraft, buildTimeline, currentTimelineIndex, loadReceiptNo, loadDraftBySeq])
 
   const addTransaction = useCallback(async (t) => {
     const txn = {
@@ -1460,9 +1525,22 @@ export function AppProvider({ children }) {
   // reachable again via ◀), then a clean blank parchi opens. New never touches the
   // ledger — nothing is committed to the record until Save is pressed.
   const newParchi = useCallback(async () => {
-    await flushDraft()      // preserve the current unsaved parchi as a draft
-    await blankWorkbench()  // then a fresh blank one (date→today, ticks reset, next number)
-  }, [flushDraft, blankWorkbench])
+    await flushDraft() // preserve the current unsaved parchi as a draft — or, if it
+                        // was empty, persistCurrentDraft already deleted its row
+    // BUG 2 defensive re-check: guarantee an emptied form's draft row is GONE
+    // before blankWorkbench opens the fresh one, so no stale seq can be picked
+    // back up by ◀/▶. flushDraft's persistCurrentDraft already deletes on empty
+    // in the normal case; this closes a rapid type→clear→New race where the
+    // 800ms debounce hadn't caught up to the clear before flushDraft ran.
+    const fs = formSnapshotRef.current
+    if (hasApi && fs && !fs.hasData && draftSeqRef.current != null) {
+      const s = draftSeqRef.current
+      setDraftSeq(null)
+      await window.api.deleteDraft(s)
+      await refreshDraftsCache()
+    }
+    await blankWorkbench() // then a fresh blank one (date→today, ticks reset, next number)
+  }, [flushDraft, blankWorkbench, refreshDraftsCache, setDraftSeq])
 
   // Stage 1 — one-time fresh start: clear all transactions/receipts, numbering → 1.
   const resetData = useCallback(async () => {
@@ -1537,10 +1615,10 @@ export function AppProvider({ children }) {
     try { fresh = await window.api.getShopTotals() } catch {}
     return {
       ok: !!(res && res.ok),
-      newCash: fresh ? (Number(fresh.cash) || 0) - expensesToday : null, // matches bottom-bar کیش
+      newCash: fresh ? (Number(fresh.cash) || 0) - expensesUpToDate : null, // matches bottom-bar کیش
       newTezabi: fresh ? (Number(fresh.tezabi_sona) || 0) : null
     }
-  }, [refresh, expensesToday])
+  }, [refresh, expensesUpToDate])
 
   // Stage 4/5 — fetch a filtered customer report ({ rows, total_gold, total_cash }).
   const getReport = useCallback(async (opts) => {
@@ -1641,6 +1719,10 @@ export function AppProvider({ children }) {
     shareSlipWhatsApp,
     hasApi
   }
+
+  // TEMP-VERIFY-HOOK: exposes the context for an automated nav-bug verification
+  // run; removed before this change ships.
+  if (typeof window !== 'undefined') window.__debugApp = value
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>
 }
