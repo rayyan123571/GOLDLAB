@@ -83,8 +83,15 @@ export default function CustomerEntry() {
 
   useEffect(() => {
     if (!hasApi) return
-    // findCustomers('') returns saved customers ordered by name (up to 50).
-    window.api.findCustomers('').then((list) => setSavedCustomers(list || []))
+    // Cache EVERY saved customer (unbounded, ordered by name). The strict reject in
+    // onNameChange only lets a keystroke through if it prefixes a name in THIS list,
+    // so it must hold all names — otherwise the first letter of any customer past the
+    // old 50-row cap (T=Talha, Z=Zubair…) could not be typed. listAllCustomers is
+    // dedicated to this cache; findCustomers stays capped for the search dropdown.
+    const load = window.api.listAllCustomers
+      ? window.api.listAllCustomers()
+      : window.api.findCustomers('') // fallback for an older preload
+    load.then((list) => setSavedCustomers(list || []))
   }, [bump])
 
   // First saved customer whose name starts with `text` (case-insensitive, trimmed).
@@ -124,8 +131,9 @@ export default function CustomerEntry() {
 
   // Stage 6 — New: blank parchi with the next incremented number + fresh customer.
   const onNew = () => {
+    // newParchi parks the current unsaved parchi and opens a fresh blank one
+    // (it resets the customer itself, so no separate newCustomer() is needed).
     newParchi()
-    newCustomer()
     setSaveMsg(null)
   }
 

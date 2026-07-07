@@ -18,6 +18,32 @@ function goldFigures(st, rateTola) {
 
 const NO_SAVED = { wasooli: false, lab: false, naqad: false, udhar: false }
 
+// ── Unsaved-parchi DRAFT helpers ──────────────────────────────────────────────
+// The blank composing state a fresh parchi starts from — one source of truth for
+// resetting the workbench (New / return-to-workbench when no draft exists).
+const BLANK_GOLD = () => ({ wazan: '', point: '100', rate: '' })
+const BLANK_CUSTOMER = () => ({ id: null, name: '', mobile: '', mobile2: '', telephone: '', address: '', imagePath: null })
+
+// A gold {wazan,point,rate} entry counts as "filled" if a weight or rate is typed.
+const goldFilled = (st) =>
+  !!st && (String(st.wazan ?? '').trim() !== '' || String(st.rate ?? '').trim() !== '')
+
+// True when the composing form holds ANY real, save-worthy data. Mirrors the
+// spirit of saveParchi's empty-guard (a bare پرچی row-tick is NOT data). Drives
+// (a) whether a draft is worth persisting vs cleared, and (b) whether نئی پرچی
+// must confirm before discarding.
+const draftHasData = (s) =>
+  String(s.input?.wazan ?? '').trim() !== '' ||
+  String(s.input?.malawat ?? '').trim() !== '' ||
+  Object.values(s.overrides || {}).some((row) =>
+    Object.entries(row || {}).some(([k, v]) => k !== 'parchi' && String(v ?? '').trim() !== '')) ||
+  (s.customer && ((s.customer.name || '').trim() !== '' || s.customer.id != null)) ||
+  goldFilled(s.cashSell) || goldFilled(s.cashBuy) ||
+  goldFilled(s.udharGive) || goldFilled(s.udharTake) ||
+  String(s.udharCashGive ?? '').trim() !== '' || String(s.udharCashTake ?? '').trim() !== '' ||
+  String(s.udharComment ?? '').trim() !== '' ||
+  String(s.sonaDiya ?? '').trim() !== '' || String(s.cashDiya ?? '').trim() !== ''
+
 const AppCtx = createContext(null)
 export const useApp = () => useContext(AppCtx)
 
@@ -324,6 +350,23 @@ export function AppProvider({ children }) {
   // after a successful DB save of that section; cleared on New / reset.
   const [savedFlags, setSavedFlags] = useState(NO_SAVED)
 
+  // ── UNSAVED-PARCHI DRAFTS ─────────────────────────────────────────────────────
+  // The operator may keep several in-progress (unsaved) parchis open at once: New
+  // parks the current one and opens a fresh blank, and ◀/▶ step through them. Each
+  // is auto-persisted to the `drafts` table (separate from the ledger, so totals/
+  // reports never see them). `currentDraftSeq` = the seq of the on-screen unsaved
+  // parchi, or null for a brand-new blank not yet persisted. `draftSeqs` (the seqs
+  // of all stored drafts) drives the nav-boundary flags. Refs mirror them for the
+  // []-dep callbacks; caches avoid re-querying on every nav.
+  const [currentDraftSeq, setCurrentDraftSeq] = useState(null)
+  const [draftSeqs, setDraftSeqs] = useState([])
+  const draftReadyRef = useRef(false)      // startup restore finished → auto-save may run
+  const draftSeqRef = useRef(null)         // synchronous mirror of currentDraftSeq
+  const draftsCacheRef = useRef([])        // [{ seq, data }] parsed, ascending by seq
+  const draftTimerRef = useRef(null)       // auto-save debounce handle
+  const formSnapshotRef = useRef(null)     // { hasData, snap } latest composing form
+  const persistInflightRef = useRef(Promise.resolve()) // serialize draft writes
+
   const refresh = useCallback(() => setBump((b) => b + 1), [])
 
   // Modal tabs (ادھار / اخراجات) open over the main workflow. Only one at a time.
@@ -342,6 +385,21 @@ export function AppProvider({ children }) {
       if (r) setRates({ ...r, date: todayISO() })
       const n = await window.api.nextReceiptNo()
       if (n) setReceiptNo(n)
+      // Restore any UNSAVED parchis left behind last session. Corrupt/empty rows are
+      // skipped silently (refreshDraftsCache parses each in try/catch) — startup
+      // never breaks. Show the NEWEST one; older ones are reachable via ◀. If none,
+      // stay on a fresh blank workbench.
+      try {
+        await refreshDraftsCache()
+        await dedupeDraftNumbers() // heal any duplicate/colliding draft numbers (old bug)
+        const cache = draftsCacheRef.current
+        if (cache.length) {
+          const newest = cache[cache.length - 1]
+          applyDraft(newest.data)
+          setDraftSeq(newest.seq)
+        }
+      } catch { /* any failure → start clean */ }
+      draftReadyRef.current = true // startup restore done — auto-save may now run
     })()
   }, [])
 
@@ -364,17 +422,22 @@ export function AppProvider({ children }) {
       const hasAny = first != null
       let hasPrev, hasNext
       if (openReceiptNo == null) {
-        // Composing a NEW unsaved parchi = newest position, at the end.
-        hasPrev = hasAny // can step back into the saved history
-        hasNext = false // nothing newer ahead
+        // On an UNSAVED parchi. The unsaved timeline is [ …stored drafts (by seq)… ,
+        // then the brand-new blank (currentDraftSeq == null) as the newest slot].
+        const cur = draftSeqRef.current
+        const hasOlderDraft = cur == null ? draftSeqs.length > 0 : draftSeqs.some((s) => s < cur)
+        hasPrev = hasOlderDraft || hasAny // older unsaved parchi, else saved history
+        hasNext = cur != null // from a stored draft you can step forward (newer draft / blank); the blank itself is newest
       } else {
         hasPrev = openReceiptNo > first // an older saved parchi exists
-        hasNext = openReceiptNo < last // a newer saved parchi exists
+        // A newer SAVED parchi exists OR — at the newest saved receipt — the unsaved
+        // parchis / fresh blank sit ahead, so ▶ can always step forward.
+        hasNext = true
       }
       if (alive) setReceiptBounds({ hasPrev, hasNext })
     })()
     return () => { alive = false }
-  }, [openReceiptNo, bump])
+  }, [openReceiptNo, bump, currentDraftSeq, draftSeqs])
 
   // Today's expenses total (read-only) — recomputed on every write (bump, e.g.
   // after adding an expense) and on a date change. Reduces ONLY the cash DISPLAY.
@@ -752,6 +815,206 @@ export function AppProvider({ children }) {
     setCustomer({ id: null, name: '', mobile: '', mobile2: '', telephone: '', address: '', imagePath: null })
   }, [])
 
+  // ── DRAFTS: auto-persist EACH in-progress unsaved parchi; navigate with ◀/▶ ────
+  const composingHasData = useMemo(() => draftHasData({
+    input, overrides, customer, cashSell, cashBuy, udharGive, udharTake,
+    udharCashGive, udharCashTake, udharComment, sonaDiya, cashDiya
+  }), [input, overrides, customer, cashSell, cashBuy, udharGive, udharTake,
+    udharCashGive, udharCashTake, udharComment, sonaDiya, cashDiya])
+
+  const setDraftSeq = useCallback((v) => { draftSeqRef.current = v; setCurrentDraftSeq(v) }, [])
+
+  // Load a draft snapshot into the composing form. Sets ONLY the openReceiptNo ==
+  // null (unsaved) state — never a saved receipt. Derived values recompute through
+  // the existing paths (computedRows is a useMemo of input+overrides+rates; the
+  // sidebar سونا/کیش دیا are restored as their own state), so nothing computed is
+  // blindly patched.
+  const applyDraft = useCallback((d) => {
+    if (!d || typeof d !== 'object') return
+    setCustomer({ ...BLANK_CUSTOMER(), ...(d.customer || {}) })
+    setInput({ wazan: d.input?.wazan ?? '', malawat: d.input?.malawat ?? '' })
+    setOverrides(d.overrides && typeof d.overrides === 'object' ? d.overrides : {})
+    setCashSell(d.cashSell || BLANK_GOLD())
+    setCashBuy(d.cashBuy || BLANK_GOLD())
+    setUdharGive(d.udharGive || BLANK_GOLD())
+    setUdharTake(d.udharTake || BLANK_GOLD())
+    setUdharCashGive(d.udharCashGive ?? '')
+    setUdharCashTake(d.udharCashTake ?? '')
+    setUdharComment(d.udharComment ?? '')
+    setParchunLiya(!!d.parchunLiya)
+    setUjratKaSona(!!d.ujratKaSona)
+    setSonaDiya(d.sonaDiya ?? '')
+    setCashDiya(d.cashDiya ?? '')
+    if (d.receiptNo != null) setReceiptNo(d.receiptNo)
+  }, [])
+
+  // Re-read every stored draft into the cache (parsed; corrupt rows skipped) and
+  // publish the seq list that drives the nav bounds.
+  const refreshDraftsCache = useCallback(async () => {
+    if (!hasApi) return
+    const rows = (await window.api.listDrafts()) || []
+    const parsed = []
+    for (const r of rows) {
+      try { const d = JSON.parse(r.payload); if (d && typeof d === 'object') parsed.push({ seq: r.seq, data: d }) }
+      catch { /* skip a corrupt row */ }
+    }
+    draftsCacheRef.current = parsed
+    setDraftSeqs(parsed.map((p) => p.seq))
+  }, [])
+
+  // The number a brand-new unsaved parchi should get: the lowest positive integer
+  // NOT used by a saved receipt AND NOT already shown on any OTHER open unsaved
+  // parchi (draft). This guarantees every parchi — saved or not — carries a unique
+  // receipt number, so New always shows the next one (9 → 10 → 11 …).
+  const computeNextParchiNo = useCallback(async () => {
+    let n = 1
+    if (hasApi) { const r = await window.api.nextReceiptNo(); if (r) n = r }
+    const used = new Set(draftsCacheRef.current.map((p) => Number(p.data?.receiptNo)).filter(Number.isFinite))
+    while (used.has(n)) n++
+    return n
+  }, [])
+
+  // Self-heal: give every stored draft a UNIQUE receipt number. Older builds could
+  // save two drafts with the SAME number (e.g. both #9); this walks the drafts in
+  // seq order and reassigns any whose number is missing, duplicated, or already a
+  // saved receipt — keeping the earliest at its number and bumping the rest (9, 10,
+  // 11 …). Idempotent (no collisions → no writes) and touches ONLY the drafts table.
+  const dedupeDraftNumbers = useCallback(async () => {
+    if (!hasApi) return
+    const cache = draftsCacheRef.current // ascending by seq
+    if (!cache.length) return
+    let base = 1
+    const r = await window.api.nextReceiptNo(); if (r) base = r
+    const assigned = new Set()
+    let changed = false
+    for (const d of cache) {
+      let n = Number(d.data?.receiptNo)
+      const free = Number.isFinite(n) && !assigned.has(n) && !(await window.api.receiptNoExists(n))
+      if (!free) {
+        n = base
+        while (assigned.has(n) || (await window.api.receiptNoExists(n))) n++
+      }
+      assigned.add(n)
+      if (n !== Number(d.data?.receiptNo)) {
+        await window.api.upsertDraft(d.seq, { ...d.data, receiptNo: n })
+        changed = true
+      }
+    }
+    if (changed) await refreshDraftsCache()
+  }, [refreshDraftsCache])
+
+  // Keep the latest composing form (and its hasData flag) in a ref, so the stable
+  // persist/flush callbacks always write the CURRENT values without stale closures.
+  useEffect(() => {
+    formSnapshotRef.current = {
+      hasData: composingHasData,
+      snap: {
+        input, overrides, customer, cashSell, cashBuy, udharGive, udharTake,
+        udharCashGive, udharCashTake, udharComment, ujratKaSona, parchunLiya,
+        sonaDiya, cashDiya, receiptNo
+      }
+    }
+  }, [composingHasData, input, overrides, customer, cashSell, cashBuy, udharGive,
+    udharTake, udharCashGive, udharCashTake, udharComment, ujratKaSona, parchunLiya,
+    sonaDiya, cashDiya, receiptNo])
+
+  // Persist the CURRENT unsaved parchi to its own draft row (INSERT if new, UPDATE
+  // in place otherwise). An empty form deletes its row (a fully-cleared parchi
+  // leaves nothing behind). Writes are serialized so a rapid nav can't double-insert.
+  const persistCurrentDraft = useCallback(() => {
+    const run = async () => {
+      if (!hasApi) return
+      const fs = formSnapshotRef.current
+      if (!fs) return
+      if (fs.hasData) {
+        const res = await window.api.upsertDraft(draftSeqRef.current, fs.snap)
+        if (res && res.seq != null) setDraftSeq(res.seq)
+      } else if (draftSeqRef.current != null) {
+        const s = draftSeqRef.current
+        setDraftSeq(null)
+        await window.api.deleteDraft(s)
+      }
+      await refreshDraftsCache()
+    }
+    const p = persistInflightRef.current.then(run, run)
+    persistInflightRef.current = p
+    return p
+  }, [refreshDraftsCache, setDraftSeq])
+
+  // Auto-persist the current unsaved parchi (~800ms debounce). Runs ONLY while on an
+  // unsaved parchi (openReceiptNo == null) and after the startup restore, so it can
+  // never touch a saved receipt nor write before the drafts are loaded. Best-effort
+  // + async → never blocks typing.
+  useEffect(() => {
+    if (!hasApi || !draftReadyRef.current) return
+    if (openReceiptNo != null) return
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    draftTimerRef.current = setTimeout(() => { draftTimerRef.current = null; persistCurrentDraft() }, 800)
+    return () => { if (draftTimerRef.current) { clearTimeout(draftTimerRef.current); draftTimerRef.current = null } }
+  }, [openReceiptNo, composingHasData, input, overrides, customer, cashSell, cashBuy,
+    udharGive, udharTake, udharCashGive, udharCashTake, udharComment, ujratKaSona,
+    parchunLiya, sonaDiya, cashDiya, receiptNo, persistCurrentDraft])
+
+  // Immediately flush the current unsaved parchi (cancel the pending debounce first)
+  // — called before any navigation so nothing in-flight is lost.
+  const flushDraft = useCallback(async () => {
+    if (draftTimerRef.current) { clearTimeout(draftTimerRef.current); draftTimerRef.current = null }
+    await persistCurrentDraft()
+  }, [persistCurrentDraft])
+
+  // Reset every composing field to blank (shared by New / after-save / blank workbench).
+  const resetFormBlank = useCallback(() => {
+    setInput({ wazan: '', malawat: '' })
+    setOverrides({})
+    setCashSell(BLANK_GOLD()); setCashBuy(BLANK_GOLD())
+    setUdharGive(BLANK_GOLD()); setUdharTake(BLANK_GOLD())
+    setUdharCashGive(''); setUdharCashTake(''); setUdharComment('')
+    setSonaDiya(''); setCashDiya('')
+    setParchunLiya(false); setUjratKaSona(false)
+    setCustomer(BLANK_CUSTOMER())
+  }, [])
+
+  // Show a specific stored draft in the workbench.
+  const loadDraftBySeq = useCallback((seq) => {
+    const found = draftsCacheRef.current.find((p) => p.seq === seq)
+    if (!found) return false
+    applyDraft(found.data)
+    setDraftSeq(seq)
+    setOpenReceiptNo(null)
+    return true
+  }, [applyDraft, setDraftSeq])
+
+  // Open a brand-new blank unsaved parchi (seq null; not persisted until typed).
+  // Gets its OWN unique receipt number (next free, past all open drafts).
+  const blankWorkbench = useCallback(async () => {
+    resetFormBlank()
+    setDraftSeq(null)
+    setSavedFlags(NO_SAVED)
+    setRates((r) => ({ ...r, date: todayISO() }))
+    setOpenReceiptNo(null)
+    const nn = await computeNextParchiNo()
+    setReceiptNo(nn)
+  }, [resetFormBlank, setDraftSeq, computeNextParchiNo])
+
+  // Neighbours in the unsaved timeline (stored drafts asc, then the blank as newest).
+  const prevUnsavedSeq = useCallback((cur) => {
+    const seqs = draftsCacheRef.current.map((p) => p.seq)
+    if (!seqs.length) return null
+    if (cur == null) return seqs[seqs.length - 1]
+    const older = seqs.filter((s) => s < cur)
+    return older.length ? older[older.length - 1] : null
+  }, [])
+  const nextUnsavedSeq = useCallback((cur) => {
+    const seqs = draftsCacheRef.current.map((p) => p.seq)
+    if (cur == null) return null
+    const newer = seqs.filter((s) => s > cur)
+    return newer.length ? newer[0] : null
+  }, [])
+  const firstUnsavedSeq = useCallback(() => {
+    const seqs = draftsCacheRef.current.map((p) => p.seq)
+    return seqs.length ? seqs[0] : null
+  }, [])
+
   // Save the given customer (e.g. the modal form's working copy) or, with no
   // argument, the current global customer (the inline Save button). The DB
   // assigns the id on insert and returns the full row, which we set back so the
@@ -884,23 +1147,47 @@ export function AppProvider({ children }) {
     return loadReceiptNo(n)
   }, [loadReceiptNo])
 
+  // ▶ Next (NEWER). Timeline: [saved receipts…] → [unsaved drafts by seq…] → [blank].
   const gotoNextReceipt = useCallback(async () => {
     if (!hasApi) return { ok: false }
-    const n = openReceiptNo == null
-      ? await window.api.getFirstReceiptNo()
-      : await window.api.getNextReceiptNo(openReceiptNo)
-    if (n == null) return { ok: false, message: openReceiptNo == null ? 'کوئی رسید محفوظ نہیں' : 'آخری رسید' }
-    return loadReceiptNo(n)
-  }, [openReceiptNo, loadReceiptNo])
+    if (openReceiptNo != null) {
+      // On a saved receipt → a newer saved receipt, else the FIRST unsaved parchi,
+      // else a fresh blank workbench.
+      const n = await window.api.getNextReceiptNo(openReceiptNo)
+      if (n != null) return loadReceiptNo(n)
+      await refreshDraftsCache()
+      const first = firstUnsavedSeq()
+      if (first != null) { loadDraftBySeq(first); return { ok: true, receipt_no: null } }
+      await blankWorkbench()
+      return { ok: true, receipt_no: null }
+    }
+    // On an unsaved parchi → persist it, then a NEWER unsaved parchi, else the blank.
+    await flushDraft()
+    const cur = draftSeqRef.current
+    const nextSeq = nextUnsavedSeq(cur)
+    if (nextSeq != null) { loadDraftBySeq(nextSeq); return { ok: true, receipt_no: null } }
+    if (cur != null) { await blankWorkbench(); return { ok: true, receipt_no: null } }
+    return { ok: false, message: 'یہ آخری (نئی) پرچی ہے' } // already the newest blank
+  }, [openReceiptNo, loadReceiptNo, flushDraft, loadDraftBySeq, blankWorkbench,
+    refreshDraftsCache, firstUnsavedSeq, nextUnsavedSeq])
 
+  // ◀ Prev (OLDER). From an unsaved parchi step back through older drafts, then into
+  // the saved history; from a saved receipt step to the older saved receipt.
   const gotoPrevReceipt = useCallback(async () => {
     if (!hasApi) return { ok: false }
-    const n = openReceiptNo == null
-      ? await window.api.getLastReceiptNo()
-      : await window.api.getPrevReceiptNo(openReceiptNo)
-    if (n == null) return { ok: false, message: openReceiptNo == null ? 'کوئی رسید محفوظ نہیں' : 'پہلی رسید' }
+    if (openReceiptNo != null) {
+      const n = await window.api.getPrevReceiptNo(openReceiptNo)
+      if (n == null) return { ok: false, message: 'پہلی رسید' }
+      return loadReceiptNo(n)
+    }
+    await flushDraft()
+    const cur = draftSeqRef.current
+    const prevSeq = prevUnsavedSeq(cur)
+    if (prevSeq != null) { loadDraftBySeq(prevSeq); return { ok: true, receipt_no: null } }
+    const n = await window.api.getLastReceiptNo()
+    if (n == null) return { ok: false, message: 'کوئی رسید محفوظ نہیں' }
     return loadReceiptNo(n)
-  }, [openReceiptNo, loadReceiptNo])
+  }, [openReceiptNo, loadReceiptNo, flushDraft, loadDraftBySeq, prevUnsavedSeq])
 
   const addTransaction = useCallback(async (t) => {
     const txn = {
@@ -989,8 +1276,16 @@ export function AppProvider({ children }) {
     // that zeroed/removed all its entries is STILL a valid save (it must overwrite
     // the receipt so the emptied state persists), whereas a brand-new blank parchi
     // has nothing to save yet.
-    const rno = receiptNo
-    const isEdit = openReceiptNo != null && Number(openReceiptNo) === Number(rno)
+    const displayedNo = receiptNo
+    const isEdit = openReceiptNo != null && Number(openReceiptNo) === Number(displayedNo)
+    // Save under the number shown on screen — each unsaved parchi already carries its
+    // OWN unique number (assigned at creation, past every other open draft). Guard:
+    // if that number is somehow ALREADY a saved receipt (not this edit), claim a
+    // fresh unique one instead, so a save can never overwrite another parchi.
+    let rno = displayedNo
+    if (!isEdit && hasApi && (await window.api.receiptNoExists(displayedNo))) {
+      rno = await computeNextParchiNo()
+    }
 
     // A parchi is worth saving if it has any نقد/ادھار entry OR any REAL purity-
     // table data (top weights, or an override carrying an actual field value). A
@@ -1086,6 +1381,14 @@ export function AppProvider({ children }) {
     refresh()
 
     if (!isEdit) {
+      // The unsaved parchi is now in the ledger — remove ITS draft row (other
+      // unsaved parchis stay). Cancel any pending auto-save first so the just-saved
+      // form can't be re-inserted as a draft on the way out.
+      if (draftTimerRef.current) { clearTimeout(draftTimerRef.current); draftTimerRef.current = null }
+      const savedSeq = draftSeqRef.current
+      setDraftSeq(null)
+      if (hasApi && savedSeq != null) window.api.deleteDraft(savedSeq).then(refreshDraftsCache).catch(() => {})
+      else refreshDraftsCache()
       // Brand-new parchi: it is now recorded in the ledger. CLEAR the entry fields
       // and advance to a fresh blank parchi. This is what fixes the "doubling": the
       // live receipt previews compute باقی = (ledger balance) + (current form
@@ -1110,8 +1413,8 @@ export function AppProvider({ children }) {
       setSavedFlags(NO_SAVED)
       setOpenReceiptNo(null)
       if (hasApi) {
-        const n = await window.api.nextReceiptNo()
-        if (n) setReceiptNo(n)
+        const n = await computeNextParchiNo()
+        setReceiptNo(n)
       } else {
         setReceiptNo((r) => r + 1)
       }
@@ -1121,7 +1424,7 @@ export function AppProvider({ children }) {
       setOpenReceiptNo(rno)
     }
     return { ok: true, receipt_no: rno, saved: rows.length, edited: isEdit }
-  }, [rates, cashSell, cashBuy, udharGive, udharTake, udharCashGive, udharCashTake, udharComment, input, overrides, computedRows, ujratKaSona, parchunLiya, sonaDiya, cashDiya, receiptNo, openReceiptNo, customer, ensureCustomer, refresh])
+  }, [rates, cashSell, cashBuy, udharGive, udharTake, udharCashGive, udharCashTake, udharComment, input, overrides, computedRows, ujratKaSona, parchunLiya, sonaDiya, cashDiya, receiptNo, openReceiptNo, customer, ensureCustomer, refresh, setDraftSeq, refreshDraftsCache, computeNextParchiNo])
 
   // Stage 3 — Save one udhar action-button transaction (kind/direction/category
   // supplied by the caller). `explicit` (optional) is the customer to record for
@@ -1151,32 +1454,15 @@ export function AppProvider({ children }) {
     return { ok: true, receipt_no: rno, customer: cust }
   }, [ensureCustomer, receiptNo, rates.date, refresh])
 
-  // Stage 6 — start a fresh, blank parchi at the next receipt number.
-  const newParchi = useCallback(() => {
-    setInput({ wazan: '', malawat: '' })
-    setOverrides({})
-    setCashSell({ wazan: '', point: '100', rate: '' })
-    setCashBuy({ wazan: '', point: '100', rate: '' })
-    setUdharGive({ wazan: '', point: '100', rate: '' })
-    setUdharTake({ wazan: '', point: '100', rate: '' })
-    setUdharCashGive('')
-    setUdharCashTake('')
-    setUdharComment('')
-    setSonaDiya('')
-    setCashDiya('')
-    // A fresh parchi starts with the وصولی رسید UNticked (پرچوں لیا + اجرت کا سونا).
-    setParchunLiya(false); setUjratKaSona(false)
-    // Clear the customer so the previous parchi's name does NOT carry over.
-    setCustomer({ id: null, name: '', mobile: '', mobile2: '', telephone: '', address: '', imagePath: null })
-    // A fresh parchi always starts on TODAY'S date — even if the user set a past
-    // date on the previous parchi, clicking "New" snaps the تاریخ back to today
-    // (no app restart needed). Historical parchis keep their own saved date.
-    setRates((r) => ({ ...r, date: todayISO() }))
-    setSavedFlags(NO_SAVED)
-    setOpenReceiptNo(null) // composing a fresh, unsaved parchi
-    if (hasApi) window.api.nextReceiptNo().then((n) => n && setReceiptNo(n))
-    else setReceiptNo((r) => r + 1)
-  }, [])
+  // Stage 6 — open a fresh, blank parchi at the next receipt number. ALWAYS opens
+  // immediately (no confirm/prompt). Crucially it does NOT discard the parchi you
+  // were on: the current unsaved parchi is first PARKED (flushed to its draft row,
+  // reachable again via ◀), then a clean blank parchi opens. New never touches the
+  // ledger — nothing is committed to the record until Save is pressed.
+  const newParchi = useCallback(async () => {
+    await flushDraft()      // preserve the current unsaved parchi as a draft
+    await blankWorkbench()  // then a fresh blank one (date→today, ticks reset, next number)
+  }, [flushDraft, blankWorkbench])
 
   // Stage 1 — one-time fresh start: clear all transactions/receipts, numbering → 1.
   const resetData = useCallback(async () => {
