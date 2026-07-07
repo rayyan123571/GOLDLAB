@@ -444,6 +444,15 @@ const api = {
     return rows.length > 0
   },
 
+  // ALL saved receipt numbers (distinct, ascending). Read-only — feeds the
+  // renderer's merged ◀/▶ navigation timeline (saved receipts + unsaved drafts,
+  // ONE order by parchi number), which needs the full set rather than a single
+  // gap-tolerant neighbour like getNextReceiptNo/getPrevReceiptNo.
+  listReceiptNos() {
+    const rows = query(`SELECT DISTINCT rn FROM (${RECEIPT_NOS_SQL}) WHERE rn IS NOT NULL ORDER BY rn ASC`)
+    return rows.map((r) => Number(r.rn))
+  },
+
   // FREE a receipt number: delete every row under it (transactions + receipts) so
   // nothing remains and the number becomes available for reuse. Atomic. This is
   // STEP 2 of "parchi free" — only called when a parchi has no customer AND no
@@ -977,10 +986,19 @@ const api = {
     return { ok: true, removed }
   },
 
-  // READ-ONLY: sum of expense amounts on a given date. Feeds the bottom-bar cash
-  // DISPLAY (today's cash − today's expenses). Touches nothing.
+  // READ-ONLY: sum of expense amounts on a given date. Kept for any per-day
+  // callers; the bottom-bar cash DISPLAY now uses getExpensesTotalUpTo instead
+  // (expenses must reduce cash permanently, not just on their entry day). Touches nothing.
   getExpensesTotalForDate(date) {
     const r = query('SELECT COALESCE(SUM(amount), 0) AS s FROM expenses WHERE date = ?', [date])
+    return r[0] ? (Number(r[0].s) || 0) : 0
+  },
+
+  // READ-ONLY: sum of ALL expense amounts up to AND INCLUDING the given date.
+  // Feeds the bottom-bar cash DISPLAY (cash − every expense so far), so an expense
+  // stays subtracted after the settings date rolls forward. Touches nothing.
+  getExpensesTotalUpTo(date) {
+    const r = query('SELECT COALESCE(SUM(amount), 0) AS s FROM expenses WHERE date <= ?', [date])
     return r[0] ? (Number(r[0].s) || 0) : 0
   },
 

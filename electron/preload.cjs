@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('api', {
   getLastReceiptNo: () => call('getLastReceiptNo'),
   getNextReceiptNo: (current) => call('getNextReceiptNo', current),
   getPrevReceiptNo: (current) => call('getPrevReceiptNo', current),
+  // ALL saved receipt numbers, ascending — feeds the merged ◀/▶ nav timeline.
+  listReceiptNos: () => call('listReceiptNos'),
   resetTransactions: () => call('resetTransactions'),
   resetKachaGold: () => call('resetKachaGold'),
   resetKachaCounter: () => call('resetKachaCounter'),
@@ -40,6 +42,9 @@ contextBridge.exposeInMainWorld('api', {
   deleteExpense: (id) => call('deleteExpense', id),
   resetExpenses: () => call('resetExpenses'),
   getExpensesTotalForDate: (date) => call('getExpensesTotalForDate', date),
+  // Sum of ALL expenses up to & including `date` — feeds the bottom-bar کیش display
+  // so expenses permanently reduce cash (not just on their entry day).
+  getExpensesTotalUpTo: (date) => call('getExpensesTotalUpTo', date),
   exportPDF: (defaultName, opts) => ipcRenderer.invoke('export-pdf', { defaultName, ...(opts || {}) }),
   saveReceipt: (r) => call('saveReceipt', r),
   replaceReceipt: (arg) => call('replaceReceipt', arg),

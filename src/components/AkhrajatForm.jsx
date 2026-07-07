@@ -43,6 +43,7 @@ const REPORTS = {
 const BTN = 'urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors'
 
 export default function AkhrajatForm({ open, onClose }) {
+  const { rates } = useApp()
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [view, setView] = useState('menu') // 'menu' | 'report'
@@ -51,8 +52,15 @@ export default function AkhrajatForm({ open, onClose }) {
   const [entryOpen, setEntryOpen] = useState(false)
   const [msg, setMsg] = useState(null)
 
+  // WORKING date = the app's current settings date (rates.date), NOT the system
+  // clock. Expenses are stamped with this so they belong to the day the operator
+  // is working on, and so the bottom-bar کیش (which subtracts every expense with
+  // date ≤ rates.date) includes an expense the instant it's added — even when the
+  // settings date has been moved off the real today. Falls back to the system date
+  // only if rates.date isn't ready yet.
   const now = new Date()
-  const todayISO = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`
+  const systemISO = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`
+  const todayISO = (rates && rates.date) || systemISO
 
   useEffect(() => {
     if (!open) return

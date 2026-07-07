@@ -23,9 +23,11 @@ const os = require('os')
 const DOTS = 576                     // printable width in dots: 72.1mm × 8
 const BYTES_PER_ROW = DOTS / 8       // 72 bytes per raster row
 const MAX_ROWS = 2376                // 297mm × 8 — printer's max receipt length
-// Hard 1-bit threshold (0-255). Below = black dot. 170 keeps bold Urdu strokes
-// solid while light greys/yellows (screen-only shading) drop to white.
-const THRESHOLD = Math.min(250, Math.max(60, parseInt(process.env.GOLDLAB_RASTER_THRESHOLD, 10) || 170))
+// Hard 1-bit threshold (0-255). Below = black dot. 185 (raised from 170) also
+// catches the grey anti-aliased edge pixels that used to drop to white and thin
+// the now-bolder/stroked glyphs (see buildReceiptHtml); light greys/yellows
+// (screen-only shading) still drop to white.
+const THRESHOLD = Math.min(250, Math.max(60, parseInt(process.env.GOLDLAB_RASTER_THRESHOLD, 10) || 185))
 
 // Print magnification: 1.0–1.35 in 0.05 steps (default 1.15 — the scale the final
 // receipt design was approved at). Vertical-only stretch that never widens the
@@ -396,18 +398,41 @@ function calibrationHtml() {
 //        | { v:'value', box?, s?:span, wrap?, u? } → value cell (26px Arial; box =
 //          the 3px-bordered bold treatment like بقایا رقم; wrap = allow wrapping
 //          (long names); u = render the value in the Nastaliq font)
-// Typography (per the layout spec): value cells 26px Arial 500, Urdu LABEL cells
-// 28px Nastaliq 500 (+3 over the approved 25 — verified to still fit the 556px box),
-// 3px outer / 2px inner table rules, bold only on the shop name and boxed amounts
-// (bold small text bleeds at 203dpi; size carries readability). `d` is DATA only.
+// Typography (per the layout spec): value cells 26px Arial, Urdu LABEL cells 28px
+// Nastaliq (+3 over the approved 25 — verified to still fit the 556px box). Both
+// raised from weight 500 to 700 (see VAL_WEIGHT's comment for why it stayed at
+// 700 instead of falling back) plus a 0.4px black text-stroke, because thin
+// Nastaliq strokes + the 1-bit threshold were printing faint on thermal paper.
+// 3px outer / 2px inner table rules; the shop name (800/42px, un-stroked) and
+// boxed amounts (700) keep their own explicit weight. `d` is DATA only.
 function buildReceiptHtml(d) {
   const LBL_PX = 28 // Urdu label/header cells (+3 over the approved 25px)
-  const th = (l, s) => '<td ' + (s ? 'colspan="' + s + '" ' : '') + 'style="border:2px solid #000;padding:3px 5px;font:500 ' + LBL_PX + 'px ' + FONT_STACK + ';text-align:center;white-space:nowrap">' + (l == null ? '' : l) + '</td>'
+  // Clarity pass: labels/values raised from weight 500 (thin on thermal paper) to
+  // bolder weights, plus a uniform stroke add-on (see STROKE below). Kept as two
+  // separate constants (not one) so a future overflow can drop VAL_WEIGHT alone
+  // without touching labels — see its comment for why 700 was kept this round.
+  const LBL_WEIGHT = 700
+  // Kept equal to LBL_WEIGHT. The 6-column weight table (رتی/ماشہ/تولہ/ملی
+  // گرام/گرام) clips its leftmost column with the WORST_CASE_DATA test values
+  // (four-digit placeholders like "9999") — but dry-run PNGs proved this is a
+  // PRE-EXISTING layout bug, not caused by this change: it clips identically at
+  // the original weight 500 (no stroke) and is unchanged whether this is 700 or
+  // 600, because real column widths are already short of the un-wrapped content
+  // at any of these weights. Since dropping to 600 buys no overflow safety, this
+  // stays at 700 for consistent boldness. Real receipts never reach 4-digit
+  // ملی گرام/گرام values, so this never triggers in practice — flagged
+  // separately as a pre-existing worst-case-only test-data issue.
+  const VAL_WEIGHT = 700
+  // Uniform glyph-thickening add-on shared by label/value cells, the .u class, and
+  // the header lines — EXCEPT the shop-name line (already 800/42px; thickening it
+  // further bleeds the glyphs together), which explicitly zeroes it back out.
+  const STROKE = '-webkit-text-stroke:0.4px #000;'
+  const th = (l, s) => '<td ' + (s ? 'colspan="' + s + '" ' : '') + 'style="border:2px solid #000;padding:3px 5px;font:' + LBL_WEIGHT + ' ' + LBL_PX + 'px ' + FONT_STACK + ';text-align:center;white-space:nowrap;' + STROKE + '">' + (l == null ? '' : l) + '</td>'
   const td = (c) => {
     const val = (c.v == null || c.v === '') ? '-' : c.v
     const inner = c.box ? '<span style="border:3px solid #000;padding:2px 14px;display:inline-block;font-weight:700">' + val + '</span>' : val
     const extra = (c.wrap ? 'font-family:' + FONT_STACK + ';white-space:normal;' : '') + (c.u ? 'font-family:' + FONT_STACK + ';' : '')
-    return '<td ' + (c.s ? 'colspan="' + c.s + '" ' : '') + 'style="border:2px solid #000;padding:4px 5px;font:500 26px Arial;text-align:center;white-space:nowrap;' + extra + '">' + inner + '</td>'
+    return '<td ' + (c.s ? 'colspan="' + c.s + '" ' : '') + 'style="border:2px solid #000;padding:4px 5px;font:' + VAL_WEIGHT + ' 26px Arial;text-align:center;white-space:nowrap;' + STROKE + extra + '">' + inner + '</td>'
   }
   // dir=rtl table: the FIRST cell of each row lands on the RIGHT, so a leading
   // label cell puts the label column rightmost like the reference receipt.
@@ -420,12 +445,14 @@ function buildReceiptHtml(d) {
   return '<!doctype html><html><head><meta charset="utf-8"><style>' +
     'html,body{margin:0;padding:0;background:#fff;color:#000}' +
     'table{border-collapse:collapse;width:100%;border:3px solid #000}' +
-    '.u{font-family:' + FONT_STACK + ';font-weight:500}' +
+    '.u{font-family:' + FONT_STACK + ';font-weight:500;' + STROKE + '}' +
     '</style></head><body>' +
     '<div data-measure dir="rtl" style="width:576px;box-sizing:border-box;padding:2px 10px 0">' +
     // ── bordered classic header: name / double rule / tagline / phones / address strip
     '<div class="u" style="border:3px solid #000;text-align:center;padding:5px 6px 0">' +
-    '<div style="font-size:42px;font-weight:800;line-height:1.55">چوہدری گولڈ لیبارٹری</div>' +
+    // shop name (800/42px) already reads solid — the inherited .u stroke would
+    // bleed it, so it's explicitly zeroed back out here.
+    '<div style="font-size:42px;font-weight:800;line-height:1.55;-webkit-text-stroke:0">چوہدری گولڈ لیبارٹری</div>' +
     '<div style="border-top:3px solid #000;border-bottom:2px solid #000;height:5px;margin:2px 10px 5px"></div>' +
     '<div style="font-size:20px;line-height:1.9">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز (جیولری چوڑی میکر)</div>' +
     '<div style="font-size:22px;font-weight:600;line-height:1.8">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">0300-7301839</span></div>' +
