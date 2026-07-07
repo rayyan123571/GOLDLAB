@@ -6,7 +6,13 @@ const call = (fn, ...args) => ipcRenderer.invoke('db', { fn, args })
 contextBridge.exposeInMainWorld('api', {
   getRates: () => call('getRates'),
   saveRates: (r) => call('saveRates', r),
+  receiptNoExists: (n) => call('receiptNoExists', n),
+  listDrafts: () => call('listDrafts'),
+  upsertDraft: (seq, d) => call('upsertDraft', seq, d),
+  deleteDraft: (seq) => call('deleteDraft', seq),
+  clearDrafts: () => call('clearDrafts'),
   findCustomers: (q) => call('findCustomers', q),
+  listAllCustomers: () => call('listAllCustomers'),
   getCustomer: (id) => call('getCustomer', id),
   peekNextCustomerId: () => call('peekNextCustomerId'),
   getFirstCustomer: () => call('getFirstCustomer'),

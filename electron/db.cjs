@@ -106,6 +106,17 @@ CREATE TABLE IF NOT EXISTS expenses (
   date TEXT,        -- YYYY-MM-DD for reliable range filtering
   ts TEXT           -- full ISO timestamp (date + time) recorded
 );
+
+-- Scratch store for in-progress UNSAVED parchis (openReceiptNo == null on screen).
+-- One row per unsaved parchi (the operator may keep several open at once via New);
+-- each holds a JSON snapshot of the composing form ONLY. Read/written exclusively
+-- by listDrafts/upsertDraft/deleteDraft/clearDrafts. Nothing in the transactions
+-- ledger, getShopTotals, any report, or any customer balance ever touches this
+-- table — so unsaved drafts are invisible to totals/reports by construction.
+CREATE TABLE IF NOT EXISTS drafts (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  payload TEXT
+);
 `
 
 // Lightweight, idempotent migration. `CREATE TABLE IF NOT EXISTS` never alters
@@ -113,6 +124,11 @@ CREATE TABLE IF NOT EXISTS expenses (
 // existed must be patched in place. Safe to run on every startup: we only ADD a
 // column when PRAGMA table_info shows it is missing.
 function migrateSchema() {
+  // The unsaved-parchi draft store started as a single-row `draft` table; it is now
+  // the multi-row `drafts` table. Drop the obsolete one (it only ever held transient
+  // scratch data, never ledger data) so nothing stale lingers.
+  try { db.run('DROP TABLE IF EXISTS draft') } catch (e) { /* ignore */ }
+
   const cols = query('PRAGMA table_info(customers)').map((r) => r.name)
   if (!cols.includes('address')) db.run('ALTER TABLE customers ADD COLUMN address TEXT')
   if (!cols.includes('image')) db.run('ALTER TABLE customers ADD COLUMN image TEXT')
@@ -280,6 +296,37 @@ const api = {
     return api.getRates()
   },
 
+  // ── Unsaved-parchi DRAFTS (one row per in-progress parchi). Store ONLY JSON
+  // snapshots of the composing form; completely separate from transactions/
+  // receipts, so they NEVER affect totals, ledgers, or reports. listDrafts returns
+  // RAW payload strings (the renderer parses each inside try/catch, so a corrupt/
+  // tampered row is skipped without crashing). upsertDraft with seq == null INSERTs
+  // a new draft and returns its seq; with a seq it UPDATEs that row.
+  listDrafts() {
+    return query('SELECT seq, payload FROM drafts ORDER BY seq ASC')
+  },
+
+  upsertDraft(seq, payload) {
+    const json = typeof payload === 'string' ? payload : JSON.stringify(payload)
+    if (seq == null) {
+      run('INSERT INTO drafts (payload) VALUES (?)', [json])
+      return { ok: true, seq: lastInsertId() }
+    }
+    run('UPDATE drafts SET payload = ? WHERE seq = ?', [json, seq])
+    return { ok: true, seq }
+  },
+
+  deleteDraft(seq) {
+    if (seq == null) return { ok: true }
+    run('DELETE FROM drafts WHERE seq = ?', [seq])
+    return { ok: true }
+  },
+
+  clearDrafts() {
+    run('DELETE FROM drafts')
+    return { ok: true }
+  },
+
   findCustomers(q) {
     if (!q || !q.trim()) {
       return query('SELECT * FROM customers ORDER BY name LIMIT 50')
@@ -313,6 +360,15 @@ const api = {
     } catch {
       return 1
     }
+  },
+
+  // Full saved-customer list (UNBOUNDED), ordered by name. Used ONLY by the main
+  // screen's strict name-autocomplete cache, which must know EVERY saved name so a
+  // customer late in the alphabet (past findCustomers('')'s 50-row cut-off) can
+  // still have its first letter typed / be selected. findCustomers stays capped
+  // for its search box + dropdown, so nothing else changes.
+  listAllCustomers() {
+    return query('SELECT * FROM customers ORDER BY name')
   },
 
   getCustomer(id) {
@@ -378,6 +434,14 @@ const api = {
     let n = 1
     while (used.has(n)) n++
     return n
+  },
+
+  // Whether a receipt_no is already SAVED (has transactions or a receipt snapshot).
+  // Used as a save-time guard so a brand-new parchi can never overwrite another.
+  receiptNoExists(n) {
+    if (n == null) return false
+    const rows = query(`SELECT 1 FROM (${RECEIPT_NOS_SQL}) WHERE rn = ? LIMIT 1`, [n])
+    return rows.length > 0
   },
 
   // FREE a receipt number: delete every row under it (transactions + receipts) so
