@@ -433,10 +433,10 @@ export function AppProvider({ children }) {
       let idx = currentTimelineIndex(timeline)
       if (idx === -1) idx = timeline.length
       if (!alive) return
-      // idx > 0: something sits before this position. idx < length: this position
-      // is a real entry (there's always a next — another entry, or the blank past
-      // the end); at the blank itself (idx === length) there's nothing further.
-      setReceiptBounds({ hasPrev: idx > 0, hasNext: idx < timeline.length })
+      // idx > 0: something sits before this position. idx < length - 1: another
+      // real entry (saved/draft) exists after this one; on the newest entry
+      // there's nothing further — ▶ is disabled and never creates a new parchi.
+      setReceiptBounds({ hasPrev: idx > 0, hasNext: idx < timeline.length - 1 })
     })()
     return () => { alive = false }
   }, [openReceiptNo, bump, currentDraftSeq, draftSeqs])
@@ -1227,8 +1227,8 @@ export function AppProvider({ children }) {
   }, [openReceiptNo, flushDraft, buildTimeline, loadReceiptNo, loadDraftBySeq])
 
   // ▶ Next (NEWER). Walks the merged timeline (buildTimeline, above) one step
-  // forward: another saved/draft entry, or — past the newest entry — a fresh
-  // blank workbench. Already on that blank with nothing ahead → Urdu note.
+  // forward to another saved/draft entry. On the newest entry there is nothing
+  // ahead → Urdu note; ▶ NEVER creates a new parchi (only نئی پرچی does).
   const gotoNextReceipt = useCallback(async () => {
     if (!hasApi) return { ok: false }
     // Leaving an unsaved parchi: flush FIRST (persists in-flight typing; a
@@ -1242,12 +1242,12 @@ export function AppProvider({ children }) {
     if (idx === -1) idx = timeline.length
     if (idx >= timeline.length) return { ok: false, message: 'یہ آخری (نئی) پرچی ہے' } // already the newest blank
     const targetIdx = idx + 1
-    if (targetIdx >= timeline.length) { await blankWorkbench(); return { ok: true, receipt_no: null } }
+    if (targetIdx >= timeline.length) return { ok: false, message: 'یہ آخری پرچی ہے' }
     const entry = timeline[targetIdx]
     if (entry.kind === 'saved') return loadReceiptNo(entry.no)
     loadDraftBySeq(entry.seq)
     return { ok: true, receipt_no: null }
-  }, [openReceiptNo, flushDraft, buildTimeline, currentTimelineIndex, loadReceiptNo, loadDraftBySeq, blankWorkbench])
+  }, [openReceiptNo, flushDraft, buildTimeline, currentTimelineIndex, loadReceiptNo, loadDraftBySeq])
 
   // ◀ Prev (OLDER). Same merged timeline, one step back. Past the start → an
   // Urdu note ('پہلی رسید' if something exists at all, else NONE — nothing saved
