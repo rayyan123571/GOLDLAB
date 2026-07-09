@@ -50,7 +50,7 @@ function GoldTicker() {
 }
 
 export default function StatusBar() {
-  const { totals, resetEntry, loadReceipt, resetKachaCounter, cashDisplay } = useApp()
+  const { totals, resetEntry, searchReceiptNo, resetKachaCounter, cashDisplay } = useApp()
   const [search, setSearch] = useState('')
   const [searchMsg, setSearchMsg] = useState('')
   const [showDefaults, setShowDefaults] = useState(false)
@@ -63,25 +63,22 @@ export default function StatusBar() {
   // Tailwind layer order. Condition on the RAW number, never the formatted string.
   const negStyle = (v) => ({ backgroundColor: Number(v) < 0 ? '#dc2626' : undefined })
 
-  // Look up a saved receipt by its number. Wired defensively: if the Electron
-  // backend hasn't added a getReceiptByNo handler yet, warn (console) and show a
-  // graceful "not found" message instead of crashing.
-  // Look up a saved receipt by its number, triggered by pressing Enter in the
-  // رسید نمبر field. Empty → do nothing; non-numeric → Urdu error; a number with
-  // no saved receipt → "does not exist" error; a match → load it via loadReceipt.
+  // Look up a parchi by its number, triggered by pressing Enter in the رسید نمبر
+  // field. Delegates to the store's searchReceiptNo, which walks the merged
+  // saved+draft timeline (so unsaved DRAFT parchis are found too, not just
+  // receipts already in the ledger). Empty → do nothing; non-numeric → Urdu
+  // error; no match anywhere → "does not exist"; a match → parked-then-loaded.
   const doSearch = async () => {
     const raw = String(search).trim()
     if (!raw) { setSearchMsg(''); return } // empty — gentle no-op
     if (!/^\d+$/.test(raw)) { setSearchMsg('صرف نمبر لکھیں'); return }
-    const n = Number(raw)
     setSearchMsg('')
-    const fn = window.api && window.api.getReceiptByNo
-    if (typeof fn !== 'function') { setSearchMsg('یہ رسید نمبر موجود نہیں'); return }
     try {
-      const data = await fn(n)
-      if (!data) { setSearchMsg('یہ رسید نمبر موجود نہیں'); return }
-      loadReceipt(data)
-      setSearchMsg('')
+      // Walk the merged saved+draft timeline (nav arrows use the same one) so a
+      // parchi that only exists as an unsaved DRAFT is still found, not just
+      // receipts already written to the ledger.
+      const res = await searchReceiptNo(Number(raw))
+      setSearchMsg(res && res.ok ? '' : (res && res.message) || 'یہ رسید نمبر موجود نہیں')
     } catch (e) {
       console.warn('Receipt lookup failed:', e)
       setSearchMsg('یہ رسید نمبر موجود نہیں')
@@ -126,6 +123,7 @@ export default function StatusBar() {
         <input
           className="self-center h-[26px] w-[120px] px-3 rounded-md border border-gray-300 bg-white text-[13px] font-semibold text-center outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
           inputMode="numeric"
+          dir="ltr"
           placeholder="رسید نمبر"
           title="رسید نمبر لکھ کر Enter دبائیں — type a receipt no. and press Enter"
           value={search}

@@ -9,7 +9,7 @@ import { GRAMS_PER_TOLA, fmtNum, fmtMoney } from '../logic/units.js'
 // wired to app state. سونا دیا is the editable grams input; کیش دیا shows the
 // PKR value of the leftover gold not handed over.
 const ITEMS = [
-  { key: 'parchunLiya', label: 'پرچوں لیا', check: true, flag: 'parchunLiya' },
+  { key: 'parchunLiya', label: 'پرچون لیا', check: true, flag: 'parchunLiya' },
   { key: 'kulUjrat', label: 'اجرت لینی ہے' },
   { key: 'ujratKaSona', label: 'اجرت کا سونا', check: true, flag: 'ujratKaSona' },
   { key: 'ujratKiRaqam', label: 'اجرت کی رقم' },
@@ -97,6 +97,7 @@ export default function LeftSidebar() {
               // "پرچوں لیا" is ticked; when unticked both are disabled and blank (the
               // store clears them), so no value can exist while the checkbox is off.
               <input
+                dir="ltr"
                 className={`w-full h-full text-center text-[15px] font-bold outline-none focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   parchunLiya ? 'bg-transparent cursor-text focus:bg-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                 placeholder="-"
@@ -107,6 +108,7 @@ export default function LeftSidebar() {
               />
             ) : (
               <input
+                dir="ltr"
                 className="w-full h-full bg-transparent text-center text-[15px] font-bold outline-none"
                 placeholder="-"
                 value={valueFor(it.key)}

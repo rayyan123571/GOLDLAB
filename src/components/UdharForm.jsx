@@ -1081,8 +1081,8 @@ function EditModal({ row, onSave, onClose }) {
           <label className="urdu text-[11px] text-gray-600 flex flex-col gap-1">سمت
             <select className={INP} value={direction} onChange={(e) => setDirection(e.target.value)}><option value="in">لیا (in — شاپ کو موصول)</option><option value="out">دیا (out — شاپ نے دیا)</option></select></label>
           <label className="urdu text-[11px] text-gray-600 flex flex-col gap-1">{gold ? 'خالص سونا (گرام)' : 'رقم (روپے)'}
-            <input className={INP} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" /></label>
-          <label className="urdu text-[11px] text-gray-600 flex flex-col gap-1">تاریخ<input type="date" className={INP} value={date} onChange={(e) => setDate(e.target.value)} /></label>
+            <input dir="ltr" className={INP} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" /></label>
+          <label className="urdu text-[11px] text-gray-600 flex flex-col gap-1">تاریخ<input dir="ltr" type="date" className={INP} value={date} onChange={(e) => setDate(e.target.value)} /></label>
           <label className="urdu text-[11px] text-gray-600 flex flex-col gap-1">نوٹ<input className={INP} value={note} onChange={(e) => setNote(e.target.value)} /></label>
         </div>
         <div className="flex gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50">

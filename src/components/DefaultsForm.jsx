@@ -143,19 +143,20 @@ export default function DefaultsForm({ open, onClose }) {
         {/* Body */}
         <div className="p-5 flex flex-col gap-4">
           <Row label="ریٹ">
-            <input className={INPUT} value={form.rate_tezabi_tola} onChange={numField('rate_tezabi_tola')} inputMode="decimal" placeholder="0" />
+            <input dir="ltr" className={INPUT} value={form.rate_tezabi_tola} onChange={numField('rate_tezabi_tola')} inputMode="decimal" placeholder="0" />
           </Row>
 
           <Row label="چارجز فی گرام">
-            <input className={INPUT} value={form.fc_per_gram} onChange={numField('fc_per_gram')} inputMode="decimal" placeholder="0" />
+            <input dir="ltr" className={INPUT} value={form.fc_per_gram} onChange={numField('fc_per_gram')} inputMode="decimal" placeholder="0" />
           </Row>
 
           <Row label="چارج پرچی">
-            <input className={INPUT} value={form.parchi_charges} onChange={numField('parchi_charges')} inputMode="decimal" placeholder="0" />
+            <input dir="ltr" className={INPUT} value={form.parchi_charges} onChange={numField('parchi_charges')} inputMode="decimal" placeholder="0" />
           </Row>
 
           <Row label="سلپ پرنٹ">
             <input
+              dir="ltr"
               className={`${INPUT} w-28`}
               value={form.slip_count}
               onChange={onSlip}
