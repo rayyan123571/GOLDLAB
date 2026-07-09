@@ -13,6 +13,7 @@ function RateField({ label, value, onChange, w = 'w-20', numeric }) {
     <div className="flex items-stretch">
       <div className="hdr urdu px-2 whitespace-nowrap text-[15px] font-bold">{label}</div>
       <input
+        dir="ltr"
         className={`inp text-center ${w} text-[17px] font-bold leading-none`}
         value={disp}
         onChange={(e) => onChange(numeric ? e.target.value.replace(/,/g, '') : e.target.value)}

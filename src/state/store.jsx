@@ -1189,6 +1189,30 @@ export function AppProvider({ children }) {
     return { ok: true, receipt_no: n }
   }, [loadReceipt])
 
+  // Bottom-bar رسید نمبر lookup. window.api.getReceiptByNo only sees SAVED
+  // receipts, so a parchi that currently exists as an unsaved DRAFT (a parked
+  // slot the ◀▶ arrows CAN reach) wrongly reported "یہ رسید نمبر موجود نہیں".
+  // This walks the SAME merged saved+draft timeline the nav arrows do: it parks
+  // the current parchi first (so in-flight typing is never lost), then jumps to
+  // the matching entry — a SAVED receipt is preferred over a draft at the same
+  // number. Returns { ok, receipt_no?, message? } like loadReceiptNo / goto*.
+  const searchReceiptNo = useCallback(async (n) => {
+    if (!hasApi) return { ok: false }
+    const num = Number(n)
+    if (!Number.isFinite(num)) return { ok: false, message: 'صرف نمبر لکھیں' }
+    // A saved receipt has no draft to park (openReceiptNo != null); only park
+    // when we're leaving an unsaved parchi.
+    if (openReceiptNo == null) await flushDraft()
+    const timeline = await buildTimeline()
+    // saved sorts before draft at the same number (buildTimeline), so the FIRST
+    // match wins the saved-over-draft tie automatically.
+    const entry = timeline.find((e) => e.no === num)
+    if (!entry) return { ok: false, message: 'یہ رسید نمبر موجود نہیں' }
+    if (entry.kind === 'saved') return loadReceiptNo(entry.no)
+    loadDraftBySeq(entry.seq)
+    return { ok: true, receipt_no: num }
+  }, [openReceiptNo, flushDraft, buildTimeline, loadReceiptNo, loadDraftBySeq])
+
   // ── Parchi navigation ───────────────────────────────────────────────────────
   // ALL FOUR (⏮ First / ◀ Prev / ▶ Next / ⏭ Last) now walk the SAME merged
   // saved+draft timeline (see buildTimeline) — First/Last jump straight to its
@@ -1747,7 +1771,7 @@ export function AppProvider({ children }) {
     udharCashTake, setUdharCashTake,
     udharComment, setUdharComment,
     computedRows,
-    loadReceipt, loadReceiptNo,
+    loadReceipt, loadReceiptNo, searchReceiptNo,
     openReceiptNo,
     hasPrevReceipt: receiptBounds.hasPrev,
     hasNextReceipt: receiptBounds.hasNext,

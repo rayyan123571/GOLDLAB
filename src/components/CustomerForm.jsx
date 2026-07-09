@@ -355,6 +355,7 @@ export default function CustomerForm({ open, onClose }) {
         <div className="p-5 overflow-auto flex flex-col gap-4">
           <Row label="آئی ڈی">
             <input
+              dir="ltr"
               className={`${INPUT} text-center font-bold bg-gray-100 cursor-default ${showPreview ? 'text-gray-400 italic' : 'text-gray-600'}`}
               value={idValue}
               readOnly

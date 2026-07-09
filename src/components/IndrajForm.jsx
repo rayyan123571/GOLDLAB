@@ -99,6 +99,7 @@ export default function IndrajForm({ open, onClose }) {
             <div key={row.key} className="grid grid-cols-[92px_1fr_auto] gap-2 items-center">
               <label className="urdu font-bold text-[14px] text-gray-700 text-right">{row.label}</label>
               <input
+                dir="ltr"
                 className={INPUT}
                 value={vals[row.key]}
                 onChange={onNum(row.key)}

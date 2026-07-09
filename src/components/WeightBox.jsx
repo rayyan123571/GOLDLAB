@@ -23,6 +23,7 @@ function WeightRow({ label, grams, onGrams, inputRef, onEnter }) {
       <div className="hdr urdu w-28 justify-end pr-1 text-[15px] font-bold">{label}</div>
       <input
         ref={inputRef}
+        dir="ltr"
         className="inp text-center w-24 bg-mint font-bold text-[15px]"
         value={grams ?? ''}
         onChange={(e) => onGrams(e.target.value)}

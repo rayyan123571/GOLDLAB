@@ -50,12 +50,12 @@ function GoldRow({ label, st, set, rateTola, disabled = false }) {
       <div className="cell justify-end pr-1 urdu text-[15px] font-bold text-right leading-tight bg-white">
         {label}
       </div>
-      <input className={`inp-g text-center text-[15px] font-bold${lock}`} value={st.wazan} disabled={disabled}
+      <input dir="ltr" className={`inp-g text-center text-[15px] font-bold${lock}`} value={st.wazan} disabled={disabled}
         onChange={(e) => set({ ...st, wazan: e.target.value })} onKeyDown={onEnterFocusRate} placeholder="-" />
-      <input className={`inp text-center text-[15px] font-bold${lock}`} value={st.point} disabled={disabled}
+      <input dir="ltr" className={`inp text-center text-[15px] font-bold${lock}`} value={st.point} disabled={disabled}
         onChange={(e) => set({ ...st, point: e.target.value })} onKeyDown={onEnterBlur} />
       <div className="cell cell-c text-[15px] font-bold">{khalis ? fmtNum(khalis) : '-'}</div>
-      <input ref={rateRef} className={`inp text-center text-[15px] font-bold${lock}`} value={st.rate} disabled={disabled}
+      <input ref={rateRef} dir="ltr" className={`inp text-center text-[15px] font-bold${lock}`} value={st.rate} disabled={disabled}
         onChange={(e) => set({ ...st, rate: e.target.value })} onKeyDown={onEnterBlur} placeholder={fmtMoney(rateTola)} />
       <div className="cell cell-c text-[15px] font-bold">{q ? fmtMoney(q) : '-'}</div>
     </div>
@@ -72,7 +72,7 @@ function CashRow({ label, st, set }) {
       </div>
       {/* merged empty cell spanning سونا وزن + پوائنٹ + خالص سونا + ریٹ */}
       <div className="cell bg-white" style={{ gridColumn: 'span 4' }}>&nbsp;</div>
-      <input className="inp-g text-center text-[15px] font-bold" value={st}
+      <input dir="ltr" className="inp-g text-center text-[15px] font-bold" value={st}
         onChange={(e) => set(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
         placeholder="-" />

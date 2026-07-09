@@ -288,7 +288,7 @@ export default function CustomerEntry() {
       {/* Receipt no | Save | nav arrows */}
       <div className="flex items-stretch gap-1">
         <div className="hdr urdu w-16">رسید نمبر</div>
-        <input className="inp w-16 text-center font-bold" value={receiptNo} readOnly />
+        <input dir="ltr" className="inp w-16 text-center font-bold" value={receiptNo} readOnly />
         <button
           className="flex-1 flex items-center justify-center font-bold text-[14px] px-2 py-1.5 rounded-md border border-blue-300 bg-blue-100 text-blue-800 shadow-sm hover:bg-blue-200 hover:border-blue-400 active:bg-blue-300 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors"
           onClick={onSave}

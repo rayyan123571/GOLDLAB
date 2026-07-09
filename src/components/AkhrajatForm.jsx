@@ -254,7 +254,7 @@ function ExpenseEditModal({ row, onSave, onClose }) {
         <div className="p-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1">
             <span className="urdu text-[14px] font-bold text-black">رقم</span>
-            <input ref={amtRef} dir="rtl" className={INP} value={amount} onChange={onAmount}
+            <input ref={amtRef} dir="ltr" className={INP} value={amount} onChange={onAmount}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save() } }}
               inputMode="decimal" placeholder="0" />
           </label>
@@ -331,7 +331,7 @@ function EntryModal({ todayISO, onClose }) {
             <span className="urdu text-[14px] font-bold text-black">رقم</span>
             <input
               ref={amtRef}
-              dir="rtl"
+              dir="ltr"
               className={INP}
               value={amount}
               onChange={onAmount}

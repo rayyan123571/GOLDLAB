@@ -78,6 +78,7 @@ function Cell({ col, row }) {
 
   return (
     <input
+      dir="ltr"
       className={`cell cell-c editable text-center min-w-0 w-full ${isOverridden ? 'overridden' : ''}`}
       value={isOverridden ? rowOvr[ovrKey] : ''}
       placeholder={display}
