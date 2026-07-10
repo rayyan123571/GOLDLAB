@@ -1,17 +1,19 @@
 {
   "name": "gold-lab",
   "private": true,
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "Gold Laboratory Management Desktop App",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev:vite": "vite",
-    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "dev:electron": "wait-on tcp:5199 && cross-env NODE_ENV=development node scripts/run-electron.cjs .",
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "build": "vite build",
-    "start": "cross-env NODE_ENV=production electron .",
-    "dist:win": "npm run build && electron-builder --win"
+    "start": "cross-env NODE_ENV=production node scripts/run-electron.cjs .",
+    "obfuscate": "node scripts/obfuscate-electron.cjs",
+    "dist:win": "npm run build && npm run obfuscate && electron-builder --win",
+    "dist:wcdcin:unlocked": "node scripts/build-unlocked.cjs"
   },
   "build": {
     "appId": "com.chaudhrygoldlab.app",
@@ -21,10 +23,14 @@
     "asarUnpack": [
       "**/node_modules/sql.js/dist/*.wasm"
     ],
+    "extraMetadata": {
+      "main": "electron-dist/main.cjs"
+    },
     "files": [
       "dist/**/*",
-      "electron/**/*",
-      "package.json"
+      "electron-dist/**/*",
+      "package.json",
+      "!electron/**/*"
     ],
     "directories": {
       "output": "release",
@@ -56,6 +62,7 @@
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "javascript-obfuscator": "^5.4.6",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "vite": "^6.0.7",

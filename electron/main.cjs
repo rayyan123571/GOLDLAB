@@ -6,9 +6,19 @@ const db = require('./db.cjs')
 const backup = require('./backup.cjs')
 const raster = require('./rasterPrint.cjs')
 const liveGold = require('./liveGold.cjs')
+const trial = require('./trial/trialManager.cjs')
+const trialGate = require('./trial/gateWindow.cjs')
+const license = require('./license/licenseManager.cjs')
 
 const isDev = process.env.NODE_ENV === 'development'
 let win = null
+
+// Personal / unlocked build flag. When true, ALL trial + licence gating is
+// skipped and the app launches directly — NO security, NO licence key. Default
+// false so the normal customer build stays gated. The `dist:win:unlocked` script
+// (scripts/build-unlocked.cjs) flips this to true ONLY for a private build, then
+// restores it, so an unlocked exe can never be shipped to a customer by mistake.
+const UNLICENSED_BUILD = false
 
 // ── WhatsApp share window ────────────────────────────────────────────────────
 // The renderer copies the receipt-slip IMAGE to the clipboard and opens a
@@ -157,7 +167,10 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // DevTools would hand anyone Sources/Network access to the renderer bundle
+      // and the IPC traffic — off in production, on in dev where it's needed.
+      devTools: isDev
     }
   })
 
@@ -192,7 +205,7 @@ function createWindow() {
   })
 
   if (isDev) {
-    win.loadURL('http://localhost:5173')
+    win.loadURL('http://localhost:5199')
   } else {
     win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
@@ -427,9 +440,15 @@ ipcMain.handle('export-pdf', async (_evt, { defaultName, cssPageSize } = {}) => 
   return { ok: true, path: filePath }
 })
 
-app.whenReady().then(async () => {
-  const userDataDir = app.getPath('userData')
-  const dbPath = path.join(userDataDir, 'goldlab.sqlite')
+// The original startup sequence, unchanged and unconditional once we get here.
+// Extracted into a function so it can be reached from two places: directly, for a
+// licensed or in-trial launch, and from the gate's onActivated callback after a
+// licence is entered. Runs at most once — guarded, because a stray second call
+// would re-init the DB and open a second window.
+let appStarted = false
+async function startApp(userDataDir, dbPath) {
+  if (appStarted) return
+  appStarted = true
   // Restore check runs BEFORE the DB is opened/created. It does something ONLY
   // when goldlab.sqlite is missing (fresh machine / reinstall) — an existing DB
   // is opened untouched, with no prompt. Fully try/catch'd inside; never blocks.
@@ -444,6 +463,41 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}
+
+app.whenReady().then(async () => {
+  const userDataDir = app.getPath('userData')
+  const dbPath = path.join(userDataDir, 'goldlab.sqlite')
+  // Unlocked personal build: skip ALL trial + licence gating and launch directly.
+  if (UNLICENSED_BUILD) { await startApp(userDataDir, dbPath); return }
+  // First-run only: stamp userData/trial.dat + install.id. Does nothing when they
+  // already exist and swallows its own errors. MUST run before checkTrial(): on a
+  // fresh machine there is no record to count from, and checkTrial() fails closed.
+  trial.initializeTrial()
+
+  const trialState = trial.checkTrial()
+
+  // Licence FIRST. A machine with a valid, unexpired licence for this exact
+  // machineId skips the gate entirely — the trial's verdict (expired, tampered,
+  // clock rolled back) is irrelevant to a paying customer. Re-checked on every
+  // launch, so an expired licence stops working with no grace period.
+  if (license.isLicenseValid(trialState.machineId)) {
+    await startApp(userDataDir, dbPath)
+    return
+  }
+
+  // Trial gate. Expired (or tampered / rolled back / record deleted) → show the
+  // standalone gate window and STOP: the database is never opened, backups never
+  // start, the main window is never created. Entering a valid licence there calls
+  // onActivated, which runs the very same startApp() below.
+  if (trialState.expired) {
+    console.warn(`[trial] expired (${trialGate.expiryReason(trialState)}) — main window not created`)
+    trialGate.showTrialGate(trialState, { onActivated: () => startApp(userDataDir, dbPath) })
+    return
+  }
+
+  // In trial, unlicensed: the original startup sequence, unchanged.
+  await startApp(userDataDir, dbPath)
 })
 
 app.on('window-all-closed', () => {
