@@ -881,10 +881,22 @@ export function AppProvider({ children }) {
   // it). Now also re-checks receiptNoExists at every step, matching the same
   // pattern dedupeDraftNumbers already uses correctly.
   const computeNextParchiNo = useCallback(async () => {
-    let n = 1
-    if (hasApi) { const r = await window.api.nextReceiptNo(); if (r) n = r }
-    const used = new Set(draftsCacheRef.current.map((p) => Number(p.data?.receiptNo)).filter(Number.isFinite))
-    while (used.has(n) || (hasApi && await window.api.receiptNoExists(n))) n++
+    // New always ADVANCES past the highest existing parchi number (saved receipts
+    // AND open drafts) — it never reuses a freed/gap number. On a fresh DB this
+    // yields 1; otherwise (max existing) + 1.
+    let maxNo = 0
+    if (hasApi) {
+      const last = await window.api.getLastReceiptNo()
+      const ln = Number(last)
+      if (Number.isFinite(ln)) maxNo = Math.max(maxNo, ln)
+    }
+    for (const p of draftsCacheRef.current) {
+      const dn = Number(p.data?.receiptNo)
+      if (Number.isFinite(dn)) maxNo = Math.max(maxNo, dn)
+    }
+    let n = maxNo + 1
+    // Safety: never land on a number that is somehow already saved.
+    if (hasApi) { while (await window.api.receiptNoExists(n)) n++ }
     return n
   }, [])
 

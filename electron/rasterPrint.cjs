@@ -392,12 +392,15 @@ function calibrationHtml() {
 // bar (d.title), one or more bordered tables (d.tables), an optional lab terms box
 // (d.showFee), then the services line + Rayyan footer. It is table-DRIVEN: every
 // receipt supplies its own rows in the SAME styling, so there is one template.
-//   d = { title, showFee, tables: [ table, ... ] }
+//   d = { title, showFee, selectiveBold?, tables: [ table, ... ] }
 //   table = [ row, ... ]   row = [ cell, ... ]
-//   cell = { l:'label', s?:span }               → Urdu LABEL cell (28px Nastaliq)
-//        | { v:'value', box?, s?:span, wrap?, u? } → value cell (26px Arial; box =
+//   cell = { l:'label', s?:span, b? }           → Urdu LABEL cell (28px Nastaliq)
+//        | { v:'value', box?, s?:span, wrap?, u?, b? } → value cell (26px Arial; box =
 //          the 3px-bordered bold treatment like بقایا رقم; wrap = allow wrapping
 //          (long names); u = render the value in the Nastaliq font)
+// selectiveBold (لیب رسید only): render every cell at the lighter weight EXCEPT
+// those marked b:true, which keep the full bold+stroke treatment. Omitted on the
+// other three receipts, which therefore render every cell bold exactly as before.
 // Typography (per the layout spec): value cells 26px Arial, Urdu LABEL cells 28px
 // Nastaliq (+3 over the approved 25 — verified to still fit the 556px box). Both
 // raised from weight 500 to 700 (see VAL_WEIGHT's comment for why it stayed at
@@ -427,16 +430,27 @@ function buildReceiptHtml(d) {
   // the header lines — EXCEPT the shop-name line (already 800/42px; thickening it
   // further bleeds the glyphs together), which explicitly zeroes it back out.
   const STROKE = '-webkit-text-stroke:0.4px #000;'
-  const th = (l, s) => '<td ' + (s ? 'colspan="' + s + '" ' : '') + 'style="border:2px solid #000;padding:3px 5px;font:' + LBL_WEIGHT + ' ' + LBL_PX + 'px ' + FONT_STACK + ';text-align:center;white-space:nowrap;' + STROKE + '">' + (l == null ? '' : l) + '</td>'
+  // Non-bold treatment under selectiveBold. 500 is the weight labels/values used
+  // before the clarity pass; on its own it printed thin, so it keeps a light
+  // 0.15px stroke — enough to survive the 1-bit threshold at 203dpi (readable,
+  // never faint) while staying clearly lighter than the 700 + 0.4px bold cells.
+  const LIGHT_WEIGHT = 500
+  const LIGHT_STROKE = '-webkit-text-stroke:0.15px #000;'
+  // Bold when the receipt didn't opt into selective bolding (every existing
+  // receipt) or when the cell explicitly asked for it.
+  const isBold = (c) => d.selectiveBold !== true || c.b === true
+  const wt = (c, bold) => (isBold(c) ? bold : LIGHT_WEIGHT)
+  const stroke = (c) => (isBold(c) ? STROKE : LIGHT_STROKE)
+  const th = (c) => '<td ' + (c.s ? 'colspan="' + c.s + '" ' : '') + 'style="border:2px solid #000;padding:3px 5px;font:' + wt(c, LBL_WEIGHT) + ' ' + LBL_PX + 'px ' + FONT_STACK + ';text-align:center;white-space:nowrap;' + stroke(c) + '">' + (c.l == null ? '' : c.l) + '</td>'
   const td = (c) => {
     const val = (c.v == null || c.v === '') ? '-' : c.v
     const inner = c.box ? '<span style="border:3px solid #000;padding:2px 14px;display:inline-block;font-weight:700">' + val + '</span>' : val
     const extra = (c.wrap ? 'font-family:' + FONT_STACK + ';white-space:normal;' : '') + (c.u ? 'font-family:' + FONT_STACK + ';' : '')
-    return '<td ' + (c.s ? 'colspan="' + c.s + '" ' : '') + 'style="border:2px solid #000;padding:4px 5px;font:' + VAL_WEIGHT + ' 26px Arial;text-align:center;white-space:nowrap;' + STROKE + extra + '">' + inner + '</td>'
+    return '<td ' + (c.s ? 'colspan="' + c.s + '" ' : '') + 'style="border:2px solid #000;padding:4px 5px;font:' + wt(c, VAL_WEIGHT) + ' 26px Arial;text-align:center;white-space:nowrap;' + stroke(c) + extra + '">' + inner + '</td>'
   }
   // dir=rtl table: the FIRST cell of each row lands on the RIGHT, so a leading
   // label cell puts the label column rightmost like the reference receipt.
-  const cell = (c) => (c && c.l !== undefined) ? th(c.l, c.s) : td(c || { v: '' })
+  const cell = (c) => (c && c.l !== undefined) ? th(c) : td(c || { v: '' })
   const table = (rows) => '<table style="margin-top:8px">' + (rows || []).map((r) => '<tr>' + (r || []).map(cell).join('') + '</tr>').join('') + '</table>'
   const feeBox = d.showFee
     ? '<div class="u" dir="rtl" style="font-size:20px;line-height:2.1;border:2px solid #000;padding:5px 9px;margin-top:9px;text-align:right">' +
@@ -459,8 +473,12 @@ function buildReceiptHtml(d) {
     '<div style="font:600 23px Arial;line-height:1.6"><span dir="ltr">0302-7330000</span>&nbsp;&nbsp;&nbsp;&nbsp;<span dir="ltr">0302-3334440</span></div>' +
     '<div style="border-top:2px solid #000;margin-top:5px;padding:3px 0 6px;font-size:20px;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>' +
     '</div>' +
-    // section title bar — e.g. "لیب رسید", "وصولی رسید", "ادھار کی رسید", "نقد کی رسید"
-    '<div class="u" style="font-size:28px;font-weight:600;text-align:center;border:3px solid #000;border-top:none;background:#000;color:#fff;padding:3px 0">' + (d.title || 'رسید') + '</div>' +
+    // Section title bar — e.g. "لیب رسید", "وصولی رسید", "ادھار کی رسید", "نقد کی رسید".
+    // Was white-on-black knockout text: the 1-bit threshold floods the black
+    // background and swallows the reverse glyphs, so the title printed as a solid
+    // black bar with no title in it. Now bold BLACK on white inside the same solid
+    // border — every glyph is real ink, so it can't be thresholded away.
+    '<div class="u" style="font-size:28px;font-weight:800;text-align:center;border:3px solid #000;border-top:none;padding:3px 0">' + (d.title || 'رسید') + '</div>' +
     (d.tables || []).map(table).join('') +
     // footer: (lab-only terms box) + services line + Rayyan
     feeBox +

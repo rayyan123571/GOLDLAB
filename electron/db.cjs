@@ -117,6 +117,31 @@ CREATE TABLE IF NOT EXISTS drafts (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   payload TEXT
 );
+
+-- نیا سودا — deals list (khareed/farokht). Self-contained: nothing in the
+-- transactions ledger, totals, or any existing report reads these tables.
+-- receipt_no tags the saved entry with the parchi it was entered under.
+CREATE TABLE IF NOT EXISTS naya_soda (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  rate REAL,
+  wazan REAL,
+  type TEXT,                        -- 'khareed' | 'farokht'
+  date TEXT,                        -- YYYY-MM-DD
+  status TEXT DEFAULT 'bhugtan',    -- 'bhugtan' | 'bakaya'
+  receipt_no INTEGER,               -- parchi the entry was saved under (nullable)
+  created_at TEXT
+);
+
+-- Per-receipt in-progress نیا سودا form values (ONE row per parchi number). The
+-- form auto-persists here as it is typed, so unsaved values are never lost and
+-- reappear when that parchi number is reopened. Cleared when the entry is saved
+-- (محفوظ کریں) or the form is emptied. Pure scratch — no report reads it.
+CREATE TABLE IF NOT EXISTS naya_soda_draft (
+  receipt_no INTEGER PRIMARY KEY,
+  payload TEXT,
+  updated_at TEXT
+);
 `
 
 // Lightweight, idempotent migration. `CREATE TABLE IF NOT EXISTS` never alters
@@ -185,6 +210,14 @@ function migrateSchema() {
   // report's تاریخ column). try/catch swallows the duplicate-column error too.
   if (!tCols.includes('updated_at')) {
     try { db.run('ALTER TABLE transactions ADD COLUMN updated_at TEXT') } catch (e) { /* already exists */ }
+  }
+
+  // naya_soda.receipt_no — tag saved deals with the parchi they were entered on.
+  // Patch DBs created before the نیا سودا ↔ receipt linkage existed. The draft
+  // table itself is created by SCHEMA (CREATE TABLE IF NOT EXISTS), no migration.
+  const nCols = query('PRAGMA table_info(naya_soda)').map((r) => r.name)
+  if (nCols.length && !nCols.includes('receipt_no')) {
+    try { db.run('ALTER TABLE naya_soda ADD COLUMN receipt_no INTEGER') } catch (e) { /* already exists */ }
   }
 }
 
@@ -1018,6 +1051,83 @@ const api = {
       params
     )
     return rows.map((r) => ({ ...r, amount: Number(r.amount) || 0 }))
+  },
+
+  // ── نیا سودا ────────────────────────────────────────────────────────────────
+  // Deals list — its own tables only; never touches the transactions ledger,
+  // customer balances, or any existing report. receipt_no tags the entry with the
+  // parchi it was saved under (nullable).
+  addNayaSoda(r = {}) {
+    const ts = new Date().toISOString()
+    run(
+      `INSERT INTO naya_soda (name, rate, wazan, type, date, status, receipt_no, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        r.name || '',
+        Number(r.rate) || 0,
+        Number(r.wazan) || 0,
+        r.type === 'farokht' ? 'farokht' : 'khareed',
+        r.date || todayISO(),
+        'bhugtan',
+        (r.receipt_no != null && Number.isFinite(Number(r.receipt_no))) ? Number(r.receipt_no) : null,
+        ts
+      ]
+    )
+    return { id: lastInsertId(), ts }
+  },
+
+  // ── نیا سودا per-receipt draft (in-progress, unsaved form values) ────────────
+  // Read this parchi's saved-in-progress نیا سودا form values (or null). Pure
+  // scratch — nothing else reads it.
+  getNayaSodaDraft(receiptNo) {
+    if (receiptNo == null) return null
+    const rows = query('SELECT payload FROM naya_soda_draft WHERE receipt_no = ?', [Number(receiptNo)])
+    if (!rows.length) return null
+    try { return JSON.parse(rows[0].payload || '{}') } catch { return null }
+  },
+
+  // Upsert this parchi's in-progress form values (one row per receipt_no).
+  saveNayaSodaDraft(receiptNo, form = {}) {
+    if (receiptNo == null) return { ok: false }
+    run(
+      'INSERT OR REPLACE INTO naya_soda_draft (receipt_no, payload, updated_at) VALUES (?, ?, ?)',
+      [Number(receiptNo), JSON.stringify(form || {}), new Date().toISOString()]
+    )
+    return { ok: true }
+  },
+
+  // Drop this parchi's draft (on save or when the form is emptied).
+  clearNayaSodaDraft(receiptNo) {
+    if (receiptNo == null) return { ok: false }
+    run('DELETE FROM naya_soda_draft WHERE receipt_no = ?', [Number(receiptNo)])
+    return { ok: true }
+  },
+
+  // Rows of one status ('bhugtan' | 'bakaya'), newest first. Optional from/to
+  // (YYYY-MM-DD) filter on the `date` column — inclusive; empty = no bound.
+  listNayaSoda(status, from, to) {
+    const where = ['status = ?']
+    const params = [status || 'bhugtan']
+    if (from) { where.push('date >= ?'); params.push(from) }
+    if (to) { where.push('date <= ?'); params.push(to) }
+    const rows = query(`SELECT * FROM naya_soda WHERE ${where.join(' AND ')} ORDER BY id DESC`, params)
+    return rows.map((r) => ({ ...r, rate: Number(r.rate) || 0, wazan: Number(r.wazan) || 0 }))
+  },
+
+  // Move one row between بھگتان and بقایا. Flushed so it persists. Missing id = no-op.
+  setNayaSodaStatus(id, status) {
+    if (id == null) return { ok: false }
+    run('UPDATE naya_soda SET status = ? WHERE id = ?', [status === 'bakaya' ? 'bakaya' : 'bhugtan', id])
+    flush()
+    return { ok: true, id }
+  },
+
+  // Delete a single سودا row by id. Flushed so it persists. Missing id = no-op.
+  deleteNayaSoda(id) {
+    if (id == null) return { ok: false }
+    run('DELETE FROM naya_soda WHERE id = ?', [id])
+    flush()
+    return { ok: true, id }
   },
 
   // Record a settlement / return (Part 2). A settle is a NORMAL transaction in

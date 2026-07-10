@@ -4,13 +4,17 @@ import { buildLabReceipt } from '../logic/purity.js'
 import { fmtMoney, fmtNum, round, GRAMS_PER_TOLA, GRAMS_PER_RATTI, gramsToTMR } from '../logic/units.js'
 import { useClock } from '../logic/useClock.js'
 import LeftSidebar from './LeftSidebar.jsx'
+import NayaSoda from './NayaSoda.jsx'
 
 // Slip-template cell builders (match electron/rasterPrint.cjs buildReceiptHtml):
 // L = a bordered Urdu LABEL cell, V = a bordered value cell. Each receipt builds
 // its rows with these and passes { title, showFee, tables } to ctx.printSlips so
 // every printed receipt shares the ONE approved design. opts: { box, s (colspan),
-// wrap (long names), u (Nastaliq value) }.
-const L = (l, s) => (s ? { l, s } : { l })
+// wrap (long names), u (Nastaliq value), b (keep this cell bold when the receipt
+// sets selectiveBold) }.
+// L's second argument is either a colspan (number) or an opts object, so the
+// existing L('نام', 3) call sites keep working alongside L('گرام', { b: true }).
+const L = (l, o) => Object.assign({ l }, typeof o === 'number' ? { s: o } : (o || {}))
 const V = (v, o) => Object.assign({ v: v == null || v === '' ? '-' : String(v) }, o || {})
 
 // AM/PM time string from a live Date (passed in so the component re-renders).
@@ -358,25 +362,37 @@ export function LabReceipt({ row, lab, ctx, embed }) {
   )
   const div = 'border-l border-gray-400' // faint vertical divider after ملی گرام
   // Printed لیب رسید (shared approved template). Same values the grid above shows.
-  const wRow = (label, grams, tmr) => [
-    L(label), V(fmtNum(tmr?.ratti, 2)), V(fmtNum(tmr?.masha, 0)), V(fmtNum(tmr?.tola, 0)), V(mg(grams)), V(String(gWhole(grams)))
+  // b:true marks the cells that stay bold under selectiveBold — the weights the
+  // shop reads off the slip (آمد / خالص in grams+milligrams), the two rates, the
+  // ملاوٹ فی تولہ label and the بقایا رقم line. Everything else prints lighter.
+  const B = { b: true }
+  const wRow = (label, grams, tmr, bold) => [
+    L(label, bold ? B : undefined), V(fmtNum(tmr?.ratti, 2)), V(fmtNum(tmr?.masha, 0)), V(fmtNum(tmr?.tola, 0)),
+    V(mg(grams), bold ? B : undefined), V(String(gWhole(grams)), bold ? B : undefined)
   ]
+  // ریٹ فی گرام is DERIVED from the per-tola rate this same receipt prints, so the
+  // two rows can never disagree. The settings' rate_tezabi_gram column is stale —
+  // it defaults to 772, has no UI to edit it, and is never recomputed when the
+  // per-tola rate changes — so reading it printed 772 next to a correct 425,000.
+  const perTola = Number(lab?.ratePerTola) || Number(rates.rate_tezabi_tola) || 0
+  const ratePerGram = perTola ? round(perTola / GRAMS_PER_TOLA, 0) : 0
   const slipData = {
     title: 'لیب رسید',
     showFee: true,
+    selectiveBold: true,
     tables: [
-      [[L('رسید نمبر'), V(receiptNo), L('ریٹ فی گرام'), V(fmtNum(rates.rate_tezabi_gram, 0))]],
+      [[L('رسید نمبر'), V(receiptNo), L('ریٹ فی گرام'), V(ratePerGram ? fmtMoney(ratePerGram) : '-', B)]],
       [
-        [L(''), L('رتی'), L('ماشہ'), L('تولہ'), L('ملی گرام'), L('گرام')],
-        wRow('آمد وزن', lab?.aamadWazan, lab?.grossTMR),
+        [L(''), L('رتی'), L('ماشہ'), L('تولہ'), L('ملی گرام', B), L('گرام', B)],
+        wRow('آمد وزن', lab?.aamadWazan, lab?.grossTMR, true),
         wRow('ملاوٹ وزن', lab?.malawatWazan, lab?.malawatTMR),
-        wRow('خالص وزن', lab?.khalisWazan, lab?.khalisTMR),
-        [L('ملاوٹ فی تولہ'), V(fmtNum(lab?.milawatFiTolaTMR?.ratti, 2)), V(fmtNum(lab?.milawatFiTolaTMR?.masha, 0)), V(fmtNum(lab?.milawatFiTolaTMR?.tola, 0)), V('فی گرام'), V(fmtNum(lab?.malawatPerGram, 4))]
+        wRow('خالص وزن', lab?.khalisWazan, lab?.khalisTMR, true),
+        [L('ملاوٹ فی تولہ', B), V(fmtNum(lab?.milawatFiTolaTMR?.ratti, 2)), V(fmtNum(lab?.milawatFiTolaTMR?.masha, 0)), V(fmtNum(lab?.milawatFiTolaTMR?.tola, 0)), V('فی گرام'), V(fmtNum(lab?.malawatPerGram, 4))]
       ],
       [
-        [L('کیرٹ'), V(fmtNum(lab?.keerat, 2)), L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola))],
+        [L('کیرٹ'), V(fmtNum(lab?.keerat, 2)), L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola), B)],
         [L('ٹوٹل رقم'), V(fmtMoney(lab?.totalRaqam)), L('چارجز'), V(fmtMoney(lab?.charges))],
-        [L('بقایا رقم'), V(fmtMoney(lab?.baqi), { box: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
+        [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
         [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true }), L('رتی'), V(fmtNum(lab?.milawatTotalRatti, 2), { u: true })],
         [L('تاریخ'), V(showDate(rates, now)), L('وقت'), V(fmtTime(now))]
       ]
@@ -762,7 +778,9 @@ export function CashReceipt({ ctx, embed }) {
   )
 }
 
-// LEFT half receipts: sidebar + وصولی رسید + لیب رسید
+// LEFT half receipts: sidebar + نیا سودا + لیب رسید. The on-screen وصولی رسید
+// panel was replaced by the نیا سودا form; RecoveryReceipt itself is kept — the
+// customer statement (UdharForm) still embeds it and its printed slip is intact.
 export function LeftReceipts() {
   const ctx = useApp()
   const selected = ctx.computedRows.find((r) => r.parchi) || ctx.computedRows[2] // default Standard
@@ -770,7 +788,7 @@ export function LeftReceipts() {
   return (
     <div dir="ltr" className="flex gap-1 h-full">
       <LeftSidebar />
-      <div className="flex-1 min-w-0"><RecoveryReceipt row={selected} lab={lab} ctx={ctx} /></div>
+      <div className="flex-1 min-w-0"><NayaSoda /></div>
       <div className="flex-1 min-w-0"><LabReceipt row={selected} lab={lab} ctx={ctx} /></div>
     </div>
   )
