@@ -4,7 +4,6 @@ import { fmtMoney, fmtNum, gramsToTMR } from '../logic/units.js'
 import { computeTable, buildLabReceipt } from '../logic/purity.js'
 import { RecoveryReceipt, LabReceipt, CreditReceipt, CashReceipt } from './Receipts.jsx'
 import DateField from './DateField.jsx'
-import NayaSodaReport from './NayaSodaReport.jsx'
 
 // ─── Report buttons, three groups. flow 'in' = INTO shop (green), 'out' = OUT (red)
 const GROUP1 = [
@@ -168,9 +167,6 @@ export default function UdharForm({ open, onClose }) {
   const [view, setView] = useState('menu')
   const [editRow, setEditRow] = useState(null)
   const [customers, setCustomers] = useState([])
-  // نیا سودا report modal — 'bhugtan' | 'bakaya' | null (closed). Reads only the
-  // standalone naya_soda table; completely separate from the ledger reports.
-  const [sodaStatus, setSodaStatus] = useState(null)
 
   // Live system date (LOCAL), NOT the app's setting date — both fields default to
   // the actual today (e.g. 02/07/2026). Computed fresh each render from new Date().
@@ -186,7 +182,7 @@ export default function UdharForm({ open, onClose }) {
   useEffect(() => {
     if (!open) return
     setCustCode(''); setCustName(''); setNameHits([]); setMsg(null)
-    setReport(null); setDesc(null); setView('menu'); setEditRow(null); setSodaStatus(null)
+    setReport(null); setDesc(null); setView('menu'); setEditRow(null)
     setFrom(todayStr()); setTo(todayStr()) // default From/To to today; clearing From = all dates
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -355,7 +351,7 @@ export default function UdharForm({ open, onClose }) {
                     key={b.label}
                     type="button"
                     onClick={b.run}
-                    className="urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
+                    className="urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors"
                   >
                     {b.label}
                   </button>
@@ -364,7 +360,7 @@ export default function UdharForm({ open, onClose }) {
                 <button
                   type="button"
                   onClick={() => loadReport({ type: 'kacha' })}
-                  className="col-span-2 urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
+                  className="col-span-2 urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors"
                 >
                   کچا سونا لیا
                 </button>
@@ -404,23 +400,6 @@ export default function UdharForm({ open, onClose }) {
                 >
                   کسٹمر کی تفصیلی رسید
                 </button>
-                {/* نیا سودا — بھگتان / بقایا lists from the standalone naya_soda
-                    table (never the ledger). Full-width, matching the تفصیلی رسید
-                    button above; fills the empty space in the filter panel. */}
-                <button
-                  type="button"
-                  onClick={() => setSodaStatus('bhugtan')}
-                  className="urdu w-full border border-gray-400 bg-gray-100 text-black text-[17px] font-bold py-2.5 rounded-sm hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
-                >
-                  بھگتان سودا
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSodaStatus('bakaya')}
-                  className="urdu w-full border border-gray-400 bg-gray-100 text-black text-[17px] font-bold py-2.5 rounded-sm hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
-                >
-                  بقایا سودا
-                </button>
                 {msg && <div className={`urdu text-[14px] font-bold px-2 py-1.5 rounded ${msg.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>{msg.text}</div>}
               </div>
             </div>
@@ -429,7 +408,6 @@ export default function UdharForm({ open, onClose }) {
       </div>
 
       {editRow && <EditModal row={editRow} onSave={saveEdit} onClose={() => setEditRow(null)} />}
-      {sodaStatus && <NayaSodaReport status={sodaStatus} from={from} to={to} onClose={() => setSodaStatus(null)} />}
     </div>
   )
 }
