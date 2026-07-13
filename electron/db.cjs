@@ -9,6 +9,7 @@
 const path = require('path')
 const fs = require('fs')
 const initSqlJs = require('sql.js')
+const { SHOP_FIELDS, SHOP_DEFAULTS } = require('./shopDefaults.cjs')
 
 let SQL = null
 let db = null
@@ -55,7 +56,18 @@ CREATE TABLE IF NOT EXISTS settings (
   point REAL,
   slip_count INTEGER,
   raw_print_mode TEXT,   -- 'auto' (regex-match thermal) | 'force' (always raw)
-  print_scale REAL       -- thermal render magnification, 1.0–1.35 (default 1.15)
+  print_scale REAL,      -- thermal render magnification, 1.0–1.35 (default 1.15)
+  -- Shop identity printed in the slip HEADER (see electron/shopDefaults.cjs).
+  -- Seeded with the real Chaudhary values, editable in ڈیفالٹ سیٹنگز. An empty
+  -- value HIDES that line on the slip; it never falls back to the default.
+  shop_name TEXT,
+  shop_tagline TEXT,
+  shop_owner TEXT,
+  shop_phone1 TEXT,
+  shop_phone2 TEXT,
+  shop_phone3 TEXT,
+  shop_address TEXT,
+  shop_seeded INTEGER    -- 1 once the header defaults have been filled in (see migrateSchema)
 );
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -171,6 +183,25 @@ function migrateSchema() {
     db.run('UPDATE settings SET print_scale_115 = 1')
   }
 
+  // settings.shop_* — the printed slip header (name / tagline / owner / three
+  // phones / address). Added per column, then BACKFILLED with the Chaudhary
+  // default ONLY where the column is NULL or '' — a shop that already customized
+  // a field is never overwritten. Re-running this is harmless: after the first
+  // pass the columns exist, and the backfill only ever touches blanks (a field
+  // the shopkeeper deliberately CLEARS would be re-seeded on the next launch, so
+  // the fill runs once, guarded by shop_seeded).
+  const seedShop = !sCols.includes('shop_seeded')
+  for (const f of SHOP_FIELDS) {
+    if (!sCols.includes(f)) db.run(`ALTER TABLE settings ADD COLUMN ${f} TEXT`)
+  }
+  if (seedShop) {
+    if (!sCols.includes('shop_seeded')) db.run('ALTER TABLE settings ADD COLUMN shop_seeded INTEGER')
+    for (const f of SHOP_FIELDS) {
+      db.run(`UPDATE settings SET ${f} = ? WHERE ${f} IS NULL OR ${f} = ''`, [SHOP_DEFAULTS[f]])
+    }
+    db.run('UPDATE settings SET shop_seeded = 1')
+  }
+
   // expenses.ts — full timestamp. Patch DBs that had expenses before it existed.
   const xCols = query('PRAGMA table_info(expenses)').map((r) => r.name)
   if (xCols.length && !xCols.includes('ts')) db.run('ALTER TABLE expenses ADD COLUMN ts TEXT')
@@ -196,10 +227,13 @@ function seedSettings() {
     const d = new Date()
     const p = (n) => String(n).padStart(2, '0')
     const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    // The shop header is seeded with the real Chaudhary values (shopDefaults.cjs),
+    // so a brand-new install prints a complete header before anyone opens Defaults.
     db.run(
-      `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count, raw_print_mode, print_scale)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15]
+      `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count, raw_print_mode, print_scale,
+                             ${SHOP_FIELDS.join(', ')}, shop_seeded)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SHOP_FIELDS.map(() => '?').join(', ')}, 1)`,
+      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15, ...SHOP_FIELDS.map((f) => SHOP_DEFAULTS[f])]
     )
   }
 }
@@ -276,11 +310,14 @@ const api = {
   },
 
   saveRates(rates) {
-    // raw_print_mode / print_scale use COALESCE so a caller that omits them keeps
-    // the stored value (never nulls a print setting it didn't mean to touch).
+    // raw_print_mode / print_scale / shop_* use COALESCE so a caller that omits
+    // them keeps the stored value (never nulls a setting it didn't mean to touch).
+    // An EMPTY STRING is not null, so deliberately clearing a shop field does save
+    // — and that blank line then disappears from the printed header.
     run(
       `UPDATE settings SET date=?, rate_tezabi_tola=?, parchi_charges=?, fc_per_gram=?, rate_tezabi_gram=?, point=?, slip_count=?,
-              raw_print_mode=COALESCE(?, raw_print_mode), print_scale=COALESCE(?, print_scale) WHERE id=1`,
+              raw_print_mode=COALESCE(?, raw_print_mode), print_scale=COALESCE(?, print_scale),
+              ${SHOP_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')} WHERE id=1`,
       [
         rates.date,
         rates.rate_tezabi_tola,
@@ -290,7 +327,8 @@ const api = {
         rates.point,
         rates.slip_count != null ? rates.slip_count : 1,
         rates.raw_print_mode != null ? rates.raw_print_mode : null,
-        rates.print_scale != null ? Number(rates.print_scale) : null
+        rates.print_scale != null ? Number(rates.print_scale) : null,
+        ...SHOP_FIELDS.map((f) => (rates[f] != null ? String(rates[f]) : null))
       ]
     )
     return api.getRates()
