@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { computeTable } from '../logic/purity.js'
 import { GRAMS_PER_TOLA, GRAMS_PER_RATTI, round } from '../logic/units.js'
+import { buildSlipHeader, shopOf, SLIP_DESIGN_W } from '../logic/slipHeader.js'
 
 // Pure-gold (khalis) + qeemat from a {wazan, point, rate} gold entry — the SAME
 // ratti-scale formula the نقد/ادھار panel's GoldRow uses, so a saved transaction
@@ -111,37 +112,11 @@ function showToast(text, ok) {
   } catch {}
 }
 
-// ── Thermal slip header/footer — STATIC shop-identity text printed above/below
-// the cloned receipt panel. Display-only markup: never touches any value.
-// Classic bordered header block (reference-receipt style): one clean outer
-// rectangle, internal horizontal rules separating name / tagline / phones /
-// address. Sizes are DESIGN px — the raster path scales them ×~1.63 onto the
-// 576-dot canvas (name ≈ 42px printed, the largest text on the slip).
-function buildSlipHeader() {
-  const el = document.createElement('div')
-  el.dir = 'rtl'
-  el.className = 'urdu slip-header'
-  el.style.cssText = 'text-align:center;color:#000;border:2px solid #000;padding:3px 4px 0;margin-bottom:5px'
-  // Reference-receipt decorations: a sharp ZIGZAG rule under the tagline and a
-  // ☎ before each phone number. The zigzag is inline SVG (rasterizes crisply to
-  // 1-bit; non-scaling stroke keeps an even line width under the ×1.63 clone
-  // scale); ☎ (U+260E) is a monochrome glyph that thresholds cleanly on thermal.
-  let zz = 'M0 5'
-  for (let x = 0; x <= 240; x += 6) zz += ' L' + (x + 3) + ' 1 L' + (x + 6) + ' 5'
-  const wave = '<svg width="100%" height="6" viewBox="0 0 240 6" preserveAspectRatio="none" style="display:block;margin:3px 2px">' +
-    '<path d="' + zz + '" fill="none" stroke="#000" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>'
-  const tel = '☎' // ☎
-  el.innerHTML =
-    '<div style="font-size:26px;font-weight:800;line-height:1.5">چوہدری گولڈ لیبارٹری</div>' +
-    '<div style="font-size:12.5px;font-weight:500;line-height:1.7">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز  (جیولری چوڑی میکر)</div>' +
-    // sharp zigzag decorative rule (as in the reference receipt)
-    wave +
-    '<div style="font-size:13.5px;font-weight:600;line-height:1.8">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">' + tel + '&nbsp;0300-7301839</span></div>' +
-    '<div style="font-size:14px;font-weight:600;line-height:1.7"><span dir="ltr">' + tel + '&nbsp;0302-7330000</span>&nbsp;&nbsp;&nbsp;<span dir="ltr">' + tel + '&nbsp;0302-3334440</span></div>' +
-    // address in its own ruled strip at the bottom of the box
-    '<div style="border-top:1.5px solid #000;margin-top:3px;padding:2px 0 4px;font-size:12.5px;font-weight:500;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>'
-  return el
-}
+// ── Thermal slip header ──────────────────────────────────────────────────────
+// Now lives in src/logic/slipHeader.js and is DATA-driven (settings.shop_*), so
+// the ڈیفالٹ سیٹنگز preview and the printed slip are literally the same code.
+// Every caller here passes `rates`, which carries the shop columns straight from
+// the settings table.
 
 // Footer: the sona-testing fee paragraph is LAB-ONLY; the software line (with
 // Rayyan 0307-6965231) prints on every slip.
@@ -170,7 +145,7 @@ function buildSlipFooter(kind) {
 // cloned at its 341px design width and vector-scaled once to the 556px content
 // box — Chromium rasterizes glyphs at the FINAL size (no bitmap resize), and
 // the main process hard-thresholds that single render to 1-bit.
-function buildRasterSlipHtml(panelEl) {
+function buildRasterSlipHtml(panelEl, rates) {
   try {
     const clone = panelEl.cloneNode(true)
     // cloneNode copies attributes, NOT live input state — and outerHTML only
@@ -211,9 +186,9 @@ function buildRasterSlipHtml(panelEl) {
     // Packaged builds may refuse CSSOM access on file:// stylesheets — leave a
     // marker and the main process injects the built stylesheet from disk.
     if (!css || css.length < 500) css = '/*__APP_CSS__*/'
-    const DOTS = 576, PAD = 10, DESIGN_W = 341
+    const DOTS = 576, PAD = 10, DESIGN_W = SLIP_DESIGN_W
     const scale = (DOTS - 2 * PAD) / DESIGN_W
-    const header = buildSlipHeader().outerHTML
+    const header = buildSlipHeader(rates).outerHTML
     const footer = buildSlipFooter(panelEl.getAttribute('data-receipt') || '').outerHTML
     return '<!doctype html><html dir="ltr"><head><meta charset="utf-8"><style>' + css +
       '\nhtml,body{margin:0!important;padding:0!important;background:#fff!important}' +
@@ -554,9 +529,12 @@ export function AppProvider({ children }) {
       // No slipData → fall back to the older clone-based HTML path.
       let payload = null
       if (slipData) {
-        payload = { data: slipData, copies: n }
+        // The shop header rides along with the slip data: rasterPrint.cjs renders
+        // the header from `shop`, so the printed header always shows the CURRENT
+        // ڈیفالٹ سیٹنگز values — the same ones the settings preview draws.
+        payload = { data: { ...slipData, shop: shopOf(rates) }, copies: n }
       } else {
-        const rasterHtml = buildRasterSlipHtml(panelEl)
+        const rasterHtml = buildRasterSlipHtml(panelEl, rates)
         if (rasterHtml) payload = { html: rasterHtml, copies: n }
       }
       if (payload) {
@@ -637,7 +615,7 @@ export function AppProvider({ children }) {
       // Slip = [SHOP HEADER] → [receipt body, exactly as on screen] → [FOOTER].
       // The fee paragraph is lab-only; data-receipt on the panel root says which
       // receipt this is (lab / naqad / udhar / wasooli).
-      inner.appendChild(buildSlipHeader())
+      inner.appendChild(buildSlipHeader(rates))
       inner.appendChild(clone)
       inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || ''))
       area.appendChild(inner)
@@ -676,7 +654,10 @@ export function AppProvider({ children }) {
       if (overlay) { overlay.remove(); document.body.classList.remove('slip-print') }
       if (pageStyle) pageStyle.remove()
     }
-  }, [rates.slip_count])
+    // `rates` in full (not just slip_count): the slip header is now built from the
+    // shop_* settings it carries, so an edit in ڈیفالٹ سیٹنگز must reach the very
+    // next print.
+  }, [rates])
 
   // WhatsApp share: build the SAME slip the printer gets (shop header → the
   // clicked receipt exactly as on screen → footer), show it briefly as a
@@ -733,7 +714,7 @@ export function AppProvider({ children }) {
       // shared picture matches the printed slip exactly. (Field sync above runs
       // first, on the identical index order of panel vs clone.)
       clone.querySelectorAll('.no-print').forEach((n) => { try { n.remove() } catch {} })
-      inner.appendChild(buildSlipHeader())
+      inner.appendChild(buildSlipHeader(rates))
       inner.appendChild(clone)
       inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || ''))
       card.appendChild(inner)
@@ -765,7 +746,8 @@ export function AppProvider({ children }) {
       if (overlay) { try { overlay.remove() } catch {} }
     }
     openWa()
-  }, [])
+    // `rates` — the shared slip image carries the same shop header as the print.
+  }, [rates])
 
   // Change a top weight (gross / water). Changing a weight reruns the forward
   // calc fresh for all 5 rows, so any per-row manual edits (e.g. Baqi Raqam

@@ -19,6 +19,7 @@ const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const { SHOP_DEFAULTS } = require('./shopDefaults.cjs')
 
 const DOTS = 576                     // printable width in dots: 72.1mm × 8
 const BYTES_PER_ROW = DOTS / 8       // 72 bytes per raster row
@@ -408,6 +409,56 @@ function calibrationHtml() {
 // Nastaliq strokes + the 1-bit threshold were printing faint on thermal paper.
 // 3px outer / 2px inner table rules; the shop name (800/42px, un-stroked) and
 // boxed amounts (700) keep their own explicit weight. `d` is DATA only.
+// ── The printed shop header (native 576px) ───────────────────────────────────
+// DATA-DRIVEN: `shop` is the settings.shop_* block the renderer sends with every
+// slip (see store.jsx printSlips → shopOf(rates)), so the header on paper is
+// always the one the shopkeeper sees in the ڈیفالٹ سیٹنگز preview — the two are
+// built from the same seven values and cannot drift apart.
+//
+// This is the SAME design as src/logic/slipHeader.js, drawn at native size
+// instead of at the 341px design width the driver path scales up: the sizes here
+// are that block's ×~1.63 equivalents (26px name → 42px, and so on).
+//
+// A blank field HIDES its line, exactly as in the preview. `shop` is absent only
+// for the printer TEST pages, which carry no settings — those fall back to the
+// shop defaults so a test print still looks like a real receipt.
+function shopHeaderHtml(shop) {
+  const s = Object.assign({}, SHOP_DEFAULTS, shop || {})
+  const esc = (v) => String(v == null ? '' : v).trim()
+    .replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  const name = esc(s.shop_name)
+  const tagline = esc(s.shop_tagline)
+  const owner = esc(s.shop_owner)
+  const p1 = esc(s.shop_phone1)
+  const p2 = esc(s.shop_phone2)
+  const p3 = esc(s.shop_phone3)
+  const address = esc(s.shop_address)
+
+  let h = '<div class="u" style="border:3px solid #000;text-align:center;padding:5px 6px 0">'
+  // shop name (800/42px) already reads solid — the inherited .u stroke would
+  // bleed it, so it's explicitly zeroed back out here.
+  if (name) h += '<div style="font-size:42px;font-weight:800;line-height:1.55;-webkit-text-stroke:0">' + name + '</div>'
+  // The double rule belongs to the BOX, not to a field: it keeps separating the
+  // name from the phones even when the tagline is cleared.
+  h += '<div style="border-top:3px solid #000;border-bottom:2px solid #000;height:5px;margin:2px 10px 5px"></div>'
+  if (tagline) h += '<div style="font-size:20px;line-height:1.9">' + tagline + '</div>'
+  if (owner || p1) {
+    h += '<div style="font-size:22px;font-weight:600;line-height:1.8">' + owner +
+      (owner && p1 ? '&nbsp;&nbsp;' : '') +
+      (p1 ? '<span dir="ltr">' + p1 + '</span>' : '') + '</div>'
+  }
+  if (p2 || p3) {
+    h += '<div style="font:600 23px Arial;line-height:1.6">' +
+      (p2 ? '<span dir="ltr">' + p2 + '</span>' : '') +
+      (p2 && p3 ? '&nbsp;&nbsp;&nbsp;&nbsp;' : '') +
+      (p3 ? '<span dir="ltr">' + p3 + '</span>' : '') + '</div>'
+  }
+  if (address) {
+    h += '<div style="border-top:2px solid #000;margin-top:5px;padding:3px 0 6px;font-size:20px;line-height:1.8">' + address + '</div>'
+  }
+  return h + '</div>'
+}
+
 function buildReceiptHtml(d) {
   const LBL_PX = 28 // Urdu label/header cells (+3 over the approved 25px)
   // Clarity pass: labels/values raised from weight 500 (thin on thermal paper) to
@@ -463,16 +514,7 @@ function buildReceiptHtml(d) {
     '</style></head><body>' +
     '<div data-measure dir="rtl" style="width:576px;box-sizing:border-box;padding:2px 10px 0">' +
     // ── bordered classic header: name / double rule / tagline / phones / address strip
-    '<div class="u" style="border:3px solid #000;text-align:center;padding:5px 6px 0">' +
-    // shop name (800/42px) already reads solid — the inherited .u stroke would
-    // bleed it, so it's explicitly zeroed back out here.
-    '<div style="font-size:42px;font-weight:800;line-height:1.55;-webkit-text-stroke:0">چوہدری گولڈ لیبارٹری</div>' +
-    '<div style="border-top:3px solid #000;border-bottom:2px solid #000;height:5px;margin:2px 10px 5px"></div>' +
-    '<div style="font-size:20px;line-height:1.9">خالص سونے کی لین دین ۔ ہول سیل جیولری کا مرکز (جیولری چوڑی میکر)</div>' +
-    '<div style="font-size:22px;font-weight:600;line-height:1.8">چوہدری ایم رمضان آرائیں&nbsp;&nbsp;<span dir="ltr">0300-7301839</span></div>' +
-    '<div style="font:600 23px Arial;line-height:1.6"><span dir="ltr">0302-7330000</span>&nbsp;&nbsp;&nbsp;&nbsp;<span dir="ltr">0302-3334440</span></div>' +
-    '<div style="border-top:2px solid #000;margin-top:5px;padding:3px 0 6px;font-size:20px;line-height:1.8">نزد موسیٰ پاک دربار صرافہ بازار ملتان</div>' +
-    '</div>' +
+    shopHeaderHtml(d.shop) +
     // Section title bar — e.g. "لیب رسید", "وصولی رسید", "ادھار کی رسید", "نقد کی رسید".
     // Was white-on-black knockout text: the 1-bit threshold floods the black
     // background and swallows the reverse glyphs, so the title printed as a solid
