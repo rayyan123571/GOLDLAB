@@ -1,7 +1,7 @@
 {
   "name": "gold-lab",
   "private": true,
-  "version": "1.0.21",
+  "version": "1.0.0",
   "description": "Gold Laboratory Management Desktop App",
   "type": "module",
   "main": "electron/main.cjs",
@@ -12,14 +12,16 @@
     "build": "vite build",
     "start": "cross-env NODE_ENV=production node scripts/run-electron.cjs .",
     "obfuscate": "node scripts/obfuscate-electron.cjs",
-    "dist:win": "npm run build && npm run obfuscate && electron-builder --win",
-    "dist:wcdcin:unlocked": "node scripts/build-unlocked.cjs"
+    "bytecode": "node scripts/bytecode-electron.cjs",
+    "dist:win": "npm run build && npm run obfuscate && npm run bytecode && electron-builder --win",
+    "dist:win:unlocked": "node scripts/build-unlocked.cjs"
   },
   "build": {
     "appId": "com.chaudhrygoldlab.app",
     "productName": "Chaudhry Gold Lab",
     "copyright": "Chaudhry Gold Laboratory",
     "asar": true,
+    
     "asarUnpack": [
       "**/node_modules/sql.js/dist/*.wasm"
     ],
@@ -58,6 +60,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "bytenode": "^1.6.0",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",

@@ -23,22 +23,23 @@ function RateField({ label, value, onChange, w = 'w-20', numeric }) {
 }
 
 export default function TopBar() {
-  const { rates, saveRates, setScreen, openUdhar, closeUdhar, openAkhrajat, closeAkhrajat, screen, udharOpen, akhrajatOpen, udharComment, setUdharComment } = useApp()
+  const { rates, saveRates, setScreen, openUdhar, closeUdhar, openAkhrajat, closeAkhrajat, openHisab, closeHisab, screen, udharOpen, akhrajatOpen, hisabOpen, udharComment, setUdharComment } = useApp()
 
-  // Exactly one tab is active at a time. ادھار / اخراجات are modals, so an open
-  // modal wins the highlight; otherwise روزنامچہ = 'daybook'. لیب is no longer a
-  // tab — it IS the default main page (screen === 'main'), reachable by closing
+  // Exactly one tab is active at a time. ادھار / اخراجات / حساب are modals, so an
+  // open modal wins the highlight; otherwise روزنامچہ = 'daybook'. لیب is no longer
+  // a tab — it IS the default main page (screen === 'main'), reachable by closing
   // any modal or via the روزنامچہ "← واپس" button, so no tab highlights on main.
-  const anyModal = udharOpen || akhrajatOpen
+  const anyModal = udharOpen || akhrajatOpen || hisabOpen
   const active = {
     daybook: screen === 'daybook' && !anyModal,
     udhar: udharOpen,
-    akhrajat: akhrajatOpen
+    akhrajat: akhrajatOpen,
+    hisab: hisabOpen
   }
   // Active = green (tab-active). Inactive tabs get a subtle, lighter hover tint
   // (distinct from the active green) so they read as clickable.
   const tabCls = (isActive) => `tab urdu text-[16px] font-bold ${isActive ? 'tab-active' : 'hover:from-emerald-100 hover:to-emerald-200'}`
-  const goDaybook = () => { closeUdhar(); closeAkhrajat(); setScreen('daybook') }
+  const goDaybook = () => { closeUdhar(); closeAkhrajat(); closeHisab(); setScreen('daybook') }
 
   // The تاریخ field stays an editable, persisted receipt date. Default it to
   // today's live date on mount only when it's empty, so a chosen date is kept.
@@ -71,6 +72,9 @@ export default function TopBar() {
         </button>
         <button className={tabCls(active.akhrajat)} onClick={openAkhrajat}>
           اخراجات
+        </button>
+        <button className={tabCls(active.hisab)} onClick={openHisab}>
+          حساب
         </button>
       </div>
 

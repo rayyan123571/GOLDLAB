@@ -227,13 +227,14 @@ ipcMain.handle('db', async (_evt, { fn, args }) => {
 // db is flushed in before-quit / window-all-closed, so no data is lost.
 ipcMain.handle('quit-app', () => { app.quit() })
 
-// "–" button: fill the whole screen but KEEP THE TASKBAR VISIBLE. This leaves
-// full-screen (which hides the taskbar) and maximizes to the work area, so the
-// app occupies everything except the taskbar — on any screen size / any laptop.
+// "–" button: actually MINIMIZE the app to the taskbar (hide the window). The
+// window launches frameless-fullscreen (taskbar hidden), and minimize() can be
+// unreliable straight from full-screen on Windows, so leave full-screen first —
+// that also makes the taskbar visible so the minimized app's button is reachable.
 ipcMain.handle('minimize-window', () => {
   if (!win) return
   if (win.isFullScreen()) win.setFullScreen(false)
-  win.maximize()
+  win.minimize()
 })
 
 // "□" button: occupy the ENTIRE screen with the taskbar HIDDEN (true full-screen)

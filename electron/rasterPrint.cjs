@@ -19,7 +19,7 @@ const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
-const { SHOP_DEFAULTS } = require('./shopDefaults.cjs')
+const { SHOP_DEFAULTS, SLIP_TERMS_DEFAULT } = require('./shopDefaults.cjs')
 
 const DOTS = 576                     // printable width in dots: 72.1mm × 8
 const BYTES_PER_ROW = DOTS / 8       // 72 bytes per raster row
@@ -391,7 +391,9 @@ function calibrationHtml() {
 // buildReceiptHtml(d) renders the approved classic design (native 576px): bordered
 // header (name / double rule / tagline / phones / address strip), section title
 // bar (d.title), one or more bordered tables (d.tables), an optional lab terms box
-// (d.showFee), then the services line + Rayyan footer. It is table-DRIVEN: every
+// (d.showFee) — now DATA-DRIVEN from settings.slip_terms (d.terms), falling back to
+// the default only for the printer TEST pages that carry no settings — then the
+// services line + Rayyan footer. It is table-DRIVEN: every
 // receipt supplies its own rows in the SAME styling, so there is one template.
 //   d = { title, showFee, selectiveBold?, tables: [ table, ... ] }
 //   table = [ row, ... ]   row = [ cell, ... ]
@@ -503,9 +505,15 @@ function buildReceiptHtml(d) {
   // label cell puts the label column rightmost like the reference receipt.
   const cell = (c) => (c && c.l !== undefined) ? th(c) : td(c || { v: '' })
   const table = (rows) => '<table style="margin-top:8px">' + (rows || []).map((r) => '<tr>' + (r || []).map(cell).join('') + '</tr>').join('') + '</table>'
-  const feeBox = d.showFee
+  // Lab terms box — data-driven: d.terms is settings.slip_terms sent with the slip;
+  // absent only for the printer TEST pages (no settings), which fall back to the
+  // default. Blank terms → no box. User-editable text is escaped, never injected raw.
+  const escTerms = (v) => String(v == null ? '' : v).trim()
+    .replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  const terms = String(d.terms != null ? d.terms : SLIP_TERMS_DEFAULT).trim()
+  const feeBox = (d.showFee && terms)
     ? '<div class="u" dir="rtl" style="font-size:20px;line-height:2.1;border:2px solid #000;padding:5px 9px;margin-top:9px;text-align:right">' +
-      'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔</div>'
+      escTerms(terms) + '</div>'
     : ''
   return '<!doctype html><html><head><meta charset="utf-8"><style>' +
     'html,body{margin:0;padding:0;background:#fff;color:#000}' +

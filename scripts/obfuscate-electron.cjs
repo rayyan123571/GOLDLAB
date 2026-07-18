@@ -11,6 +11,7 @@
 const fs = require('fs')
 const path = require('path')
 const JavaScriptObfuscator = require('javascript-obfuscator')
+const { isPreloadOnly } = require('./bytecode-targets.cjs')
 
 const ELECTRON_SRC_DIR = path.join(__dirname, '..', 'electron')
 const ELECTRON_OUT_DIR = path.join(__dirname, '..', 'electron-dist')
@@ -18,6 +19,13 @@ const RENDERER_ASSETS_DIR = path.join(__dirname, '..', 'dist', 'assets')
 
 // Main process runs under Node, is never inspected via browser DevTools, and
 // has no perf-sensitive hot loops — safe to obfuscate hard.
+//
+// selfDefending is DELIBERATELY off here: every file this set applies to is then
+// V8-bytecode compiled (scripts/bytecode-electron.cjs), and selfDefending's
+// anti-tamper guard spins into an INFINITE LOOP once the obfuscated function is
+// run as bytecode — it hangs the app at startup. Bytecode already removes the
+// source text and the string-array still hides literals, so selfDefending buys
+// nothing here anyway. Preload files (below) are NOT bytecoded and keep it on.
 const MAIN_PROCESS_OPTIONS = {
   compact: true,
   controlFlowFlattening: true,
@@ -26,7 +34,7 @@ const MAIN_PROCESS_OPTIONS = {
   deadCodeInjectionThreshold: 0.4,
   identifierNamesGenerator: 'hexadecimal',
   renameGlobals: false,
-  selfDefending: true,
+  selfDefending: false,
   stringArray: true,
   stringArrayEncoding: ['base64'],
   stringArrayThreshold: 0.75,
@@ -39,6 +47,11 @@ const MAIN_PROCESS_OPTIONS = {
   reservedNames: [],
   disableConsoleOutput: false
 }
+
+// Preload scripts stay as obfuscated JS (Electron loads them by path, so they
+// can't be bytecode — see scripts/bytecode-targets.cjs). They run as plain JS,
+// never get bytecode-compiled, so selfDefending is both safe and worthwhile here.
+const PRELOAD_OPTIONS = { ...MAIN_PROCESS_OPTIONS, selfDefending: true }
 
 // Renderer runs in a live UI (typing, printing, live-price polling) and
 // DevTools is now disabled in production (see main.cjs `devTools: isDev`), so
@@ -72,10 +85,14 @@ function walkElectron(dir) {
       walkElectron(srcPath)
     } else if (entry.name.endsWith('.cjs')) {
       const code = fs.readFileSync(srcPath, 'utf8')
-      const obfuscated = JavaScriptObfuscator.obfuscate(code, MAIN_PROCESS_OPTIONS).getObfuscatedCode()
+      // Preload files keep selfDefending on; bytecode-bound files must not (it
+      // hangs once compiled to bytecode — see MAIN_PROCESS_OPTIONS).
+      const relFwd = relPath.replace(/\\/g, '/')
+      const options = isPreloadOnly(relFwd) ? PRELOAD_OPTIONS : MAIN_PROCESS_OPTIONS
+      const obfuscated = JavaScriptObfuscator.obfuscate(code, options).getObfuscatedCode()
       fs.mkdirSync(path.dirname(outPath), { recursive: true })
       fs.writeFileSync(outPath, obfuscated, 'utf8')
-      console.log(`[obfuscate:main] ${relPath}`)
+      console.log(`[obfuscate:main] ${relPath}${isPreloadOnly(relFwd) ? ' (preload, JS)' : ' (→ bytecode)'}`)
     } else {
       fs.copyFileSync(srcPath, outPath)
       console.log(`[copy:main] ${relPath}`)

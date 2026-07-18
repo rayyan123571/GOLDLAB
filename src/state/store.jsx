@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { computeTable } from '../logic/purity.js'
 import { GRAMS_PER_TOLA, GRAMS_PER_RATTI, round } from '../logic/units.js'
-import { buildSlipHeader, shopOf, SLIP_DESIGN_W } from '../logic/slipHeader.js'
+import { buildSlipHeader, buildSlipTerms, shopOf, SLIP_DESIGN_W } from '../logic/slipHeader.js'
 
 // Pure-gold (khalis) + qeemat from a {wazan, point, rate} gold entry — the SAME
 // ratti-scale formula the نقد/ادھار panel's GoldRow uses, so a saved transaction
@@ -120,21 +120,25 @@ function showToast(text, ok) {
 
 // Footer: the sona-testing fee paragraph is LAB-ONLY; the software line (with
 // Rayyan 0307-6965231) prints on every slip.
-function buildSlipFooter(kind) {
+function buildSlipFooter(kind, rates) {
   const el = document.createElement('div')
   el.dir = 'rtl'
   el.className = 'urdu'
   el.style.cssText = 'color:#000;margin-top:5px'
-  const fee = kind === 'lab'
-    ? '<div style="font-size:12.5px;font-weight:500;line-height:2;text-align:right;border:1.5px solid #000;padding:3px 6px;margin-bottom:5px">' +
-      'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔' +
-      '</div>'
-    : ''
-  el.innerHTML = fee +
+  // Lab-only terms/fee box — now DATA-DRIVEN (settings.slip_terms), built by the
+  // SAME buildSlipTerms() the ڈیفالٹ سیٹنگز preview uses, so the two never drift.
+  // Blank terms → null → no box at all.
+  if (kind === 'lab') {
+    const terms = buildSlipTerms(rates && rates.slip_terms)
+    if (terms) el.appendChild(terms)
+  }
+  // Software-vendor footer (services line + Rayyan) — NOT the shop's identity, so
+  // it stays hardcoded, byte-for-byte unchanged.
+  el.insertAdjacentHTML('beforeend',
     '<div style="font-size:12.5px;font-weight:500;line-height:1.9;text-align:center;border-top:2px solid #000;padding-top:4px">' +
     'لیبارٹری، کاسٹنگ سنٹر، ہول سیل شاپ، جیولری شاپ، چوڑی کڑے اور کارخانے کے سوفٹ ویئر دستیاب ہیں۔' +
     '<div dir="ltr" style="font-size:14px;font-weight:800;margin-top:2px">Rayyan&nbsp;&nbsp;0307-6965231</div>' +
-    '</div>'
+    '</div>')
   return el
 }
 
@@ -189,7 +193,7 @@ function buildRasterSlipHtml(panelEl, rates) {
     const DOTS = 576, PAD = 10, DESIGN_W = SLIP_DESIGN_W
     const scale = (DOTS - 2 * PAD) / DESIGN_W
     const header = buildSlipHeader(rates).outerHTML
-    const footer = buildSlipFooter(panelEl.getAttribute('data-receipt') || '').outerHTML
+    const footer = buildSlipFooter(panelEl.getAttribute('data-receipt') || '', rates).outerHTML
     return '<!doctype html><html dir="ltr"><head><meta charset="utf-8"><style>' + css +
       '\nhtml,body{margin:0!important;padding:0!important;background:#fff!important}' +
       // ── Print typography (203dpi thermal): BIGGER regular/medium text, not
@@ -278,6 +282,7 @@ export function AppProvider({ children }) {
   const [openReceiptNo, setOpenReceiptNo] = useState(null)
   const [udharOpen, setUdharOpen] = useState(false) // ادھار form/report modal
   const [akhrajatOpen, setAkhrajatOpen] = useState(false) // اخراجات (expenses) modal
+  const [hisabOpen, setHisabOpen] = useState(false) // حساب (cash position) modal
   // Extended customer shape. mobile2/telephone/address/imagePath are new; their
   // persistence needs an upsertCustomer backend extension (see note), but the
   // form and live state work with them today.
@@ -348,11 +353,14 @@ export function AppProvider({ children }) {
 
   const refresh = useCallback(() => setBump((b) => b + 1), [])
 
-  // Modal tabs (ادھار / اخراجات) open over the main workflow. Only one at a time.
-  const openUdhar = useCallback(() => { setScreen('main'); setAkhrajatOpen(false); setUdharOpen(true) }, [])
+  // Modal tabs (ادھار / اخراجات / حساب) open over the main workflow. Only one at a
+  // time — every opener closes the other two.
+  const openUdhar = useCallback(() => { setScreen('main'); setAkhrajatOpen(false); setHisabOpen(false); setUdharOpen(true) }, [])
   const closeUdhar = useCallback(() => setUdharOpen(false), [])
-  const openAkhrajat = useCallback(() => { setScreen('main'); setUdharOpen(false); setAkhrajatOpen(true) }, [])
+  const openAkhrajat = useCallback(() => { setScreen('main'); setUdharOpen(false); setHisabOpen(false); setAkhrajatOpen(true) }, [])
   const closeAkhrajat = useCallback(() => setAkhrajatOpen(false), [])
+  const openHisab = useCallback(() => { setScreen('main'); setUdharOpen(false); setAkhrajatOpen(false); setHisabOpen(true) }, [])
+  const closeHisab = useCallback(() => setHisabOpen(false), [])
 
   // Initial load
   useEffect(() => {
@@ -532,7 +540,7 @@ export function AppProvider({ children }) {
         // The shop header rides along with the slip data: rasterPrint.cjs renders
         // the header from `shop`, so the printed header always shows the CURRENT
         // ڈیفالٹ سیٹنگز values — the same ones the settings preview draws.
-        payload = { data: { ...slipData, shop: shopOf(rates) }, copies: n }
+        payload = { data: { ...slipData, shop: shopOf(rates), terms: String(rates.slip_terms ?? '') }, copies: n }
       } else {
         const rasterHtml = buildRasterSlipHtml(panelEl, rates)
         if (rasterHtml) payload = { html: rasterHtml, copies: n }
@@ -617,7 +625,7 @@ export function AppProvider({ children }) {
       // receipt this is (lab / naqad / udhar / wasooli).
       inner.appendChild(buildSlipHeader(rates))
       inner.appendChild(clone)
-      inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || ''))
+      inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || '', rates))
       area.appendChild(inner)
       root.appendChild(area)
       overlay.appendChild(root)
@@ -716,7 +724,7 @@ export function AppProvider({ children }) {
       clone.querySelectorAll('.no-print').forEach((n) => { try { n.remove() } catch {} })
       inner.appendChild(buildSlipHeader(rates))
       inner.appendChild(clone)
-      inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || ''))
+      inner.appendChild(buildSlipFooter(panelEl.getAttribute('data-receipt') || '', rates))
       card.appendChild(inner)
       overlay.appendChild(card)
       document.body.appendChild(overlay)
@@ -1418,6 +1426,11 @@ export function AppProvider({ children }) {
     // parchi below.
     const nameEmpty = !customer.id && !(customer.name && customer.name.trim())
     const entriesEmpty = !txns.length && !hasPurity
+    // Does this parchi carry any ادھار (credit) entry — تیزابی دیا/لیا, ادھار کیش
+    // دیا/لیا? Those are LEDGER records: they only exist against a customer, so a
+    // saved customer is mandatory for them. A parchi with only نقد and/or lab
+    // (purity/kacha) work belongs to no one in particular and saves nameless.
+    const hasUdhar = txns.some((t) => t.section === 'udhar')
     if (isEdit && nameEmpty) {
       if (entriesEmpty) {
         if (hasApi) await window.api.freeReceipt(rno)
@@ -1426,31 +1439,38 @@ export function AppProvider({ children }) {
         refresh()
         return { ok: true, receipt_no: rno, freed: true }
       }
-      return { ok: false, message: 'پہلے تمام اندراج ختم کریں، پھر نام ہٹائیں' }
+      // Clearing the name while ادھار entries remain would orphan them → wrong
+      // order. نقد/lab entries need no name, so they fall through and re-save
+      // nameless (customer_id null) instead of being blocked.
+      if (hasUdhar) return { ok: false, message: 'پہلے تمام اندراج ختم کریں، پھر نام ہٹائیں' }
     }
 
-    // Name mandatory for any parchi save (ledger + snapshot are keyed to a customer).
     // The customer must ALREADY be saved — ensureCustomer never creates one now.
+    // MANDATORY only for a parchi with ادھار entries; otherwise null is allowed.
     const cust = await ensureCustomer()
-    if (!cust || !cust.id) {
+    if (hasUdhar && (!cust || !cust.id)) {
       const typed = (customer.name || '').trim()
       return {
         ok: false,
         message: typed
           ? 'یہ کسٹمر محفوظ نہیں — فہرست سے منتخب کریں یا "+" سے نیا کسٹمر شامل کریں'
-          : 'پہلے کسٹمر منتخب کریں'
+          : 'براہِ کرم پہلے کسٹمر کا نام درج کریں'
       }
     }
+    // Nameless نقد/lab parchi → customer_id null (like manual اندراج rows). It shows
+    // in the نقد/lab/daybook reports with name "-", and — being keyed to no customer
+    // — never in an ادھار / balance / statement report.
+    const custId = (cust && cust.id) || null
 
     // Current line-items for this receipt (strip the UI-only `section` tag).
-    const rows = txns.map(({ section, ...row }) => ({ customer_id: cust.id, date: rates.date, ...row }))
+    const rows = txns.map(({ section, ...row }) => ({ customer_id: custId, date: rates.date, ...row }))
 
     // FULL snapshot payload so reopening restores every entry (purity line-items
     // via input+overrides+rates, plus the نقد/ادھار entries) — symmetric with
     // loadReceipt, which reads exactly these fields back.
     const payload = {
       receipt_no: rno,
-      customer: { id: cust.id, name: cust.name, mobile: cust.mobile },
+      customer: { id: custId, name: (cust && cust.name) || '', mobile: (cust && cust.mobile) || '' },
       input: { wazan: input.wazan, malawat: input.malawat },
       overrides,
       rates,
@@ -1471,7 +1491,7 @@ export function AppProvider({ children }) {
       }
       if (DEBUG_SAVE) console.log('[saveParchi] replaceReceipt', { rno, isEdit, rows })
       const res = await window.api.replaceReceipt({
-        receipt: { receipt_no: rno, type: 'parchi', customer_id: cust.id, date: rates.date, payload },
+        receipt: { receipt_no: rno, type: 'parchi', customer_id: custId, date: rates.date, payload },
         transactions: rows
       })
       if (DEBUG_SAVE) console.log('[saveParchi] replaceReceipt result', res)
@@ -1776,6 +1796,7 @@ export function AppProvider({ children }) {
     savedFlags, setSavedFlags,
     udharOpen, openUdhar, closeUdhar,
     akhrajatOpen, openAkhrajat, closeAkhrajat,
+    hisabOpen, openHisab, closeHisab,
     printSlips,
     shareSlipWhatsApp,
     hasApi
