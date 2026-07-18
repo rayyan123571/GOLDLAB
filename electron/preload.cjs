@@ -90,12 +90,12 @@ contextBridge.exposeInMainWorld('api', {
   rasterPrintSlip: (opts) => ipcRenderer.invoke('raster-print-slip', opts),
   // Calibration / worst-case printer test pages from the settings dialog.
   rasterTestPrint: (kind) => ipcRenderer.invoke('raster-test-print', { kind }),
-  // Laser form-overlay calibration grid (print_mode = 'laser_form'). Slip
-  // printing itself still goes through rasterPrintSlip — main.cjs routes it.
-  overlayTestPrint: () => ipcRenderer.invoke('overlay-test-print', {}),
-  // Laser mode WhatsApp share: put the values-only overlay page (what the
-  // Canon prints) on the clipboard as an image, instead of the slip snapshot.
-  overlayShareImage: (data) => ipcRenderer.invoke('overlay-share-image', { data }),
+  // Colour-form preview / test print (print_mode = 'color_form'): a filled
+  // sample receipt. Real slip printing goes through rasterPrintSlip — main routes it.
+  colorFormTestPrint: () => ipcRenderer.invoke('color-form-test-print', {}),
+  // Colour mode WhatsApp share: put the full colour receipt (what the Canon
+  // prints) on the clipboard as an image, instead of the slip snapshot.
+  colorFormShareImage: (data) => ipcRenderer.invoke('color-form-share-image', { data }),
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
   captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
   // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.

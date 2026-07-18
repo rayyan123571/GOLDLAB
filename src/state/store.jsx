@@ -545,31 +545,31 @@ export function AppProvider({ children }) {
         const rasterHtml = buildRasterSlipHtml(panelEl, rates)
         if (rasterHtml) payload = { html: rasterHtml, copies: n }
       }
-      // Laser form-overlay mode: the SAME rasterPrintSlip call is used — main.cjs
-      // routes it to the driver-based overlay path. A failing overlay must SURFACE
-      // its error, never fall through to the thermal driver clone below (that
-      // would print the full bordered slip on top of the pre-printed form).
-      const laserForm = rates.print_mode === 'laser_form'
+      // Colour-form mode: the SAME rasterPrintSlip call is used — main.cjs routes
+      // it to the driver-based colour renderer. A failure must SURFACE its error,
+      // never fall through to the thermal driver clone below (that would print the
+      // 80mm thermal slip instead of the colour receipt).
+      const colorForm = rates.print_mode === 'color_form'
       if (payload) {
         try {
           const res = await window.api.rasterPrintSlip(payload)
           if (res && res.ok) return
-          if (laserForm) {
+          if (colorForm) {
             showPrintError(res && res.reason)
             return
           }
           console.warn('raster print unavailable, using driver path:', res && res.reason)
         } catch (e) {
-          if (laserForm) {
+          if (colorForm) {
             showPrintError(e && e.message ? e.message : String(e))
             return
           }
           console.warn('raster print failed, using driver path:', e)
         }
-      } else if (laserForm) {
-        // No structured slipData (legacy clone-HTML caller) — the overlay can't
-        // place values, and the thermal-driver fallback is wrong for a form.
-        showPrintError('laser-form-needs-slip-data')
+      } else if (colorForm) {
+        // No structured slipData (legacy clone-HTML caller) — the colour renderer
+        // has no field values, and the thermal-driver fallback is wrong here.
+        showPrintError('color-form-needs-slip-data')
         return
       }
     }
@@ -706,22 +706,22 @@ export function AppProvider({ children }) {
       const url = `https://wa.me/${num}?text=${encodeURIComponent(text || '')}`
       if (typeof window !== 'undefined') window.open(url, '_blank')
     }
-    // ── Laser form-overlay mode: the shared picture must be what the CANON
-    // prints (values-only overlay page), not the thermal-style slip card. The
-    // main process renders it and puts the PNG on the clipboard; the WhatsApp
-    // auto-paste flow is identical from there. Any failure falls through to
-    // the normal card snapshot below, so the button still never breaks.
-    if (rates.print_mode === 'laser_form' && slipData && hasApi && window.api.overlayShareImage) {
+    // ── Colour-form mode: the shared picture must be what the CANON prints (the
+    // full colour receipt), not the thermal-style slip card. The main process
+    // renders it and puts the PNG on the clipboard; the WhatsApp auto-paste flow
+    // is identical from there. Any failure falls through to the normal card
+    // snapshot below, so the button still never breaks.
+    if (rates.print_mode === 'color_form' && slipData && hasApi && window.api.colorFormShareImage) {
       try {
-        const r = await window.api.overlayShareImage({ ...slipData })
+        const r = await window.api.colorFormShareImage({ ...slipData })
         if (r && r.ok) {
           showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V)', true)
           openWa()
           return
         }
-        console.warn('overlay share image failed, using card snapshot:', r && r.reason)
+        console.warn('color-form share image failed, using card snapshot:', r && r.reason)
       } catch (e) {
-        console.warn('overlay share image threw, using card snapshot:', e)
+        console.warn('color-form share image threw, using card snapshot:', e)
       }
     }
     if (!panelEl || typeof document === 'undefined' || !hasApi || !window.api.captureToClipboard) {

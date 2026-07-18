@@ -52,9 +52,8 @@ export default function DefaultsForm({ open, onClose }) {
   const [form, setForm] = useState({
     rate_tezabi_tola: '', fc_per_gram: '', parchi_charges: '', slip_count: '1', raw_print_mode: 'auto', print_scale: 1.15,
     print_mode: 'thermal', form_paper: 'A5', form_paper_w_mm: '148', form_paper_h_mm: '210',
-    form_offset_x_mm: '0', form_offset_y_mm: '0', form_scale_x: '1', form_scale_y: '1', form_font_pt: '11',
     shop_name: '', shop_tagline: '', shop_owner: '', shop_phone1: '', shop_phone2: '', shop_phone3: '', shop_address: '',
-    slip_terms: ''
+    slip_terms: '', slip_warning: '', shop_logo_path: ''
   })
   const [saved, setSaved] = useState(false)
   const [testMsg, setTestMsg] = useState('')
@@ -81,17 +80,14 @@ export default function DefaultsForm({ open, onClose }) {
         slip_count: src.slip_count != null ? String(src.slip_count) : '1',
         raw_print_mode: src.raw_print_mode === 'force' ? 'force' : 'auto',
         print_scale: src.print_scale != null ? Number(src.print_scale) : 1.15,
-        print_mode: src.print_mode === 'laser_form' ? 'laser_form' : 'thermal',
+        print_mode: src.print_mode === 'color_form' ? 'color_form' : 'thermal',
         form_paper: ['A5', 'A4', 'Letter', 'custom'].includes(src.form_paper) ? src.form_paper : 'A5',
         form_paper_w_mm: src.form_paper_w_mm != null ? String(src.form_paper_w_mm) : '148',
         form_paper_h_mm: src.form_paper_h_mm != null ? String(src.form_paper_h_mm) : '210',
-        form_offset_x_mm: src.form_offset_x_mm != null ? String(src.form_offset_x_mm) : '0',
-        form_offset_y_mm: src.form_offset_y_mm != null ? String(src.form_offset_y_mm) : '0',
-        form_scale_x: src.form_scale_x != null ? String(src.form_scale_x) : '1',
-        form_scale_y: src.form_scale_y != null ? String(src.form_scale_y) : '1',
-        form_font_pt: src.form_font_pt != null ? String(src.form_font_pt) : '11',
         ...shop,
-        slip_terms: src.slip_terms != null ? String(src.slip_terms) : ''
+        slip_terms: src.slip_terms != null ? String(src.slip_terms) : '',
+        slip_warning: src.slip_warning != null ? String(src.slip_warning) : '',
+        shop_logo_path: src.shop_logo_path != null ? String(src.shop_logo_path) : ''
       })
     }
     if (hasApi) window.api.getRates().then(seed)
@@ -146,20 +142,17 @@ export default function DefaultsForm({ open, onClose }) {
       slip_count: Math.max(1, parseInt(next.slip_count, 10) || 1),
       raw_print_mode: next.raw_print_mode === 'force' ? 'force' : 'auto',
       print_scale: Number(next.print_scale) || 1.15,
-      // Laser form-overlay settings. Numbers fall back to their defaults when
-      // the field is mid-edit ('' / '-'), so a half-typed value never persists
-      // as garbage; offsets legitimately accept 0 and negatives.
-      print_mode: next.print_mode === 'laser_form' ? 'laser_form' : 'thermal',
+      // Colour-form settings: paper size + the editable red-warning / green-note
+      // text + optional logo. (The old overlay offset/scale/font columns are no
+      // longer written here — they keep their DB values via COALESCE.)
+      print_mode: next.print_mode === 'color_form' ? 'color_form' : 'thermal',
       form_paper: ['A5', 'A4', 'Letter', 'custom'].includes(next.form_paper) ? next.form_paper : 'A5',
       form_paper_w_mm: Number.isFinite(Number(next.form_paper_w_mm)) && Number(next.form_paper_w_mm) > 0 ? Number(next.form_paper_w_mm) : 148,
       form_paper_h_mm: Number.isFinite(Number(next.form_paper_h_mm)) && Number(next.form_paper_h_mm) > 0 ? Number(next.form_paper_h_mm) : 210,
-      form_offset_x_mm: Number.isFinite(Number(next.form_offset_x_mm)) && next.form_offset_x_mm !== '' ? Number(next.form_offset_x_mm) : 0,
-      form_offset_y_mm: Number.isFinite(Number(next.form_offset_y_mm)) && next.form_offset_y_mm !== '' ? Number(next.form_offset_y_mm) : 0,
-      form_scale_x: Number(next.form_scale_x) || 1,
-      form_scale_y: Number(next.form_scale_y) || 1,
-      form_font_pt: Number(next.form_font_pt) || 11,
+      shop_logo_path: String(next.shop_logo_path ?? ''),
       ...shop,
-      slip_terms: String(next.slip_terms ?? '').trim()
+      slip_terms: String(next.slip_terms ?? '').trim(),
+      slip_warning: String(next.slip_warning ?? '').trim()
     })
     setSaved(true)
     if (savedTimer.current) clearTimeout(savedTimer.current)
@@ -178,11 +171,17 @@ export default function DefaultsForm({ open, onClose }) {
     const v = e.target.value.replace(/[^\d.]/g, '')
     commit({ ...form, [field]: v })
   }
-  // Laser-form calibration numbers: offsets may be NEGATIVE (nudge left/up), so
-  // a leading minus is allowed too.
-  const signedNumField = (field) => (e) => {
-    const v = e.target.value.replace(/[^\d.-]/g, '').replace(/(?!^)-/g, '')
-    commit({ ...form, [field]: v })
+  // Colour-form logo upload → data URL stored in shop_logo_path (embedded in the
+  // colour header). Capped so a huge image can't bloat the DB — the header only
+  // needs a small mark. Non-images are ignored; clearing falls back to a CSS gem.
+  const onLogoUpload = (e) => {
+    const file = e.target.files && e.target.files[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (!file || !/^image\//.test(file.type)) return
+    if (file.size > 1.5 * 1024 * 1024) { setTestMsg('لوگو بہت بڑا ہے (1.5MB سے کم رکھیں)'); return }
+    const reader = new FileReader()
+    reader.onload = () => commit({ ...form, shop_logo_path: String(reader.result || '') })
+    reader.readAsDataURL(file)
   }
   // Slip print: integer only.
   const onSlip = (e) => {
@@ -225,16 +224,17 @@ export default function DefaultsForm({ open, onClose }) {
     }
   }
 
-  // فارم کیلیبریشن ٹیسٹ پرنٹ — the laser form-overlay grid (labelled outline box
-  // per field, at the CURRENT saved offsets/scale) through the Windows driver.
-  const runOverlayTest = async () => {
-    if (!hasApi || !window.api.overlayTestPrint || testBusy) return
+  // کلر فارم پرنٹ ٹیسٹ / پیش نظارہ — render a realistic FILLED sample colour
+  // receipt (with THIS shop's header/warning/note) through the Canon driver so
+  // the shopkeeper sees the whole layout.
+  const runColorFormTest = async () => {
+    if (!hasApi || !window.api.colorFormTestPrint || testBusy) return
     setTestBusy(true)
-    setTestMsg('فارم کیلیبریشن پرنٹ ہو رہا ہے…')
+    setTestMsg('کلر فارم پرنٹ ہو رہا ہے…')
     try {
-      const res = await window.api.overlayTestPrint()
+      const res = await window.api.colorFormTestPrint()
       setTestMsg(res && res.ok
-        ? 'فارم کیلیبریشن پرنٹ ہو گیا ✓'
+        ? 'کلر فارم پرنٹ ہو گیا ✓'
         : `ناکام: ${res && res.reason ? res.reason : 'نامعلوم مسئلہ'}`)
     } catch (e) {
       setTestMsg(`ناکام: ${e && e.message ? e.message : e}`)
@@ -331,15 +331,15 @@ export default function DefaultsForm({ open, onClose }) {
             </select>
           </Row>
 
-          {/* ── پرنٹر کی قسم — Thermal (80mm ESC/POS رول، جوں کا توں) یا Canon
-              لیزر فارم اوورلے: پہلے سے چھپے فارم پر صرف قیمتیں چھپتی ہیں۔ ایک ہی
-              سیٹنگ، ایک ہی بلڈ — ہر دکان اپنا موڈ خود چنتی ہے۔ */}
+          {/* ── پرنٹر کی قسم — Thermal (80mm ESC/POS رول، جوں کا توں) یا Canon کلر:
+              سافٹ ویئر پوری رنگین رسید خود بنا کر سادہ کاغذ پر چھاپتا ہے۔ ایک ہی
+              سیٹنگ، ایک ہی بلڈ — ہر دکان اپنا موڈ اور ہیڈر/وارننگ خود چنتی ہے۔ */}
           <div className="mt-1 pt-4 border-t border-gray-200 flex flex-col gap-4">
             <div className="urdu font-bold text-[14px] text-gray-800">پرنٹر کی قسم</div>
             <div className="flex gap-6">
               {[
                 { v: 'thermal', label: 'تھرمل (80mm رول)' },
-                { v: 'laser_form', label: 'کینن لیزر — پرنٹڈ فارم' }
+                { v: 'color_form', label: 'کینن کلر (سادہ کاغذ)' }
               ].map((o) => (
                 <label key={o.v} className="flex items-center gap-2 cursor-pointer select-none">
                   <input
@@ -354,11 +354,11 @@ export default function DefaultsForm({ open, onClose }) {
               ))}
             </div>
 
-            {form.print_mode === 'laser_form' && (
+            {form.print_mode === 'color_form' && (
               <div className="flex flex-col gap-4">
                 <div className="urdu text-[11px] text-gray-500">
-                  فارم پر صرف قیمتیں چھپیں گی (ہیڈر، عنوان اور شرائط پہلے سے فارم پر چھپے ہیں)۔
-                  کیلیبریشن پرنٹ نکال کر فارم پر رکھیں اور نیچے کے نمبر ایڈجسٹ کریں۔
+                  سافٹ ویئر پوری رنگین رسید (ہیڈر، لوگو، رنگین خانے، سرخ وارننگ، سبز نوٹ) خود بنا کر سادہ
+                  کاغذ پر کینن سے چھاپتا ہے۔ کسی پہلے سے چھپے فارم یا کیلیبریشن کی ضرورت نہیں۔
                 </div>
 
                 <Row label="کاغذ کا سائز">
@@ -386,38 +386,53 @@ export default function DefaultsForm({ open, onClose }) {
                   </Row>
                 )}
 
-                <Row label="آفسیٹ X / Y (mm)">
-                  <div className="flex items-center gap-2" dir="ltr">
-                    <input className={`${INPUT} w-24`} dir="ltr" inputMode="decimal"
-                      value={form.form_offset_x_mm} onChange={signedNumField('form_offset_x_mm')} placeholder="0" />
-                    <input className={`${INPUT} w-24`} dir="ltr" inputMode="decimal"
-                      value={form.form_offset_y_mm} onChange={signedNumField('form_offset_y_mm')} placeholder="0" />
-                  </div>
+                <Row label="سرخ وارننگ بار" alignTop>
+                  <textarea
+                    dir="rtl"
+                    className={`${INPUT} urdu resize-none leading-loose`}
+                    rows={2}
+                    maxLength={220}
+                    value={form.slip_warning}
+                    onChange={(e) => commit({ ...form, slip_warning: e.target.value.slice(0, 220) })}
+                  />
                 </Row>
+                <div className="urdu text-[11px] text-gray-500 -mt-2">
+                  سبز نوٹ باکس نیچے «پرچی کی شرائط» والے خانے سے آتا ہے۔ خالی چھوڑنے پر متعلقہ بار/باکس ہٹ جائے گا۔
+                </div>
 
-                <Row label="اسکیل X / Y">
-                  <div className="flex items-center gap-2" dir="ltr">
-                    <input className={`${INPUT} w-24`} dir="ltr" inputMode="decimal"
-                      value={form.form_scale_x} onChange={numField('form_scale_x')} placeholder="1.0" />
-                    <input className={`${INPUT} w-24`} dir="ltr" inputMode="decimal"
-                      value={form.form_scale_y} onChange={numField('form_scale_y')} placeholder="1.0" />
+                <Row label="دکان کا لوگو" alignTop>
+                  <div className="flex flex-col gap-2">
+                    {form.shop_logo_path
+                      ? <img src={form.shop_logo_path} alt="logo" className="h-12 w-auto object-contain border border-gray-200 rounded bg-white p-1" />
+                      : <span className="urdu text-[11px] text-gray-500">لوگو نہیں — ہیرے کی شکل خود بن جائے گی</span>}
+                    <div className="flex gap-2">
+                      <label className="urdu text-[12px] font-bold text-white bg-slate-600 rounded-md px-3 py-1.5 cursor-pointer hover:bg-slate-700">
+                        لوگو منتخب کریں
+                        <input type="file" accept="image/*" className="hidden" onChange={onLogoUpload} />
+                      </label>
+                      {form.shop_logo_path && (
+                        <button
+                          type="button"
+                          onClick={() => commit({ ...form, shop_logo_path: '' })}
+                          className="urdu text-[12px] font-bold text-gray-700 bg-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-300"
+                        >
+                          ہٹا دیں
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </Row>
-
-                <Row label="فونٹ (pt)">
-                  <input className={`${INPUT} w-24`} dir="ltr" inputMode="decimal"
-                    value={form.form_font_pt} onChange={numField('form_font_pt')} placeholder="11" />
                 </Row>
 
                 <div>
                   <button
                     type="button"
                     disabled={testBusy}
-                    onClick={runOverlayTest}
+                    onClick={runColorFormTest}
                     className="urdu text-[13px] font-bold text-white bg-slate-700 rounded-md px-3 py-2 hover:bg-slate-800 active:bg-slate-900 transition-colors disabled:opacity-50"
                   >
-                    فارم کیلیبریشن ٹیسٹ پرنٹ
+                    کلر فارم پرنٹ ٹیسٹ / پیش نظارہ
                   </button>
+                  {testMsg && <div className="urdu text-[12px] text-emerald-600 break-all mt-2">{testMsg}</div>}
                 </div>
               </div>
             )}

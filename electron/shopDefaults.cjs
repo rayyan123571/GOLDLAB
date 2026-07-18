@@ -33,12 +33,19 @@ const SHOP_DEFAULTS = {
 
 // The لیب رسید terms/fee paragraph. Seeded into settings.slip_terms; editable in
 // ڈیفالٹ سیٹنگز. Blank = the terms box disappears from the slip entirely.
+// On the thermal slip it is the fee/terms box; on the colour form (کینن کلر) it
+// is the GREEN note box — same editable text, one source of truth.
 const SLIP_TERMS_DEFAULT = 'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔'
 
-// Every free-text settings column seeded from this file: the seven header fields
-// plus the terms paragraph. db.cjs uses THIS for schema/seed/save; SHOP_FIELDS
-// stays header-only.
-const SLIP_TEXT_FIELDS = [...SHOP_FIELDS, 'slip_terms']
-const SLIP_TEXT_DEFAULTS = { ...SHOP_DEFAULTS, slip_terms: SLIP_TERMS_DEFAULT }
+// The RED warning bar on the colour form (کینن کلر mode). Seeded into
+// settings.slip_warning; editable per shop in ڈیفالٹ سیٹنگز. Blank = no red bar.
+// Not used by the thermal slip. Default is the Imtiaz-style warning.
+const SLIP_WARNING_DEFAULT = 'رزلٹ کے بعد سونا لینے یا نہ لینے کا دکاندار پابند نہیں ہوگا۔ چوری کا سونا نکلنے پر ہم ذمہ دار نہ ہوں گے۔'
 
-module.exports = { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS }
+// Every free-text settings column seeded from this file: the seven header fields
+// plus the terms paragraph and the colour-form warning bar. db.cjs uses THIS for
+// schema/seed/save; SHOP_FIELDS stays header-only.
+const SLIP_TEXT_FIELDS = [...SHOP_FIELDS, 'slip_terms', 'slip_warning']
+const SLIP_TEXT_DEFAULTS = { ...SHOP_DEFAULTS, slip_terms: SLIP_TERMS_DEFAULT, slip_warning: SLIP_WARNING_DEFAULT }
+
+module.exports = { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS }

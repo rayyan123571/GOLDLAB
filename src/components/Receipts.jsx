@@ -209,8 +209,8 @@ const waOpen = (mobile, text) => {
 // unavailable (e.g. embedded statement ctx) — the button can never break.
 const waSlip = (ctx, e, mobile, text, slipData) => {
   const panel = e && e.currentTarget ? e.currentTarget.closest('.receipt-panel') : null
-  // slipData rides along so laser_form mode can share the Canon overlay image
-  // (built from the same values the print uses) instead of the card snapshot.
+  // slipData rides along so color_form mode can share the Canon colour receipt
+  // image (built from the same values the print uses) instead of the card snapshot.
   if (ctx && typeof ctx.shareSlipWhatsApp === 'function' && panel) ctx.shareSlipWhatsApp(panel, mobile, text, slipData)
   else waOpen(mobile, text)
 }
