@@ -45,6 +45,15 @@ contextBridge.exposeInMainWorld('api', {
   // Sum of ALL expenses up to & including `date` — feeds the bottom-bar کیش display
   // so expenses permanently reduce cash (not just on their entry day).
   getExpensesTotalUpTo: (date) => call('getExpensesTotalUpTo', date),
+  // نیا سودا — standalone deals list (own table only, never the ledger).
+  addNayaSoda: (r) => call('addNayaSoda', r),
+  listNayaSoda: (status, from, to) => call('listNayaSoda', status, from, to),
+  setNayaSodaStatus: (id, status) => call('setNayaSodaStatus', id, status),
+  deleteNayaSoda: (id) => call('deleteNayaSoda', id),
+  // نیا سودا per-receipt draft (unsaved form values, one per parchi number).
+  getNayaSodaDraft: (receiptNo) => call('getNayaSodaDraft', receiptNo),
+  saveNayaSodaDraft: (receiptNo, form) => call('saveNayaSodaDraft', receiptNo, form),
+  clearNayaSodaDraft: (receiptNo) => call('clearNayaSodaDraft', receiptNo),
   exportPDF: (defaultName, opts) => ipcRenderer.invoke('export-pdf', { defaultName, ...(opts || {}) }),
   saveReceipt: (r) => call('saveReceipt', r),
   replaceReceipt: (arg) => call('replaceReceipt', arg),
@@ -60,7 +69,9 @@ contextBridge.exposeInMainWorld('api', {
   // اندراج رپورٹ — manual adjustment transactions only (date range optional).
   getAdjustmentsReport: (opts) => call('getAdjustmentsReport', opts),
   getKachaTotalForDate: (date) => call('getKachaTotalForDate', date),
-  getCustomerLedger: (id) => call('getCustomerLedger', id),
+  // beforeReceiptNo (optional) → the balance as it stood BEFORE that parchi (سابقہ).
+  // Omitted by the statement / customer-list callers, which want the live total.
+  getCustomerLedger: (id, beforeReceiptNo) => call('getCustomerLedger', id, beforeReceiptNo),
   listCustomersWithBalances: () => call('listCustomersWithBalances'),
   getDaybook: (date) => call('getDaybook', date),
   listDates: () => call('listDates'),

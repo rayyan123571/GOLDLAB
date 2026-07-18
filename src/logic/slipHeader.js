@@ -102,3 +102,17 @@ export function buildSlipHeader(shop) {
   el.innerHTML = html
   return el
 }
+
+// The لیب رسید terms box. Display-only; blank terms → null (no box at all),
+// exactly as a cleared header field hides its line. Design px against
+// SLIP_DESIGN_W; the raster path draws its own ×~1.63 equivalent.
+export function buildSlipTerms(terms) {
+  const t = String(terms == null ? '' : terms).trim()
+  if (!t) return null
+  const el = document.createElement('div')
+  el.dir = 'rtl'
+  el.className = 'urdu'
+  el.style.cssText = 'font-size:12.5px;font-weight:500;line-height:2;text-align:right;border:1.5px solid #000;padding:3px 6px;margin-bottom:5px'
+  el.textContent = t   // textContent, not innerHTML — user text is never markup
+  return el
+}

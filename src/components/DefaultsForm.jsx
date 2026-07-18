@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useApp } from '../state/store.jsx'
-import { buildSlipHeader, SHOP_FIELDS, SLIP_DESIGN_W } from '../logic/slipHeader.js'
+import { buildSlipHeader, buildSlipTerms, SHOP_FIELDS, SLIP_DESIGN_W } from '../logic/slipHeader.js'
 
 const INPUT =
   'w-full bg-white border border-gray-300 rounded-md text-[14px] leading-relaxed ' +
@@ -51,7 +51,8 @@ export default function DefaultsForm({ open, onClose }) {
   const { rates, saveRates, hasApi } = useApp()
   const [form, setForm] = useState({
     rate_tezabi_tola: '', fc_per_gram: '', parchi_charges: '', slip_count: '1', raw_print_mode: 'auto', print_scale: 1.15,
-    shop_name: '', shop_tagline: '', shop_owner: '', shop_phone1: '', shop_phone2: '', shop_phone3: '', shop_address: ''
+    shop_name: '', shop_tagline: '', shop_owner: '', shop_phone1: '', shop_phone2: '', shop_phone3: '', shop_address: '',
+    slip_terms: ''
   })
   const [saved, setSaved] = useState(false)
   const [testMsg, setTestMsg] = useState('')
@@ -59,6 +60,7 @@ export default function DefaultsForm({ open, onClose }) {
   const savedTimer = useRef(null)
   const saveTimer = useRef(null)
   const previewRef = useRef(null)
+  const termsPreviewRef = useRef(null)
 
   // Load current values from the DB (fall back to the store's rates) on open.
   useEffect(() => {
@@ -77,7 +79,8 @@ export default function DefaultsForm({ open, onClose }) {
         slip_count: src.slip_count != null ? String(src.slip_count) : '1',
         raw_print_mode: src.raw_print_mode === 'force' ? 'force' : 'auto',
         print_scale: src.print_scale != null ? Number(src.print_scale) : 1.15,
-        ...shop
+        ...shop,
+        slip_terms: src.slip_terms != null ? String(src.slip_terms) : ''
       })
     }
     if (hasApi) window.api.getRates().then(seed)
@@ -96,6 +99,20 @@ export default function DefaultsForm({ open, onClose }) {
     if (!open || !box) return
     box.innerHTML = ''
     try { box.appendChild(buildSlipHeader(form)) } catch { /* preview only — never break the form */ }
+  }, [open, form])
+
+  // ── Live terms preview ────────────────────────────────────────────────────────
+  // Same construction as the header preview, drawn with the SAME buildSlipTerms()
+  // the printer path uses. A blank field returns null → the box vanishes here just
+  // as it vanishes from the printed لیب رسید.
+  useEffect(() => {
+    const box = termsPreviewRef.current
+    if (!open || !box) return
+    box.innerHTML = ''
+    try {
+      const node = buildSlipTerms(form.slip_terms)
+      if (node) box.appendChild(node)
+    } catch { /* preview only — never break the form */ }
   }, [open, form])
 
   useEffect(() => () => {
@@ -118,7 +135,8 @@ export default function DefaultsForm({ open, onClose }) {
       slip_count: Math.max(1, parseInt(next.slip_count, 10) || 1),
       raw_print_mode: next.raw_print_mode === 'force' ? 'force' : 'auto',
       print_scale: Number(next.print_scale) || 1.15,
-      ...shop
+      ...shop,
+      slip_terms: String(next.slip_terms ?? '').trim()
     })
     setSaved(true)
     if (savedTimer.current) clearTimeout(savedTimer.current)
@@ -152,6 +170,10 @@ export default function DefaultsForm({ open, onClose }) {
     if (IS_PHONE(field)) v = v.replace(/[^\d\s-]/g, '')
     commit({ ...form, [field]: v.slice(0, SHOP_MAX[field]) })
   }
+
+  // لیب رسید terms paragraph. Same commit()/debounce as the header fields; the
+  // slice mirrors the textarea's maxLength (belt-and-braces for a paste).
+  const termsField = (e) => commit({ ...form, slip_terms: e.target.value.slice(0, 400) })
 
   // Direct-thermal test pages (کیلیبریشن / ورسٹ کیس) — print via the raw
   // ESC/POS raster path to the DEFAULT printer so the paper itself proves the
@@ -294,6 +316,39 @@ export default function DefaultsForm({ open, onClose }) {
                 <div className="border border-gray-300 rounded-sm shadow-sm p-2 bg-white">
                   <div
                     ref={previewRef}
+                    dir="rtl"
+                    style={{ width: SLIP_DESIGN_W, background: '#fff', color: '#000' }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── پرچی کی شرائط — the لیب رسید terms/fee paragraph printed in a
+              bordered box on lab receipts only. A paragraph, so a <textarea>.
+              Clearing it removes the box from the slip (buildSlipTerms → null). */}
+          <div className="mt-1 pt-4 border-t border-gray-200 flex flex-col gap-4">
+            <div className="urdu font-bold text-[14px] text-gray-800">پرچی کی شرائط (لیب رسید)</div>
+
+            <textarea
+              dir="rtl"
+              className={`${INPUT} urdu resize-none leading-loose`}
+              rows={4}
+              maxLength={400}
+              value={form.slip_terms}
+              onChange={termsField}
+            />
+            <div className="urdu text-[11px] text-gray-500">خالی چھوڑنے پر یہ باکس پرچی سے ہٹ جائے گا۔</div>
+
+            {/* Live preview — same buildSlipTerms() the printer uses, redrawn on
+                every keystroke at the slip's real design width. Empty when blank,
+                matching the box vanishing from paper. */}
+            <div className="flex flex-col gap-2">
+              <div className="urdu font-bold text-[13px] text-gray-700">پرنٹ پیش منظر</div>
+              <div className="flex justify-center">
+                <div className="border border-gray-300 rounded-sm shadow-sm p-2 bg-white">
+                  <div
+                    ref={termsPreviewRef}
                     dir="rtl"
                     style={{ width: SLIP_DESIGN_W, background: '#fff', color: '#000' }}
                   />

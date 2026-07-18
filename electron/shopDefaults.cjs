@@ -31,4 +31,14 @@ const SHOP_DEFAULTS = {
   shop_address: 'نزد موسیٰ پاک دربار صرافہ بازار ملتان'
 }
 
-module.exports = { SHOP_FIELDS, SHOP_DEFAULTS }
+// The لیب رسید terms/fee paragraph. Seeded into settings.slip_terms; editable in
+// ڈیفالٹ سیٹنگز. Blank = the terms box disappears from the slip entirely.
+const SLIP_TERMS_DEFAULT = 'سونا ٹیسٹ کرنے کی فیس 100 روپے اور خالص سونا یا رقم لینے کی صورت میں 40 روپے فی گرام مزدوری ہو گی۔ رزلٹ کے بعد سونا لینے یا رقم لینے کا اندر کا کارندہ پابند نہیں ہو گا۔ سونا صرف رتی کی صورت میں چیک کیا جاتا ہے۔ یہاں خالص سونے کا لین دین کیا جاتا ہے۔'
+
+// Every free-text settings column seeded from this file: the seven header fields
+// plus the terms paragraph. db.cjs uses THIS for schema/seed/save; SHOP_FIELDS
+// stays header-only.
+const SLIP_TEXT_FIELDS = [...SHOP_FIELDS, 'slip_terms']
+const SLIP_TEXT_DEFAULTS = { ...SHOP_DEFAULTS, slip_terms: SLIP_TERMS_DEFAULT }
+
+module.exports = { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS }

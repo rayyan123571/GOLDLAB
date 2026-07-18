@@ -2,8 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../state/store.jsx'
 import { fmtMoney, fmtNum, gramsToTMR } from '../logic/units.js'
 import { computeTable, buildLabReceipt } from '../logic/purity.js'
-import { RecoveryReceipt, LabReceipt, CreditReceipt, CashReceipt } from './Receipts.jsx'
+import { CreditReceipt } from './Receipts.jsx'
 import DateField from './DateField.jsx'
+import GhostNameInput from './GhostNameInput.jsx'
+import NayaSodaReport from './NayaSodaReport.jsx'
+
+// One skin for both customer filter boxes (کوڈ / نام). GhostNameInput's ghost
+// mirror wears the SAME classes as its input, so these box metrics have to live
+// in one constant — two copies and the ghost text drifts out of alignment.
+const FILTER_INPUT = 'w-full border border-gray-400 bg-white text-[15px] font-bold px-2 py-1.5 rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-500'
 
 // ─── Report buttons, three groups. flow 'in' = INTO shop (green), 'out' = OUT (red)
 const GROUP1 = [
@@ -167,6 +174,9 @@ export default function UdharForm({ open, onClose }) {
   const [view, setView] = useState('menu')
   const [editRow, setEditRow] = useState(null)
   const [customers, setCustomers] = useState([])
+  // نیا سودا report modal — 'bhugtan' | 'bakaya' | null (closed). Reads only the
+  // standalone naya_soda table; completely separate from the ledger reports.
+  const [sodaStatus, setSodaStatus] = useState(null)
 
   // Live system date (LOCAL), NOT the app's setting date — both fields default to
   // the actual today (e.g. 02/07/2026). Computed fresh each render from new Date().
@@ -182,7 +192,7 @@ export default function UdharForm({ open, onClose }) {
   useEffect(() => {
     if (!open) return
     setCustCode(''); setCustName(''); setNameHits([]); setMsg(null)
-    setReport(null); setDesc(null); setView('menu'); setEditRow(null)
+    setReport(null); setDesc(null); setView('menu'); setEditRow(null); setSodaStatus(null)
     setFrom(todayStr()); setTo(todayStr()) // default From/To to today; clearing From = all dates
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -257,11 +267,26 @@ export default function UdharForm({ open, onClose }) {
       // kind/category but NOT lab detail — that lives in the receipt payload).
       const rnos = [...new Set(rows.map((r) => r.receipt_no).filter((n) => n != null))]
       const snapshots = {}
+      // Each parchi's سابقہ — the balance of the parchis numbered BEFORE it —
+      // fetched ONCE here, from the DB, by the same call the main screen makes. It
+      // is handed to the receipt so it renders synchronously: a per-panel fetch
+      // would leave every number at 0 for a moment and flash on each re-render.
+      // Not date-filtered (unlike `rows`), so a filtered statement still shows the
+      // سابقہ that was printed on the paper. Keyed per parchi's OWN customer, since
+      // a name filter can match more than one.
+      const ledgers = {}
       if (hasApi && rnos.length) {
-        const fetched = await Promise.all(rnos.map((n) => window.api.getReceiptByNo(n).catch(() => null)))
-        rnos.forEach((n, i) => { snapshots[n] = fetched[i] })
+        const custOf = {}
+        for (const r of rows) if (r.receipt_no != null && custOf[r.receipt_no] == null) custOf[r.receipt_no] = r.customer_id
+        const [fetched, leds] = await Promise.all([
+          Promise.all(rnos.map((n) => window.api.getReceiptByNo(n).catch(() => null))),
+          Promise.all(rnos.map((n) => (custOf[n] != null
+            ? window.api.getCustomerLedger(custOf[n], n).catch(() => null)
+            : null)))
+        ])
+        rnos.forEach((n, i) => { snapshots[n] = fetched[i]; ledgers[n] = leds[i] })
       }
-      const parchis = groupParchis(rows, snapshots, rates, hasApi)
+      const parchis = groupParchis(rows, snapshots, rates, hasApi, ledgers)
       setReport({ group: 3, rows, parchis, meta: { customer: customerLabel(), from: from || 'ابتدا', to: to || 'آج تک' } })
     } else if (d.type === 'kacha') {
       // کچا سونا لیا — per-customer aggregate (no customer filter = all customers).
@@ -310,11 +335,34 @@ export default function UdharForm({ open, onClose }) {
   const saveEdit = async (id, fields) => { await editTransaction(id, fields); setEditRow(null); reload() }
 
   // Code + name dropdowns are kept in sync by the customer id.
-  const onPickCustomer = (e) => {
-    const id = e.target.value
-    const c = customers.find((x) => String(x.id) === id)
-    setCustCode(id)
+  // نام typed (or ghost-accepted). Resolve it to a customer CODE only when exactly
+  // ONE saved customer carries that name — then the report filters on that id,
+  // which is exact. Two customers can share a name, so adopting the first id would
+  // quietly report the wrong person's ledger; leaving the code empty keeps it a
+  // name search and both appear. A partial name stays a search too — that is the
+  // point of typing.
+  const onTypeCustomerName = (v) => {
+    setCustName(v)
+    const t = v.trim().toLowerCase()
+    const exact = t ? customers.filter((c) => String(c.name || '').trim().toLowerCase() === t) : []
+    setCustCode(exact.length === 1 ? String(exact[0].id) : '')
+  }
+
+  // کوڈ typed (or picked). Digits only — a code is a number. Mirror the owner's
+  // name into the نام box so the two always describe the same customer.
+  const onTypeCustomerCode = (v) => {
+    const code = String(v || '').replace(/\D/g, '')
+    setCustCode(code)
+    const c = customers.find((x) => String(x.id) === code)
     setCustName(c ? c.name : '')
+  }
+
+  // Enter in either filter box runs the same report as the کسٹمر کی تفصیلی رسید
+  // button, so a customer can be looked up without reaching for the mouse.
+  const onFilterEnter = (e) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    loadReport({ type: 'g3' })
   }
 
   // ── The ORIGINAL 8 buttons in a 2×4 grid (DOM order = RTL right col then left).
@@ -351,7 +399,7 @@ export default function UdharForm({ open, onClose }) {
                     key={b.label}
                     type="button"
                     onClick={b.run}
-                    className="urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors"
+                    className="urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
                   >
                     {b.label}
                   </button>
@@ -360,7 +408,7 @@ export default function UdharForm({ open, onClose }) {
                 <button
                   type="button"
                   onClick={() => loadReport({ type: 'kacha' })}
-                  className="col-span-2 urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors"
+                  className="col-span-2 urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
                 >
                   کچا سونا لیا
                 </button>
@@ -381,17 +429,37 @@ export default function UdharForm({ open, onClose }) {
                 <DateField label="To Date:" iso={to} setIso={setTo} />
                 <label className="flex items-center gap-2">
                   <span className="urdu text-[14px] font-bold text-black w-[120px] shrink-0">کسٹمر کا کوڈ :</span>
-                  <select className="flex-1 min-w-0 border border-gray-400 bg-white text-[15px] font-bold px-2 py-1.5 rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-500" value={custCode} onChange={onPickCustomer}>
-                    <option value="">—</option>
-                    {customers.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
-                  </select>
+                  {/* Type a code or pick one; the list shows each code with its owner's
+                      name. Digits only, LTR like every other number in the app. */}
+                  <input
+                    list="udhar-customer-codes"
+                    value={custCode}
+                    onChange={(e) => onTypeCustomerCode(e.target.value)}
+                    onKeyDown={onFilterEnter}
+                    dir="ltr"
+                    inputMode="numeric"
+                    className={FILTER_INPUT}
+                  />
+                  <datalist id="udhar-customer-codes">
+                    {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </datalist>
                 </label>
                 <label className="flex items-center gap-2">
                   <span className="urdu text-[14px] font-bold text-black w-[120px] shrink-0">کسٹمر کا نام :</span>
-                  <select className="flex-1 min-w-0 border border-gray-400 bg-white text-[15px] font-bold px-2 py-1.5 rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-500" value={custCode} onChange={onPickCustomer}>
-                    <option value="">—</option>
-                    {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  {/* The app's own customer-name control (same as the main screen and
+                      the customer form): inline ghost completion of a saved name,
+                      Tab/→ accepts. dir="auto" so the caret and the text run the way
+                      the NAME does — Latin left-to-right, Urdu right-to-left — instead
+                      of forcing the panel's RTL onto an English name. */}
+                  <GhostNameInput
+                    value={custName}
+                    onChange={(e) => onTypeCustomerName(e.target.value)}
+                    onKeyDown={onFilterEnter}
+                    hasApi={hasApi}
+                    dir="auto"
+                    wrapperClassName="flex-1 min-w-0"
+                    inputClassName={`${FILTER_INPUT} text-start`}
+                  />
                 </label>
                 <button
                   type="button"
@@ -399,6 +467,23 @@ export default function UdharForm({ open, onClose }) {
                   className="urdu mt-1 w-full border border-gray-400 bg-gray-100 text-black text-[17px] font-bold py-2.5 rounded-sm hover:bg-gray-200 active:bg-gray-300 transition-colors"
                 >
                   کسٹمر کی تفصیلی رسید
+                </button>
+                {/* نیا سودا — بھگتان / بقایا lists from the standalone naya_soda
+                    table (never the ledger). Full-width, matching the تفصیلی رسید
+                    button above; fills the empty space in the filter panel. */}
+                <button
+                  type="button"
+                  onClick={() => setSodaStatus('bhugtan')}
+                  className="urdu w-full border border-gray-400 bg-gray-100 text-black text-[17px] font-bold py-2.5 rounded-sm hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
+                >
+                  بھگتان سودا
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSodaStatus('bakaya')}
+                  className="urdu w-full border border-gray-400 bg-gray-100 text-black text-[17px] font-bold py-2.5 rounded-sm hover:bg-blue-50 hover:border-blue-500 hover:ring-2 hover:ring-blue-300 hover:shadow-md active:bg-gray-300 transition-colors"
+                >
+                  بقایا سودا
                 </button>
                 {msg && <div className={`urdu text-[14px] font-bold px-2 py-1.5 rounded ${msg.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>{msg.text}</div>}
               </div>
@@ -408,6 +493,8 @@ export default function UdharForm({ open, onClose }) {
       </div>
 
       {editRow && <EditModal row={editRow} onSave={saveEdit} onClose={() => setEditRow(null)} />}
+      {/* بھگتان / بقایا سودا: NO date filter — always show ALL entries (null from/to). */}
+      {sodaStatus && <NayaSodaReport status={sodaStatus} from={null} to={null} onClose={() => setSodaStatus(null)} />}
     </div>
   )
 }
@@ -806,8 +893,9 @@ const labFromPayload = (payload, baseRates = {}) => {
 // reconstruction store.jsx loadReceipt does — nقد/ادھار entries are rebuilt from
 // the transaction ROWS (source of truth), the purity rows from input+overrides+
 // rates — but assembled into a plain object instead of React state, so the real
-// <CashReceipt/> <CreditReceipt/> <LabReceipt/> <RecoveryReceipt/> render the
-// parchi EXACTLY as it looks on the main page. No formula is touched.
+// <CreditReceipt/> renders the parchi's ادھار کی رسید EXACTLY as it looks on the
+// main page. No formula is touched. (This view shows the ادھار رسید only; the
+// parchi's other receipts stay saved and still open from the main screen.)
 const blankGold = () => ({ wazan: '', point: '100', rate: '' })
 function buildParchiCtx({ payload, snapRows, receiptNo, baseRates, hasApi, ledger }) {
   const rates = { ...(baseRates || {}), ...(payload.rates || {}) }
@@ -849,12 +937,12 @@ function buildParchiCtx({ payload, snapRows, receiptNo, baseRates, hasApi, ledge
     ujratKaSona: sb.ujratKaSona != null ? sb.ujratKaSona : true,
     sonaDiya: sb.sonaDiya ?? '', cashDiya: sb.cashDiya ?? '',
     savedFlags: { naqad: true, udhar: true, lab: true, wasooli: true },
-    // A saved (not brand-new) parchi: openReceiptNo === receiptNo makes
-    // CreditReceipt read the ledger balance instead of re-adding live entries —
-    // identical to reopening the parchi on the main screen.
-    openReceiptNo: receiptNo,
-    // This parchi's OWN running (cumulative) ledger balance — so the ادھار receipt
-    // shows this parchi's باقی دینا/لینا, not the customer's grand total.
+    // This parchi's سابقہ, already fetched from the DB by the caller
+    // (getCustomerLedger(customer_id, receiptNo) — the balance of the parchis
+    // numbered BEFORE this one, exactly what the main screen shows and what was
+    // printed on the paper). Passing it in means the receipt renders it on the
+    // first paint instead of fetching per panel and flashing 0. It is the
+    // database's own answer — never a balance re-derived here.
     ledger,
     hasApi, bump: 0, refresh: () => {}, printSlips: () => {}
   }
@@ -863,7 +951,7 @@ function buildParchiCtx({ payload, snapRows, receiptNo, baseRates, hasApi, ledge
 // Group the flat transaction rows by receipt_no (rows arrive ordered by date,
 // receipt_no, id — first-seen order is preserved). `snapshots[rno]` is the
 // getReceiptByNo result for that parchi (may be null for a very old row).
-function groupParchis(rows, snapshots = {}, baseRates = {}, hasApi = false) {
+function groupParchis(rows, snapshots = {}, baseRates = {}, hasApi = false, ledgers = {}) {
   const order = []
   const map = new Map()
   for (const r of rows || []) {
@@ -872,11 +960,6 @@ function groupParchis(rows, snapshots = {}, baseRates = {}, hasApi = false) {
     if (!map.has(key)) { map.set(key, []); order.push(key) }
     map.get(key).push(r)
   }
-  // Running (cumulative) ledger balance PER CUSTOMER, accumulated in chronological
-  // order (rows arrive date/receipt-ordered). Each parchi is given the balance
-  // THROUGH itself — same sign convention as getCustomerLedger — so its ادھار
-  // receipt shows that parchi's own باقی دینا/لینا instead of the grand total.
-  const acc = new Map() // customer_id -> { gold, cash }
   return order.map((rno) => {
     const prows = map.get(rno)
     const snap = snapshots[rno] || null
@@ -884,13 +967,6 @@ function groupParchis(rows, snapshots = {}, baseRates = {}, hasApi = false) {
     const snapRows = (snap && snap.rows) || prows
     const entries = payload.entries || {}
     const first = prows[0]
-    const pnet = statementTotals(prows)
-    const cid = first.customer_id
-    const a = acc.get(cid) || { gold: 0, cash: 0 }
-    a.gold += pnet.netGold
-    a.cash += pnet.netCash
-    acc.set(cid, a)
-    const ledger = { balance_gold: a.gold, balance_cash: a.cash }
     const naqadRows = prows.filter((r) => NAQAD_CATS.includes(r.category))
     const udharRows = prows.filter((r) => UDHAR_CATS.includes(r.category))
     const kachaRows = prows.filter((r) => r.category === 'kacha_gold_take')
@@ -905,7 +981,7 @@ function groupParchis(rows, snapshots = {}, baseRates = {}, hasApi = false) {
       // وصولی accompanies the lab flow (same as the main screen's LeftReceipts).
       wasooli: !!labInfo
     }
-    const ctx = buildParchiCtx({ payload, snapRows, receiptNo: rno, baseRates, hasApi, ledger })
+    const ctx = buildParchiCtx({ payload, snapRows, receiptNo: rno, baseRates, hasApi, ledger: ledgers[rno] })
     return {
       receipt_no: rno,
       date: first.date,
@@ -1007,10 +1083,11 @@ function ParchiReceipts({ p, thermal }) {
   const DH = 456
   return (
     <div className={`flex ${thermal ? 'flex-col' : 'flex-row flex-wrap'} gap-2 justify-start`} dir="ltr">
-      {p.types.naqad && <Tile h={DH}><CashReceipt ctx={ctx} embed /></Tile>}
+      {/* کسٹمر تفصیل shows the ادھار کی رسید ONLY. A parchi's نقد / لیب / وصولی
+          receipts are still saved and still open from the main screen — this view
+          just doesn't render them. Its totals were always ادھار-only (UDHAR_CATS),
+          so the numbers on this page already matched what is shown here. */}
       {p.types.udhar && <Tile h={DH}><CreditReceipt ctx={ctx} embed /></Tile>}
-      {p.types.lab && <Tile h={DH}><LabReceipt row={p.labRow} lab={p.lab} ctx={ctx} embed /></Tile>}
-      {p.types.wasooli && <Tile h={DH}><RecoveryReceipt row={p.labRow} lab={p.lab} ctx={ctx} embed /></Tile>}
       {/* No main-page receipt exists for a bare raw-gold intake — show its figure
           so nothing is lost, without mislabeling it. */}
       {!any && p.kachaRows.map((r) => (
@@ -1032,7 +1109,9 @@ function ParchiBlock({ p, thermal }) {
     <div className="border-2 border-slate-300 rounded-lg bg-white overflow-hidden text-[12px]">
       <div className="flex items-center justify-between gap-2 bg-slate-100 border-b border-slate-200 px-3 py-2" dir="rtl">
         <span className="urdu font-bold text-gray-800 whitespace-nowrap">پرچی نمبر {p.receipt_no}</span>
-        <TypeBadges types={p.types} small={thermal} />
+        {/* ادھار only — this view shows the ادھار رسید, so a نقد / لیب / وصولی
+            badge here would name a receipt that is deliberately not on the page. */}
+        <TypeBadges types={{ udhar: p.types.udhar }} small={thermal} />
         <span className="tabular-nums text-gray-500 whitespace-nowrap" dir="ltr">{isoToDisp(p.date)}</span>
       </div>
       <div className="px-3 py-2 flex flex-col gap-2">

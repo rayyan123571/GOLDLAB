@@ -9,7 +9,7 @@
 const path = require('path')
 const fs = require('fs')
 const initSqlJs = require('sql.js')
-const { SHOP_FIELDS, SHOP_DEFAULTS } = require('./shopDefaults.cjs')
+const { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS } = require('./shopDefaults.cjs')
 
 let SQL = null
 let db = null
@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS settings (
   shop_phone2 TEXT,
   shop_phone3 TEXT,
   shop_address TEXT,
-  shop_seeded INTEGER    -- 1 once the header defaults have been filled in (see migrateSchema)
+  shop_seeded INTEGER,   -- 1 once the header defaults have been filled in (see migrateSchema)
+  slip_terms TEXT        -- لیب رسید terms/fee paragraph; blank hides the box (see migrateSchema)
 );
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -128,6 +129,31 @@ CREATE TABLE IF NOT EXISTS expenses (
 CREATE TABLE IF NOT EXISTS drafts (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   payload TEXT
+);
+
+-- نیا سودا — deals list (khareed/farokht). Self-contained: nothing in the
+-- transactions ledger, totals, or any existing report reads these tables.
+-- receipt_no tags the saved entry with the parchi it was entered under.
+CREATE TABLE IF NOT EXISTS naya_soda (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  rate REAL,
+  wazan REAL,
+  type TEXT,                        -- 'khareed' | 'farokht'
+  date TEXT,                        -- YYYY-MM-DD
+  status TEXT DEFAULT 'bakaya',     -- 'bhugtan' | 'bakaya'
+  receipt_no INTEGER,               -- parchi the entry was saved under (nullable)
+  created_at TEXT
+);
+
+-- Per-receipt in-progress نیا سودا form values (ONE row per parchi number). The
+-- form auto-persists here as it is typed, so unsaved values are never lost and
+-- reappear when that parchi number is reopened. Cleared when the entry is saved
+-- (محفوظ کریں) or the form is emptied. Pure scratch — no report reads it.
+CREATE TABLE IF NOT EXISTS naya_soda_draft (
+  receipt_no INTEGER PRIMARY KEY,
+  payload TEXT,
+  updated_at TEXT
 );
 `
 
@@ -202,6 +228,17 @@ function migrateSchema() {
     db.run('UPDATE settings SET shop_seeded = 1')
   }
 
+  // settings.slip_terms — the لیب رسید terms paragraph. It gets its OWN guard,
+  // NOT shop_seeded: DBs from the shop-header release already have
+  // shop_seeded = 1, so folding this into that block would add the column and
+  // never backfill it — the terms box would silently vanish from their slips.
+  // The column being absent IS the one-time guard; once it exists (even
+  // deliberately cleared to ''), this never runs again.
+  if (!sCols.includes('slip_terms')) {
+    db.run('ALTER TABLE settings ADD COLUMN slip_terms TEXT')
+    db.run('UPDATE settings SET slip_terms = ? WHERE slip_terms IS NULL OR slip_terms = ?', [SLIP_TERMS_DEFAULT, ''])
+  }
+
   // expenses.ts — full timestamp. Patch DBs that had expenses before it existed.
   const xCols = query('PRAGMA table_info(expenses)').map((r) => r.name)
   if (xCols.length && !xCols.includes('ts')) db.run('ALTER TABLE expenses ADD COLUMN ts TEXT')
@@ -217,6 +254,14 @@ function migrateSchema() {
   if (!tCols.includes('updated_at')) {
     try { db.run('ALTER TABLE transactions ADD COLUMN updated_at TEXT') } catch (e) { /* already exists */ }
   }
+
+  // naya_soda.receipt_no — tag saved deals with the parchi they were entered on.
+  // Patch DBs created before the نیا سودا ↔ receipt linkage existed. The draft
+  // table itself is created by SCHEMA (CREATE TABLE IF NOT EXISTS), no migration.
+  const nCols = query('PRAGMA table_info(naya_soda)').map((r) => r.name)
+  if (nCols.length && !nCols.includes('receipt_no')) {
+    try { db.run('ALTER TABLE naya_soda ADD COLUMN receipt_no INTEGER') } catch (e) { /* already exists */ }
+  }
 }
 
 function seedSettings() {
@@ -231,9 +276,9 @@ function seedSettings() {
     // so a brand-new install prints a complete header before anyone opens Defaults.
     db.run(
       `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count, raw_print_mode, print_scale,
-                             ${SHOP_FIELDS.join(', ')}, shop_seeded)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SHOP_FIELDS.map(() => '?').join(', ')}, 1)`,
-      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15, ...SHOP_FIELDS.map((f) => SHOP_DEFAULTS[f])]
+                             ${SLIP_TEXT_FIELDS.join(', ')}, shop_seeded)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SLIP_TEXT_FIELDS.map(() => '?').join(', ')}, 1)`,
+      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15, ...SLIP_TEXT_FIELDS.map((f) => SLIP_TEXT_DEFAULTS[f])]
     )
   }
 }
@@ -303,6 +348,18 @@ const RECEIPT_NOS_SQL = `
   UNION
   SELECT receipt_no AS rn FROM receipts WHERE receipt_no IS NOT NULL`
 
+// The LIKE pattern for a report's کسٹمر کا نام filter. Anchored to the START of
+// the name: an unanchored '%s%' matched a name that merely CARRIED the text
+// anywhere, so filtering for "shop" while only "s" was typed also reported
+// "Nasir". A prefix is what the نام box's ghost completion offers, so the report
+// now returns the customer the box is pointing at. An exact name never reaches
+// here — UdharForm resolves that to a code and the query filters on the id.
+// LIKE's own wildcards are escaped so a name containing % or _ matches literally.
+function namePrefixLike(name) {
+  return `${String(name).trim().replace(/[\\%_]/g, '\\$&')}%`
+}
+const NAME_PREFIX_SQL = "c.name LIKE ? ESCAPE '\\'"
+
 const api = {
   getRates() {
     const r = query('SELECT * FROM settings WHERE id = 1')
@@ -317,7 +374,7 @@ const api = {
     run(
       `UPDATE settings SET date=?, rate_tezabi_tola=?, parchi_charges=?, fc_per_gram=?, rate_tezabi_gram=?, point=?, slip_count=?,
               raw_print_mode=COALESCE(?, raw_print_mode), print_scale=COALESCE(?, print_scale),
-              ${SHOP_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')} WHERE id=1`,
+              ${SLIP_TEXT_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')} WHERE id=1`,
       [
         rates.date,
         rates.rate_tezabi_tola,
@@ -328,7 +385,7 @@ const api = {
         rates.slip_count != null ? rates.slip_count : 1,
         rates.raw_print_mode != null ? rates.raw_print_mode : null,
         rates.print_scale != null ? Number(rates.print_scale) : null,
-        ...SHOP_FIELDS.map((f) => (rates[f] != null ? String(rates[f]) : null))
+        ...SLIP_TEXT_FIELDS.map((f) => (rates[f] != null ? String(rates[f]) : null))
       ]
     )
     return api.getRates()
@@ -610,7 +667,7 @@ const api = {
     const where = []
     const params = []
     if (customerId != null && customerId !== '') { where.push('t.customer_id = ?'); params.push(customerId) }
-    else if (name && String(name).trim()) { where.push('c.name LIKE ?'); params.push(`%${String(name).trim()}%`) }
+    else if (name && String(name).trim()) { where.push(NAME_PREFIX_SQL); params.push(namePrefixLike(name)) }
     if (from) { where.push('t.date >= ?'); params.push(from) }
     if (to) { where.push('t.date <= ?'); params.push(to) }
     if (category) { where.push('t.category = ?'); params.push(category) }
@@ -660,7 +717,7 @@ const api = {
     const where = ['t.category = ?']
     const params = [category]
     if (customerId != null && customerId !== '') { where.push('t.customer_id = ?'); params.push(customerId) }
-    else if (name && String(name).trim()) { where.push('c.name LIKE ?'); params.push(`%${String(name).trim()}%`) }
+    else if (name && String(name).trim()) { where.push(NAME_PREFIX_SQL); params.push(namePrefixLike(name)) }
     const rows = query(
       `SELECT t.customer_id, c.name AS customer_name,
               SUM(COALESCE(t.khalis_sona, 0)) AS total_khalis,
@@ -699,7 +756,7 @@ const api = {
     const where = [`t.category IN ('${cats[0]}','${cats[1]}')`]
     const params = []
     if (customerId != null && customerId !== '') { where.push('t.customer_id = ?'); params.push(customerId) }
-    else if (name && String(name).trim()) { where.push('c.name LIKE ?'); params.push(`%${String(name).trim()}%`) }
+    else if (name && String(name).trim()) { where.push(NAME_PREFIX_SQL); params.push(namePrefixLike(name)) }
     const raw = query(
       `SELECT t.customer_id, c.name AS customer_name,
               SUM((CASE WHEN t.direction = 'out' THEN 1 ELSE -1 END) * COALESCE(t.${col}, 0)) AS net,
@@ -849,7 +906,7 @@ const api = {
     const where = ["t.category = 'kacha_gold_take'"]
     const params = []
     if (customerId != null && customerId !== '') { where.push('t.customer_id = ?'); params.push(customerId) }
-    else if (name && String(name).trim()) { where.push('c.name LIKE ?'); params.push(`%${String(name).trim()}%`) }
+    else if (name && String(name).trim()) { where.push(NAME_PREFIX_SQL); params.push(namePrefixLike(name)) }
     if (from) { where.push('t.date >= ?'); params.push(from) }
     if (to) { where.push('t.date <= ?'); params.push(to) }
     const rows = query(
@@ -1058,6 +1115,83 @@ const api = {
     return rows.map((r) => ({ ...r, amount: Number(r.amount) || 0 }))
   },
 
+  // ── نیا سودا ────────────────────────────────────────────────────────────────
+  // Deals list — its own tables only; never touches the transactions ledger,
+  // customer balances, or any existing report. receipt_no tags the entry with the
+  // parchi it was saved under (nullable).
+  addNayaSoda(r = {}) {
+    const ts = new Date().toISOString()
+    run(
+      `INSERT INTO naya_soda (name, rate, wazan, type, date, status, receipt_no, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        r.name || '',
+        Number(r.rate) || 0,
+        Number(r.wazan) || 0,
+        r.type === 'farokht' ? 'farokht' : 'khareed',
+        r.date || todayISO(),
+        'bakaya',
+        (r.receipt_no != null && Number.isFinite(Number(r.receipt_no))) ? Number(r.receipt_no) : null,
+        ts
+      ]
+    )
+    return { id: lastInsertId(), ts }
+  },
+
+  // ── نیا سودا per-receipt draft (in-progress, unsaved form values) ────────────
+  // Read this parchi's saved-in-progress نیا سودا form values (or null). Pure
+  // scratch — nothing else reads it.
+  getNayaSodaDraft(receiptNo) {
+    if (receiptNo == null) return null
+    const rows = query('SELECT payload FROM naya_soda_draft WHERE receipt_no = ?', [Number(receiptNo)])
+    if (!rows.length) return null
+    try { return JSON.parse(rows[0].payload || '{}') } catch { return null }
+  },
+
+  // Upsert this parchi's in-progress form values (one row per receipt_no).
+  saveNayaSodaDraft(receiptNo, form = {}) {
+    if (receiptNo == null) return { ok: false }
+    run(
+      'INSERT OR REPLACE INTO naya_soda_draft (receipt_no, payload, updated_at) VALUES (?, ?, ?)',
+      [Number(receiptNo), JSON.stringify(form || {}), new Date().toISOString()]
+    )
+    return { ok: true }
+  },
+
+  // Drop this parchi's draft (on save or when the form is emptied).
+  clearNayaSodaDraft(receiptNo) {
+    if (receiptNo == null) return { ok: false }
+    run('DELETE FROM naya_soda_draft WHERE receipt_no = ?', [Number(receiptNo)])
+    return { ok: true }
+  },
+
+  // Rows of one status ('bhugtan' | 'bakaya'), newest first. Optional from/to
+  // (YYYY-MM-DD) filter on the `date` column — inclusive; empty = no bound.
+  listNayaSoda(status, from, to) {
+    const where = ['status = ?']
+    const params = [status || 'bhugtan']
+    if (from) { where.push('date >= ?'); params.push(from) }
+    if (to) { where.push('date <= ?'); params.push(to) }
+    const rows = query(`SELECT * FROM naya_soda WHERE ${where.join(' AND ')} ORDER BY id DESC`, params)
+    return rows.map((r) => ({ ...r, rate: Number(r.rate) || 0, wazan: Number(r.wazan) || 0 }))
+  },
+
+  // Move one row between بھگتان and بقایا. Flushed so it persists. Missing id = no-op.
+  setNayaSodaStatus(id, status) {
+    if (id == null) return { ok: false }
+    run('UPDATE naya_soda SET status = ? WHERE id = ?', [status === 'bakaya' ? 'bakaya' : 'bhugtan', id])
+    flush()
+    return { ok: true, id }
+  },
+
+  // Delete a single سودا row by id. Flushed so it persists. Missing id = no-op.
+  deleteNayaSoda(id) {
+    if (id == null) return { ok: false }
+    run('DELETE FROM naya_soda WHERE id = ?', [id])
+    flush()
+    return { ok: true, id }
+  },
+
   // Record a settlement / return (Part 2). A settle is a NORMAL transaction in
   // the opposite direction for the same customer — the original parchi is never
   // touched. It is tagged (note + meta.settle) so reports can identify it, and it
@@ -1141,11 +1275,28 @@ const api = {
     return { ok: true, receipt_no: rno, count: transactions.length }
   },
 
-  getCustomerLedger(customerId) {
+  // beforeReceiptNo (optional): count ONLY the parchis numbered BEFORE this one —
+  // which is exactly the ادھار receipt's سابقہ ("what this customer owed before this
+  // parchi"). It used to derive that as (full balance − the on-screen form's net),
+  // which quietly assumed the ledger already held what the form shows. It does not,
+  // the moment you type an entry onto a parchi that is already saved: the ledger has
+  // no such row yet, the subtraction ran backwards, and سابقہ went NEGATIVE on a
+  // customer's very first receipt (چاندی دی 34 → سابقہ −34). Worse, on an OLD parchi
+  // the live total still contained every LATER parchi, so سابقہ drifted every time
+  // the customer paid again — the printed paper and the screen stopped agreeing.
+  //
+  // "Before", not "any other parchi": navigating BACK to parchi 1 must still show no
+  // سابقہ even once parchi 2 exists — a later parchi is not history. Rows with no
+  // receipt_no are kept (they belong to no parchi, so this one never owns them).
+  // Called with no second argument (statements, customer list) it is unchanged.
+  getCustomerLedger(customerId, beforeReceiptNo) {
     // manual اندراج rows carry no customer_id, but exclude by category too for safety.
+    const before = Number(beforeReceiptNo)
+    const hasBefore = Number.isFinite(before)
     const txns = query(
-      "SELECT * FROM transactions WHERE customer_id = ? AND category <> 'adjustment' ORDER BY ts ASC, id ASC",
-      [customerId]
+      `SELECT * FROM transactions WHERE customer_id = ? AND category <> 'adjustment'
+       ${hasBefore ? 'AND (receipt_no IS NULL OR receipt_no < ?)' : ''} ORDER BY ts ASC, id ASC`,
+      hasBefore ? [customerId, before] : [customerId]
     )
     let gold = 0
     let cash = 0
@@ -1261,7 +1412,10 @@ const api = {
         continue
       }
       const goldSign = t.direction === 'in' ? 1 : -1
-      gold += goldSign * (t.khalis_sona || 0)
+      // Bottom-bar تیزابی is a RAW-WEIGHT running counter: a gold entry adds/subtracts
+      // its full سونا وزن (sona_wazan), NOT khalis. Shop convention — this bottom total
+      // intentionally differs from the khalis-based reports; do not "fix" it back.
+      gold += goldSign * (t.sona_wazan || 0)
       // cash: money flowing into shop minus out
       if (t.category === 'gold_buy') cash -= t.qeemat || 0
       if (t.category === 'gold_sell') cash += t.qeemat || 0
