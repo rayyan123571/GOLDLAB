@@ -380,6 +380,28 @@ ipcMain.handle('color-form-share-image', async (_evt, { data } = {}) => {
   catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
+// Colour-form LIVE preview HTML for the settings dialog: returns the same
+// buildColorFormHtml the printer/WhatsApp use, filled with a sample receipt and
+// the shop's CURRENT (possibly unsaved) header/warning/note/logo/paper passed
+// from the form, so the preview reflects edits instantly. No printing.
+ipcMain.handle('color-form-preview-html', async (_evt, override = {}) => {
+  try {
+    const { formCfg } = printSettings()
+    const shop = override.shop || formCfg.shop
+    const cfg = {
+      form_paper: override.form_paper || formCfg.form_paper,
+      form_paper_w_mm: override.form_paper_w_mm != null ? override.form_paper_w_mm : formCfg.form_paper_w_mm,
+      form_paper_h_mm: override.form_paper_h_mm != null ? override.form_paper_h_mm : formCfg.form_paper_h_mm,
+      warning: override.warning != null ? override.warning : formCfg.warning,
+      terms: override.terms != null ? override.terms : formCfg.terms,
+      logo: override.logo != null ? override.logo : formCfg.logo,
+      shop
+    }
+    const data = { ...colorForm.buildSampleData(), shop, terms: cfg.terms }
+    return { ok: true, html: colorForm.buildColorFormHtml(data, cfg) }
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
 // Colour-form preview / test print (settings → کلر فارم پرنٹ ٹیسٹ): render a
 // realistic FILLED sample receipt with the shop's current header/warning/note so
 // the shopkeeper can see the whole colour layout. Honours GOLDLAB_PRINT_PDF_DIR.

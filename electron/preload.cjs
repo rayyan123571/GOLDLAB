@@ -93,6 +93,8 @@ contextBridge.exposeInMainWorld('api', {
   // Colour-form preview / test print (print_mode = 'color_form'): a filled
   // sample receipt. Real slip printing goes through rasterPrintSlip — main routes it.
   colorFormTestPrint: () => ipcRenderer.invoke('color-form-test-print', {}),
+  // Live colour-form preview HTML for the settings dialog (reflects unsaved edits).
+  colorFormPreviewHtml: (override) => ipcRenderer.invoke('color-form-preview-html', override || {}),
   // Colour mode WhatsApp share: put the full colour receipt (what the Canon
   // prints) on the clipboard as an image, instead of the slip snapshot.
   colorFormShareImage: (data) => ipcRenderer.invoke('color-form-share-image', { data }),

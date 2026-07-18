@@ -58,6 +58,7 @@ export default function DefaultsForm({ open, onClose }) {
   const [saved, setSaved] = useState(false)
   const [testMsg, setTestMsg] = useState('')
   const [testBusy, setTestBusy] = useState(false)
+  const [colorPreview, setColorPreview] = useState('') // colour-form preview HTML (Canon mode)
   const savedTimer = useRef(null)
   const saveTimer = useRef(null)
   const previewRef = useRef(null)
@@ -120,6 +121,37 @@ export default function DefaultsForm({ open, onClose }) {
       const node = buildSlipTerms(form.slip_terms)
       if (node) box.appendChild(node)
     } catch { /* preview only — never break the form */ }
+  }, [open, form])
+
+  // ── Live colour-form preview (Canon mode) ───────────────────────────────────
+  // When کینن کلر is selected, ask the main process for the SAME buildColorFormHtml
+  // the printer + WhatsApp use, filled with the CURRENT (unsaved) shop / warning /
+  // note / logo / paper, and show it in an iframe — so the preview is exactly what
+  // Canon prints. Debounced so it doesn't rebuild on every keystroke.
+  useEffect(() => {
+    if (!open || form.print_mode !== 'color_form' || !hasApi || !window.api.colorFormPreviewHtml) {
+      setColorPreview('')
+      return
+    }
+    let cancelled = false
+    const shop = {}
+    for (const f of SHOP_FIELDS) shop[f] = form[f]
+    const t = setTimeout(async () => {
+      try {
+        const r = await window.api.colorFormPreviewHtml({
+          shop,
+          warning: form.slip_warning,
+          terms: form.slip_terms,
+          logo: form.shop_logo_path,
+          form_paper: form.form_paper,
+          form_paper_w_mm: form.form_paper_w_mm,
+          form_paper_h_mm: form.form_paper_h_mm
+        })
+        if (!cancelled && r && r.ok) setColorPreview(r.html || '')
+      } catch { /* preview only — never break the form */ }
+    }, 350)
+    return () => { cancelled = true; clearTimeout(t) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, form])
 
   useEffect(() => () => {
@@ -434,6 +466,36 @@ export default function DefaultsForm({ open, onClose }) {
                   </button>
                   {testMsg && <div className="urdu text-[12px] text-emerald-600 break-all mt-2">{testMsg}</div>}
                 </div>
+
+                {/* Live colour preview — the SAME colour form Canon prints AND
+                    WhatsApp sends, rendered from the current (unsaved) values.
+                    The iframe holds the page at its true mm→px size and is scaled
+                    down to fit the settings panel. */}
+                {colorPreview && (() => {
+                  const PAPER_MM = { A5: [148, 210], A4: [210, 297], Letter: [215.9, 279.4] }
+                  const [pw, ph] = form.form_paper === 'custom'
+                    ? [Number(form.form_paper_w_mm) || 148, Number(form.form_paper_h_mm) || 210]
+                    : (PAPER_MM[form.form_paper] || PAPER_MM.A5)
+                  const pxW = (pw / 25.4) * 96
+                  const pxH = (ph / 25.4) * 96
+                  const boxW = 402
+                  const scale = boxW / pxW
+                  return (
+                    <div className="flex flex-col gap-2">
+                      <div className="urdu font-bold text-[13px] text-gray-700">کلر فارم پیش منظر</div>
+                      <div className="flex justify-center">
+                        <div style={{ width: boxW, height: Math.round(pxH * scale), overflow: 'hidden', border: '1px solid #ddd', borderRadius: 4, background: '#fff' }}>
+                          <iframe
+                            title="colorform-preview"
+                            srcDoc={colorPreview}
+                            scrolling="no"
+                            style={{ width: pxW, height: pxH, border: 0, transform: `scale(${scale})`, transformOrigin: 'top left' }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
             )}
           </div>

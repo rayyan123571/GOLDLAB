@@ -36,22 +36,24 @@ const PAPERS = {
   Letter: { w: 215.9, h: 279.4 }
 }
 
-// ── Colour palette (clean reproduction of the Imtiaz form's scheme) ──────────
+// ── Colour palette (matches the approved color_form_template.html) ───────────
 const CLR = {
-  frameA: '#d4880f', frameB: '#f0c778', frameC: '#b5670a', // gold/orange outer frame
-  headerLine: '#123f8f',   // blue header frame / phones / tagline
-  titleEn: '#1b7d3e',      // green English title band
-  name: '#b3121b',         // red/maroon Urdu shop name
-  tableRule: '#c1121f',    // red table borders
-  labelText: '#123f8f', labelBg: '#eef4fc', // blue labels on light-blue
-  colHeaderBg: '#fdeef1',  // pink column-header cells
-  boxBorder: '#c1121f', boxBg: '#fff8d6', boxText: '#b3121b', // بقایا رقم box
-  warnBg: '#c62828',       // red warning bar
-  noteBorder: '#2e7d32', noteBg: '#eaf7ec', noteText: '#1b5e20' // green note box
+  gold1: '#e9b64d', gold2: '#d68a26', gold3: '#b5651a', // ornate gold outer frame
+  banner1: '#1c4ea8', banner2: '#0e2f6e',               // blue header banner swirl
+  titleEn: '#2e8b40',                                   // green English title
+  name: '#e11d24',                                      // red Urdu shop name
+  addr: '#ffd54a',                                      // gold address line
+  rule: '#c62828',                                      // red table rules
+  labelText: '#c62828', labelBg: '#fdf3f4',             // red labels on pink
+  colHeaderBg: '#fdeef1',                               // pink column-header cells
+  boxBorder: '#c62828', boxText: '#e11d24',             // بقایا رقم box (no fill)
+  warnBg: '#c1272d',                                    // red warning bar
+  noteBg: '#1a7a3c'                                     // green note box (white text)
 }
-// Per-unit colours for the weight-grid column headers (گرام…رتی).
+// Per-unit colours for the weight-grid column-header labels (گرام…رتی), per the
+// reference: گرام/ملی گرام pink, تولہ red, ماشہ/رتی blue.
 const UNIT_COLOR = {
-  'گرام': '#b3121b', 'ملی گرام': '#c2185b', 'تولہ': '#123f8f', 'ماشہ': '#1b7d3e', 'رتی': '#6a1b9a'
+  'گرام': '#c2185b', 'ملی گرام': '#c2185b', 'تولہ': '#c62828', 'ماشہ': '#1565c0', 'رتی': '#1565c0'
 }
 const WEIGHT_UNITS = Object.keys(UNIT_COLOR)
 
@@ -101,11 +103,19 @@ function resolveLogo(logo) {
 
 function logoHtml(logo) {
   const src = resolveLogo(logo)
-  if (src) return `<img src="${src}" style="height:15mm;width:auto;max-width:26mm;object-fit:contain;display:block"/>`
-  return '<div class="gem"></div>' // CSS diamond gem fallback
+  if (src) return `<img src="${src}" alt=""/>`
+  // Inline gold-diamond SVG (from the approved template). No initials, so it
+  // stays generic across shops; a shop that wants its own mark uploads a logo.
+  return '<svg viewBox="0 0 100 100" aria-hidden="true">' +
+    '<polygon points="50,6 94,40 50,94 6,40" fill="#ffd54a" stroke="#c9a227" stroke-width="3"/>' +
+    '<polygon points="50,6 94,40 50,50 6,40" fill="#ffe89a"/>' +
+    '<polygon points="6,40 50,50 50,94" fill="#e9b64d"/></svg>'
 }
 
-// ── Header (coloured) — driven entirely by the shop_* settings ───────────────
+// ── Header banner (coloured) — driven entirely by the shop_* settings ────────
+// Blue banner: gold diamond logo (top-start), green English title, red Urdu
+// shop name, then owner / phones (LTR) / tagline / gold address — all from
+// settings. Matches the approved color_form_template.html.
 function headerHtml(shop, logo) {
   const s = shop || {}
   const g = (k) => escHtml(s[k])
@@ -114,18 +124,17 @@ function headerHtml(shop, logo) {
   const owner = g('shop_owner')
   const phones = [g('shop_phone1'), g('shop_phone2'), g('shop_phone3')].filter((p) => p)
   const address = g('shop_address')
-  let h = '<div class="hdr">'
-  h += '<div class="hdr-en">GOLD TEST LABORATORY</div>'
-  h += '<div class="hdr-main">'
-  h += `<div class="hdr-logo">${logoHtml(logo)}</div>`
-  if (name) h += `<div class="hdr-name">${name}</div>`
-  h += '</div>'
-  if (owner) h += `<div class="hdr-owner">${owner}</div>`
-  if (phones.length) h += '<div class="hdr-ph">' + phones.map((p) => `<span>${p}</span>`).join('') + '</div>'
-  if (tagline) h += `<div class="hdr-tag">${tagline}</div>`
-  if (address) h += `<div class="hdr-addr">${address}</div>`
-  h += '</div>'
-  return h
+  let meta = ''
+  if (owner) meta += `<div>${owner}</div>`
+  if (phones.length) meta += `<div class="p">${phones.join(' &middot; ')}</div>`
+  if (tagline) meta += `<div>${tagline}</div>`
+  if (address) meta += `<div class="addr">${address}</div>`
+  return '<div class="banner">' +
+    `<div class="logo">${logoHtml(logo)}</div>` +
+    '<div class="en">GOLD TEST LABORATORY</div>' +
+    (name ? `<div class="name">${name}</div>` : '') +
+    (meta ? `<div class="meta">${meta}</div>` : '') +
+    '</div>'
 }
 
 // ── Table cell rendering — mirrors rasterPrint's buildReceiptHtml semantics ──
@@ -174,44 +183,57 @@ function buildColorFormHtml(data, cfg) {
   const tables = (data && data.tables) || []
 
   const css =
-    '*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}' +
-    'html,body{margin:0;padding:0;background:#fff}' +
+    '*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;margin:0;padding:0}' +
+    'html,body{background:#fff}' +
     `@page{size:${c.paperW}mm ${c.paperH}mm;margin:0}` +
-    `.frame{width:${c.paperW}mm;height:${c.paperH}mm;padding:3.5mm;` +
-    `background:linear-gradient(135deg,${CLR.frameA} 0%,${CLR.frameB} 22%,${CLR.frameC} 50%,${CLR.frameB} 78%,${CLR.frameA} 100%)}` +
-    '.sheet{width:100%;height:100%;background:#fff;border-radius:1mm;padding:3mm;overflow:hidden;display:flex;flex-direction:column}' +
-    // header
-    `.hdr{text-align:center;border:0.6mm solid ${CLR.headerLine};border-radius:1.5mm;padding:1.6mm 2mm;background:linear-gradient(#eef4ff,#ffffff)}` +
-    `.hdr-en{color:${CLR.titleEn};font:800 italic 13pt Georgia,'Times New Roman',serif;letter-spacing:.4px}` +
-    '.hdr-main{display:flex;align-items:center;justify-content:center;gap:3mm;margin-top:.6mm}' +
-    `.hdr-name{color:${CLR.name};font-family:${FONT_STACK};font-weight:800;font-size:21pt;line-height:1.5}` +
-    `.gem{width:11mm;height:11mm;transform:rotate(45deg);background:linear-gradient(135deg,#3b82f6,#0b2f7a);border:.5mm solid #0b2f7a;box-shadow:inset 0 0 2mm rgba(255,255,255,.6)}` +
-    `.hdr-owner{color:${CLR.headerLine};font-family:${FONT_STACK};font-weight:700;font-size:11pt;margin-top:.8mm}` +
-    `.hdr-ph{color:${CLR.headerLine};font:700 10.5pt Arial;margin-top:.6mm;display:flex;gap:4mm;justify-content:center;flex-wrap:wrap;direction:ltr}` +
-    `.hdr-tag{color:${CLR.headerLine};font-family:${FONT_STACK};font-weight:600;font-size:10.5pt;margin-top:.8mm}` +
-    `.hdr-addr{color:${CLR.headerLine};font-family:${FONT_STACK};font-weight:600;font-size:10pt;margin-top:.3mm}` +
-    // tables
-    `table.ct{border-collapse:collapse;width:100%;border:0.7mm solid ${CLR.tableRule};margin-top:2.2mm}` +
-    `table.ct td{border:0.4mm solid ${CLR.tableRule};padding:1.3mm 1mm;text-align:center;font:700 11pt Arial;vertical-align:middle}` +
+    // ornate gold frame → white paper
+    `.frame{width:${c.paperW}mm;height:${c.paperH}mm;padding:4mm;background:linear-gradient(135deg,${CLR.gold1},${CLR.gold2} 45%,${CLR.gold3})}` +
+    `.paper{background:#fff;height:100%;padding:3.5mm 4mm 2.5mm;border:2px solid #7a3d0a;box-shadow:inset 0 0 0 2px ${CLR.gold1};display:flex;flex-direction:column;overflow:hidden}` +
+    // Sections keep their natural height (never shrink to clip the banner's last
+    // line); only the footer is elastic (margin-top:auto pins it to the bottom).
+    '.banner,table.ct,.warn,.note{flex-shrink:0}' +
+    // blue header banner
+    `.banner{position:relative;border-radius:2mm;overflow:hidden;background:radial-gradient(120% 140% at 25% 10%,${CLR.banner1},${CLR.banner2});color:#fff;padding:2mm 3mm 2.4mm;text-align:center}` +
+    `.banner .en{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;color:${CLR.titleEn};font-size:15pt;letter-spacing:.3px;text-shadow:0 1px 0 rgba(0,0,0,.35)}` +
+    `.banner .name{font-family:${FONT_STACK};font-weight:700;color:${CLR.name};font-size:22pt;line-height:1.45;text-shadow:0 0 2px #fff,0 0 2px #fff,1px 1px 0 #fff}` +
+    `.banner .meta{font-family:${FONT_STACK};font-size:9.5pt;line-height:1.55;margin-top:.6mm}` +
+    `.banner .meta .p{direction:ltr;font-family:Georgia,serif;font-weight:700;letter-spacing:.3px}` +
+    `.banner .meta .addr{color:${CLR.addr}}` +
+    '.banner .logo{position:absolute;inset-inline-start:3mm;top:2.5mm;width:15mm;height:15mm}' +
+    '.banner .logo svg,.banner .logo img{width:100%;height:100%;object-fit:contain;display:block}' +
+    // tables (generic .ct — same cell loop the thermal path uses)
+    `table.ct{border-collapse:collapse;width:100%;border:1.5px solid ${CLR.rule};margin-top:2mm}` +
+    `table.ct td{border:1px solid ${CLR.rule};padding:1mm;text-align:center;font:700 11.5pt Arial;vertical-align:middle}` +
     `td.lbl{font-family:${FONT_STACK};font-weight:700;color:${CLR.labelText};background:${CLR.labelBg};white-space:nowrap}` +
-    `td.colh{font-family:${FONT_STACK};font-weight:800;background:${CLR.colHeaderBg};white-space:nowrap}` +
-    'td.val{color:#111}' +
+    `td.colh{font-family:${FONT_STACK};font-weight:700;background:${CLR.colHeaderBg};white-space:nowrap}` +
+    'td.val{color:#1a1a1a}' +
     `td.val.u{font-family:${FONT_STACK}}` +
     'td.val.wrap{white-space:normal;word-break:break-word}' +
-    `.box{display:inline-block;border:.6mm solid ${CLR.boxBorder};background:${CLR.boxBg};color:${CLR.boxText};padding:.4mm 3mm;font-weight:800}` +
+    `.box{display:inline-block;border:1.5px solid ${CLR.boxBorder};border-radius:1mm;padding:.3mm 3mm;color:${CLR.boxText};font-weight:800}` +
     // warning + note + footer
-    `.warn{background:${CLR.warnBg};color:#fff;font-family:${FONT_STACK};font-weight:700;font-size:9.5pt;line-height:1.9;padding:1.6mm 3mm;margin-top:2.2mm;border-radius:1mm;text-align:center}` +
-    `.note{border:.6mm solid ${CLR.noteBorder};background:${CLR.noteBg};color:${CLR.noteText};font-family:${FONT_STACK};font-weight:700;font-size:9pt;line-height:2;padding:1.6mm 3mm;margin-top:2.2mm;border-radius:1mm;text-align:right}` +
-    `.spacer{flex:1 1 auto;min-height:1mm}` +
-    `.ftr{text-align:center;color:${CLR.headerLine};font:700 8pt Arial;margin-top:2mm;padding-top:1mm;border-top:.3mm solid ${CLR.headerLine}}`
+    `.warn{background:${CLR.warnBg};color:#fff;font-family:${FONT_STACK};font-weight:700;font-size:10.5pt;line-height:1.9;padding:1.4mm 3mm;margin-top:2.2mm;text-align:center}` +
+    `.note{background:${CLR.noteBg};color:#fff;font-family:${FONT_STACK};font-size:9pt;line-height:1.8;padding:1.4mm 3mm;margin-top:1.2mm;text-align:center}` +
+    '.note b{color:#ffe14d}' +
+    '.foot{margin-top:auto;padding-top:1.4mm}' +
+    '.foot .ftr{text-align:center;font-family:Georgia,serif;font-size:8.5pt;color:#7a3d0a;letter-spacing:.3px}' +
+    '.foot .brand{text-align:center;font-family:Arial,sans-serif;font-weight:800;font-size:10.5pt;color:#111;margin-top:1mm}'
 
-  let body = '<div class="frame"><div class="sheet">'
+  const note = (terms && terms.trim()) ? terms.trim() : ''
+  // Prepend a gold "نوٹ:" label (as in the reference) unless the text already
+  // opens with it, so a shop's own wording isn't doubled.
+  const noteHtml = note
+    ? (/^\s*نوٹ/.test(note) ? escHtml(note) : '<b>نوٹ:</b> ' + escHtml(note))
+    : ''
+
+  let body = '<div class="frame"><div class="paper">'
   body += headerHtml(shop, c.logo)
   body += renderTables(tables)
   if (warning && warning.trim()) body += `<div class="warn" dir="rtl">${escHtml(warning.trim())}</div>`
-  if (terms && terms.trim()) body += `<div class="note" dir="rtl">${escHtml(terms.trim())}</div>`
-  body += '<div class="spacer"></div>'
-  body += '<div class="ftr">Software: GoldLab &middot; Rayyan 0307-6965231</div>'
+  if (noteHtml) body += `<div class="note" dir="rtl">${noteHtml}</div>`
+  // Footer press line (optional) + the Rayyan branding line (as on the thermal
+  // slip). margin-top:auto keeps it at the bottom of the sheet, never clipped.
+  body += '<div class="foot"><div class="ftr">GoldLab Software</div>' +
+    '<div class="brand">Rayyan&nbsp;&nbsp;0307-6965231</div></div>'
   body += '</div></div>'
 
   return '<!doctype html><html><head><meta charset="utf-8"><style>' + css + '</style></head><body>' +
