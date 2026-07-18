@@ -13,7 +13,7 @@
 // path uses, so everything is verifiable without the physical printer.
 //
 // The thermal pipeline (rasterPrint.cjs) is NOT imported and NOT touched.
-const { BrowserWindow } = require('electron')
+const { BrowserWindow, screen, clipboard, nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -307,4 +307,85 @@ function printOverlay({ data, cfg, win, copies = 1, html, tag = 'slip' }) {
   })()
 }
 
-module.exports = { buildOverlayHtml, printOverlay, overlayCalibrationHtml, extractValues, normalizeCfg, PAPERS }
+// ── WhatsApp share image (laser_form mode) ──────────────────────────────────
+// In laser mode the WhatsApp picture must show what the CANON prints — the
+// values-only overlay page — not the thermal-style slip card. The page is
+// rendered in an OFFSCREEN window (same software-bitmap technique as
+// rasterPrint's renderBitmap: frames arrive via 'paint', keep the LATEST
+// full frame and resolve once painting goes quiet), captured as a PNG and
+// placed on the SYSTEM CLIPBOARD, so the existing auto-paste-into-WhatsApp
+// flow works unchanged. Returns { ok, reason?, file? } — `file` only in the
+// GOLDLAB_PRINT_PDF_DIR dry-run, where the PNG is also written to disk so the
+// share image can be verified without WhatsApp.
+const SHARE_PX_PER_MM = 8 // ≈203dpi — crisp on WhatsApp, A5 ⇒ 1184×1680 px
+function overlayImageToClipboard({ data, cfg }) {
+  const c = normalizeCfg(cfg)
+  if (!data) return Promise.resolve({ ok: false, reason: 'no-data' })
+  const html = buildOverlayHtml(data, c)
+  return (async () => {
+    // Offscreen frames come out at (DIP size × desktop scale) physical px, so
+    // size/zoom are divided by the desktop scale to land the frame at the
+    // target pixel size regardless of the machine's DPI setting.
+    const scale = (screen.getPrimaryDisplay() && screen.getPrimaryDisplay().scaleFactor) || 1
+    const targetW = Math.ceil(c.paperW * SHARE_PX_PER_MM)
+    const targetH = Math.ceil(c.paperH * SHARE_PX_PER_MM)
+    // A window CONSTRUCTED taller than the screen is clamped to the work area
+    // (A5 @ 8px/mm is taller than any laptop screen), so — same technique as
+    // rasterPrint's renderBitmap — start small and setContentSize AFTER the
+    // paint listener is armed; offscreen resizes past the screen are honoured.
+    const w = new BrowserWindow({
+      show: false,
+      width: 800,
+      height: 600,
+      frame: false,
+      webPreferences: { offscreen: { useSharedTexture: false }, backgroundThrottling: false, sandbox: false }
+    })
+    try {
+      w.webContents.setFrameRate(30)
+      await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+      // CSS mm renders at 96dpi (3.7795 px/mm); zoom up to SHARE_PX_PER_MM.
+      w.webContents.setZoomFactor((SHARE_PX_PER_MM / (96 / 25.4)) / scale)
+      try { await w.webContents.executeJavaScript('Promise.resolve(window.__ready)', true) } catch {}
+      // Tiles paint progressively — keep the LATEST full-size frame, resolve
+      // after painting goes quiet, then crop to exactly the target page.
+      const frame = await new Promise((resolve, reject) => {
+        let best = null
+        let quietTimer = null
+        const bail = setTimeout(() => { best ? resolve(best) : reject(new Error('no-frame')) }, 8000)
+        w.webContents.on('paint', (_e, _dirty, image) => {
+          const s = image.getSize()
+          if (s.width >= targetW && s.height >= targetH) {
+            best = { width: s.width, height: s.height, buf: image.toBitmap() } // snapshot NOW
+          }
+          if (quietTimer) clearTimeout(quietTimer)
+          quietTimer = setTimeout(() => { if (best) { clearTimeout(bail); resolve(best) } }, 500)
+        })
+        w.setContentSize(Math.ceil(targetW / scale) + 1, Math.ceil(targetH / scale) + 1)
+        setTimeout(() => { try { w.webContents.invalidate() } catch {} }, 30)
+        setTimeout(() => { try { w.webContents.invalidate() } catch {} }, 1200)
+      })
+      let bgra = frame.buf
+      if (frame.width !== targetW || frame.height !== targetH) {
+        bgra = Buffer.alloc(targetW * targetH * 4)
+        for (let y = 0; y < targetH; y++) {
+          frame.buf.copy(bgra, y * targetW * 4, y * frame.width * 4, y * frame.width * 4 + targetW * 4)
+        }
+      }
+      const png = nativeImage.createFromBitmap(bgra, { width: targetW, height: targetH }).toPNG()
+      clipboard.writeImage(nativeImage.createFromBuffer(png))
+      if (process.env.GOLDLAB_PRINT_PDF_DIR) {
+        const file = path.join(process.env.GOLDLAB_PRINT_PDF_DIR,
+          `overlay-share-${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`)
+        fs.writeFileSync(file, png)
+        return { ok: true, reason: 'dry-run', file }
+      }
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, reason: String(e && e.message || e) }
+    } finally {
+      try { w.destroy() } catch {}
+    }
+  })()
+}
+
+module.exports = { buildOverlayHtml, printOverlay, overlayCalibrationHtml, overlayImageToClipboard, extractValues, normalizeCfg, PAPERS }

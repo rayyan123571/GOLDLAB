@@ -691,7 +691,7 @@ export function AppProvider({ children }) {
   // the main process, then open the WhatsApp chat — the operator just presses
   // Ctrl+V and Send. Every step is guarded; on ANY failure it falls back to the
   // old text-only WhatsApp link, so the button can never break or crash.
-  const shareSlipWhatsApp = useCallback(async (panelEl, mobile, text) => {
+  const shareSlipWhatsApp = useCallback(async (panelEl, mobile, text, slipData) => {
     // Main process picks the best route: WhatsApp DESKTOP app when installed
     // (auto-paste watcher), else the embedded web window (in-window auto-paste).
     // Plain wa.me window.open remains the last-resort fallback (browser dev).
@@ -705,6 +705,24 @@ export function AppProvider({ children }) {
       const num = String(mobile || '').replace(/[^0-9]/g, '')
       const url = `https://wa.me/${num}?text=${encodeURIComponent(text || '')}`
       if (typeof window !== 'undefined') window.open(url, '_blank')
+    }
+    // ── Laser form-overlay mode: the shared picture must be what the CANON
+    // prints (values-only overlay page), not the thermal-style slip card. The
+    // main process renders it and puts the PNG on the clipboard; the WhatsApp
+    // auto-paste flow is identical from there. Any failure falls through to
+    // the normal card snapshot below, so the button still never breaks.
+    if (rates.print_mode === 'laser_form' && slipData && hasApi && window.api.overlayShareImage) {
+      try {
+        const r = await window.api.overlayShareImage({ ...slipData })
+        if (r && r.ok) {
+          showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V)', true)
+          openWa()
+          return
+        }
+        console.warn('overlay share image failed, using card snapshot:', r && r.reason)
+      } catch (e) {
+        console.warn('overlay share image threw, using card snapshot:', e)
+      }
     }
     if (!panelEl || typeof document === 'undefined' || !hasApi || !window.api.captureToClipboard) {
       openWa()

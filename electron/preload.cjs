@@ -93,6 +93,9 @@ contextBridge.exposeInMainWorld('api', {
   // Laser form-overlay calibration grid (print_mode = 'laser_form'). Slip
   // printing itself still goes through rasterPrintSlip — main.cjs routes it.
   overlayTestPrint: () => ipcRenderer.invoke('overlay-test-print', {}),
+  // Laser mode WhatsApp share: put the values-only overlay page (what the
+  // Canon prints) on the clipboard as an image, instead of the slip snapshot.
+  overlayShareImage: (data) => ipcRenderer.invoke('overlay-share-image', { data }),
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
   captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
   // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.

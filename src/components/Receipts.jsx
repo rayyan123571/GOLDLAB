@@ -207,9 +207,11 @@ const waOpen = (mobile, text) => {
 // copies the slip picture to the clipboard and opens the chat (operator pastes
 // with Ctrl+V). Falls back to the old text-only link when the share helper is
 // unavailable (e.g. embedded statement ctx) — the button can never break.
-const waSlip = (ctx, e, mobile, text) => {
+const waSlip = (ctx, e, mobile, text, slipData) => {
   const panel = e && e.currentTarget ? e.currentTarget.closest('.receipt-panel') : null
-  if (ctx && typeof ctx.shareSlipWhatsApp === 'function' && panel) ctx.shareSlipWhatsApp(panel, mobile, text)
+  // slipData rides along so laser_form mode can share the Canon overlay image
+  // (built from the same values the print uses) instead of the card snapshot.
+  if (ctx && typeof ctx.shareSlipWhatsApp === 'function' && panel) ctx.shareSlipWhatsApp(panel, mobile, text, slipData)
   else waOpen(mobile, text)
 }
 
@@ -322,7 +324,7 @@ export function RecoveryReceipt({ row, lab, ctx, embed }) {
       </div>
       {!embed && (
         <ActionBar
-          onWa={(e) => waSlip(ctx, e, customer.mobile, `وصولی رسید نمبر ${receiptNo}\nخالص سونا: ${fmtNum(row?.khalisSona)}\nباقی: ${fmtMoney(row?.baqiRaqam)}`)}
+          onWa={(e) => waSlip(ctx, e, customer.mobile, `وصولی رسید نمبر ${receiptNo}\nخالص سونا: ${fmtNum(row?.khalisSona)}\nباقی: ${fmtMoney(row?.baqiRaqam)}`, slipData)}
           onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
         >
           <SavedChk on={ctx.savedFlags?.wasooli} />
@@ -482,7 +484,7 @@ export function LabReceipt({ row, lab, ctx, embed }) {
       </div>
       {!embed && (
         <ActionBar
-          onWa={(e) => waSlip(ctx, e, customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`)}
+          onWa={(e) => waSlip(ctx, e, customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`, slipData)}
           onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
         >
           <SavedChk on={ctx.savedFlags?.lab} />
@@ -639,7 +641,7 @@ export function CreditReceipt({ ctx, embed }) {
       </div>
       {!embed && (
         <ActionBar
-          onWa={(e) => waSlip(ctx, e, customer.mobile, `ادھار رسید\nنام: ${customer.id ? customer.name : ''}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`)}
+          onWa={(e) => waSlip(ctx, e, customer.mobile, `ادھار رسید\nنام: ${customer.id ? customer.name : ''}\nباقی سونا: ${fmtNum(led?.balance_gold)}\nباقی کیش: ${fmtMoney(led?.balance_cash)}`, slipData)}
           onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
         >
           <SavedChk on={ctx.savedFlags?.udhar} />
@@ -773,7 +775,7 @@ export function CashReceipt({ ctx, embed }) {
           <SavedChk on={ctx.savedFlags?.naqad} />
           <div className="flex-1 min-w-0" />
           <Btn variant="green"
-            onClick={(e) => waSlip(ctx, e, customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.id ? customer.name : ''}`)}>WhatsApp</Btn>
+            onClick={(e) => waSlip(ctx, e, customer.mobile, `نقد رسید ${receiptNo}\nنام: ${customer.id ? customer.name : ''}`, slipData)}>WhatsApp</Btn>
           <Btn title="پرنٹ" onClick={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}>🖨</Btn>
         </div>
       )}

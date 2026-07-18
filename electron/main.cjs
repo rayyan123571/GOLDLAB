@@ -366,6 +366,18 @@ ipcMain.handle('raster-test-print', async (_evt, { kind } = {}) => {
   catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
+// WhatsApp share image for laser_form mode: render the SAME values-only
+// overlay page the Canon prints and put it on the clipboard as a PNG (the
+// existing WhatsApp auto-paste flow then attaches it). The renderer calls this
+// INSTEAD of capture-to-clipboard when print_mode = 'laser_form', so the shared
+// picture always matches what actually comes out of the printer.
+ipcMain.handle('overlay-share-image', async (_evt, { data } = {}) => {
+  const { printMode, formCfg } = printSettings()
+  if (printMode !== 'laser_form') return { ok: false, reason: 'not-laser-form' }
+  try { return await overlayPrint.overlayImageToClipboard({ data, cfg: formCfg }) }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
 // Laser form-overlay calibration sheet (settings → فارم کیلیبریشن ٹیسٹ پرنٹ):
 // a labelled outline box at every field position, printed with the CURRENT
 // saved offsets/scale so the operator can lay it over the pre-printed form and
