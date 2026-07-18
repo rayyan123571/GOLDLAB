@@ -209,6 +209,52 @@ function migrateSchema() {
     db.run('UPDATE settings SET print_scale_115 = 1')
   }
 
+  // ── Laser "form overlay" print mode (electron/overlayPrint.cjs) ────────────
+  // settings.print_mode — which print PATH receipts take: 'thermal' (default,
+  // the raw ESC/POS raster path, unchanged) or 'laser_form' (values-only
+  // overlay onto a pre-printed form, through the Windows driver). One setting,
+  // same build for every customer.
+  if (!sCols.includes('print_mode')) {
+    db.run('ALTER TABLE settings ADD COLUMN print_mode TEXT')
+    db.run("UPDATE settings SET print_mode = 'thermal' WHERE print_mode IS NULL")
+  }
+  // settings.form_paper — the pre-printed form's sheet: 'A5' (default) | 'A4' |
+  // 'Letter' | 'custom' (then form_paper_w_mm / form_paper_h_mm apply).
+  if (!sCols.includes('form_paper')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_paper TEXT')
+    db.run("UPDATE settings SET form_paper = 'A5' WHERE form_paper IS NULL")
+  }
+  if (!sCols.includes('form_paper_w_mm')) db.run('ALTER TABLE settings ADD COLUMN form_paper_w_mm REAL')
+  if (!sCols.includes('form_paper_h_mm')) db.run('ALTER TABLE settings ADD COLUMN form_paper_h_mm REAL')
+  // Whole-grid calibration: mm nudge + fine stretch so the operator matches
+  // their own form from settings — no rebuild, no per-customer code.
+  if (!sCols.includes('form_offset_x_mm')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_offset_x_mm REAL')
+    db.run('UPDATE settings SET form_offset_x_mm = 0 WHERE form_offset_x_mm IS NULL')
+  }
+  if (!sCols.includes('form_offset_y_mm')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_offset_y_mm REAL')
+    db.run('UPDATE settings SET form_offset_y_mm = 0 WHERE form_offset_y_mm IS NULL')
+  }
+  if (!sCols.includes('form_scale_x')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_scale_x REAL')
+    db.run('UPDATE settings SET form_scale_x = 1.0 WHERE form_scale_x IS NULL')
+  }
+  if (!sCols.includes('form_scale_y')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_scale_y REAL')
+    db.run('UPDATE settings SET form_scale_y = 1.0 WHERE form_scale_y IS NULL')
+  }
+  // Printed value font size (pt).
+  if (!sCols.includes('form_font_pt')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_font_pt REAL')
+    db.run('UPDATE settings SET form_font_pt = 11 WHERE form_font_pt IS NULL')
+  }
+  // Reserved for future multiple form layouts.
+  if (!sCols.includes('form_template')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_template TEXT')
+    db.run("UPDATE settings SET form_template = 'default' WHERE form_template IS NULL")
+  }
+
   // settings.shop_* — the printed slip header (name / tagline / owner / three
   // phones / address). Added per column, then BACKFILLED with the Chaudhary
   // default ONLY where the column is NULL or '' — a shop that already customized
@@ -371,9 +417,15 @@ const api = {
     // them keeps the stored value (never nulls a setting it didn't mean to touch).
     // An EMPTY STRING is not null, so deliberately clearing a shop field does save
     // — and that blank line then disappears from the printed header.
+    // Laser form-overlay settings follow the same COALESCE rule. Numeric ones
+    // are passed through Number() so a stringly UI value can't corrupt the
+    // column; print_mode / form_paper are clamped to their known values.
+    const FORM_NUM_FIELDS = ['form_paper_w_mm', 'form_paper_h_mm', 'form_offset_x_mm', 'form_offset_y_mm', 'form_scale_x', 'form_scale_y', 'form_font_pt']
     run(
       `UPDATE settings SET date=?, rate_tezabi_tola=?, parchi_charges=?, fc_per_gram=?, rate_tezabi_gram=?, point=?, slip_count=?,
               raw_print_mode=COALESCE(?, raw_print_mode), print_scale=COALESCE(?, print_scale),
+              print_mode=COALESCE(?, print_mode), form_paper=COALESCE(?, form_paper), form_template=COALESCE(?, form_template),
+              ${FORM_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
               ${SLIP_TEXT_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')} WHERE id=1`,
       [
         rates.date,
@@ -385,6 +437,10 @@ const api = {
         rates.slip_count != null ? rates.slip_count : 1,
         rates.raw_print_mode != null ? rates.raw_print_mode : null,
         rates.print_scale != null ? Number(rates.print_scale) : null,
+        rates.print_mode != null ? (rates.print_mode === 'laser_form' ? 'laser_form' : 'thermal') : null,
+        rates.form_paper != null ? (['A5', 'A4', 'Letter', 'custom'].includes(rates.form_paper) ? rates.form_paper : 'A5') : null,
+        rates.form_template != null ? String(rates.form_template) : null,
+        ...FORM_NUM_FIELDS.map((f) => (rates[f] != null && Number.isFinite(Number(rates[f])) ? Number(rates[f]) : null)),
         ...SLIP_TEXT_FIELDS.map((f) => (rates[f] != null ? String(rates[f]) : null))
       ]
     )

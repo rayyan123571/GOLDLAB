@@ -5,6 +5,7 @@ const { spawn } = require('child_process')
 const db = require('./db.cjs')
 const backup = require('./backup.cjs')
 const raster = require('./rasterPrint.cjs')
+const overlayPrint = require('./overlayPrint.cjs')
 const liveGold = require('./liveGold.cjs')
 const trial = require('./trial/trialManager.cjs')
 const trialGate = require('./trial/gateWindow.cjs')
@@ -284,19 +285,52 @@ function printOnce(opts, timeoutMs) {
 function printSettings() {
   let rawMode = 'auto'
   let printScale = 1.15
+  let printMode = 'thermal'
+  let formCfg = {}
   try {
     const r = db.api.getRates() || {}
     if (r.raw_print_mode === 'force') rawMode = 'force'
     if (r.print_scale != null && Number.isFinite(Number(r.print_scale))) printScale = Number(r.print_scale)
+    // Laser form-overlay routing + calibration (see electron/overlayPrint.cjs).
+    // Anything other than the explicit 'laser_form' value stays thermal, so an
+    // old/NULL column can never reroute a thermal shop's receipts.
+    if (r.print_mode === 'laser_form') printMode = 'laser_form'
+    formCfg = {
+      form_paper: r.form_paper,
+      form_paper_w_mm: r.form_paper_w_mm,
+      form_paper_h_mm: r.form_paper_h_mm,
+      form_offset_x_mm: r.form_offset_x_mm,
+      form_offset_y_mm: r.form_offset_y_mm,
+      form_scale_x: r.form_scale_x,
+      form_scale_y: r.form_scale_y,
+      form_font_pt: r.form_font_pt,
+      form_template: r.form_template
+    }
   } catch (e) { console.warn('[print] settings read failed, using defaults:', e && e.message || e) }
   const envScale = parseFloat(process.env.GOLDLAB_PRINT_SCALE)
   if (Number.isFinite(envScale)) printScale = envScale
-  return { rawMode, printScale }
+  return { rawMode, printScale, printMode, formCfg }
 }
 
 ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
-  const { rawMode, printScale } = printSettings()
+  const { rawMode, printScale, printMode, formCfg } = printSettings()
+  // ── Laser form-overlay branch (print_mode = 'laser_form') ──────────────────
+  // Same renderer call, different engine: the slipData values are laid onto the
+  // customer's PRE-PRINTED form at template coordinates and spooled through the
+  // Windows DRIVER (a laser can't take ESC/POS). The thermal path below is
+  // untouched. The overlay needs the structured slip data — the legacy
+  // clone-HTML payload has no field values to place, so it reports back instead
+  // of guessing.
+  if (printMode === 'laser_form') {
+    try {
+      if (!data) return { ok: false, reason: 'laser-form-needs-slip-data' }
+      return await overlayPrint.printOverlay({ data, cfg: formCfg, win, copies })
+    } catch (e) {
+      console.warn('[raster-print-slip] laser-form overlay threw:', e && e.message || e)
+      return { ok: false, reason: String(e && e.message || e) }
+    }
+  }
   // `data` (the lab receipt) → build HTML from the shared template here so the
   // real slip and the worst-case test page use ONE source of truth. `html` (the
   // other receipts) still comes pre-built from the renderer's clone path.
@@ -330,6 +364,24 @@ ipcMain.handle('raster-test-print', async (_evt, { kind } = {}) => {
   const { printScale } = printSettings()
   try { return await raster.testPrint({ kind, win, printScale }) }
   catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// Laser form-overlay calibration sheet (settings → فارم کیلیبریشن ٹیسٹ پرنٹ):
+// a labelled outline box at every field position, printed with the CURRENT
+// saved offsets/scale so the operator can lay it over the pre-printed form and
+// dial the numbers in. Honours GOLDLAB_PRINT_PDF_DIR like every print path.
+ipcMain.handle('overlay-test-print', async () => {
+  if (!win) return { ok: false, reason: 'no-window' }
+  const { formCfg } = printSettings()
+  try {
+    return await overlayPrint.printOverlay({
+      html: overlayPrint.overlayCalibrationHtml(formCfg),
+      cfg: formCfg,
+      win,
+      copies: 1,
+      tag: 'calibration'
+    })
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
 ipcMain.handle('print-page', async (_evt, opts = {}) => {

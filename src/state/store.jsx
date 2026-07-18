@@ -545,14 +545,32 @@ export function AppProvider({ children }) {
         const rasterHtml = buildRasterSlipHtml(panelEl, rates)
         if (rasterHtml) payload = { html: rasterHtml, copies: n }
       }
+      // Laser form-overlay mode: the SAME rasterPrintSlip call is used — main.cjs
+      // routes it to the driver-based overlay path. A failing overlay must SURFACE
+      // its error, never fall through to the thermal driver clone below (that
+      // would print the full bordered slip on top of the pre-printed form).
+      const laserForm = rates.print_mode === 'laser_form'
       if (payload) {
         try {
           const res = await window.api.rasterPrintSlip(payload)
           if (res && res.ok) return
+          if (laserForm) {
+            showPrintError(res && res.reason)
+            return
+          }
           console.warn('raster print unavailable, using driver path:', res && res.reason)
         } catch (e) {
+          if (laserForm) {
+            showPrintError(e && e.message ? e.message : String(e))
+            return
+          }
           console.warn('raster print failed, using driver path:', e)
         }
+      } else if (laserForm) {
+        // No structured slipData (legacy clone-HTML caller) — the overlay can't
+        // place values, and the thermal-driver fallback is wrong for a form.
+        showPrintError('laser-form-needs-slip-data')
+        return
       }
     }
     // ── FALLBACK: Windows-driver print (silent → dialog), safe-window geometry.
