@@ -88,7 +88,11 @@ function showPrintError(reason) {
     'position:fixed;bottom:56px;left:50%;transform:translateX(-50%);z-index:9999;' +
     'background:#b91c1c;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;' +
     'font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,.35);max-width:80vw;text-align:center'
-  el.textContent = `پرنٹ نہیں ہو سکا${reason ? ` (${reason})` : ''} — پرنٹر آن اور کنیکٹڈ چیک کریں`
+  // The Canon isn't picked yet (overlay/Canon jobs need it) — tell the user exactly
+  // what to do instead of a raw reason code.
+  el.textContent = reason === 'canon-printer-not-set'
+    ? 'کینن پرنٹر منتخب کریں (ڈیفالٹ سیٹنگز میں)'
+    : `پرنٹ نہیں ہو سکا${reason ? ` (${reason})` : ''} — پرنٹر آن اور کنیکٹڈ چیک کریں`
   document.body.appendChild(el)
   setTimeout(() => el.remove(), 5000)
 }
@@ -523,7 +527,10 @@ export function AppProvider({ children }) {
 
   // Print the current view once per configured slip copy (سلپ پرنٹ). 1 → one
   // print, 2 → two, etc. Each call opens the print dialog for that copy.
-  const printSlips = useCallback(async (panelEl, slipData) => {
+  // forceMode (optional): override the settings print_mode for THIS print only —
+  // 'overlay_form' from the lab receipt's اوورلے button, so the operator picks the
+  // Canon overlay per-print without switching settings. Omitted → print_mode drives it.
+  const printSlips = useCallback(async (panelEl, slipData, forceMode) => {
     const n = Math.max(1, parseInt(rates.slip_count, 10) || 1)
     // ── PRIMARY: direct 1-bit thermal raster (ESC/POS, RAW spool). The slip is
     // rendered ONCE at exactly 576 dots = the full 72.1mm printable band, hard-
@@ -535,41 +542,48 @@ export function AppProvider({ children }) {
       // slipData (from the receipt component) → the shared table template
       // (buildReceiptHtml, one source of truth with the worst-case test page).
       // No slipData → fall back to the older clone-based HTML path.
+      // Which receipt this is — overlay mode applies to the LAB رسید ONLY (udhaar/
+      // naqad always print thermal). data-receipt is 'lab'|'wasooli'|'udhar'|'naqad'.
+      const receipt = (panelEl && panelEl.getAttribute && panelEl.getAttribute('data-receipt')) ||
+        (slipData && slipData.title === 'لیب رسید' ? 'lab' : '')
       let payload = null
       if (slipData) {
         // The shop header rides along with the slip data: rasterPrint.cjs renders
         // the header from `shop`, so the printed header always shows the CURRENT
-        // ڈیفالٹ سیٹنگز values — the same ones the settings preview draws.
-        payload = { data: { ...slipData, shop: shopOf(rates), terms: String(rates.slip_terms ?? '') }, copies: n }
+        // ڈیفالٹ سیٹنگز values — the same ones the settings preview draws. `receipt`
+        // tells main whether the overlay path applies (lab only).
+        payload = { data: { ...slipData, shop: shopOf(rates), terms: String(rates.slip_terms ?? '') }, copies: n, receipt, forceMode }
       } else {
         const rasterHtml = buildRasterSlipHtml(panelEl, rates)
-        if (rasterHtml) payload = { html: rasterHtml, copies: n }
+        if (rasterHtml) payload = { html: rasterHtml, copies: n, forceMode }
       }
-      // Colour-form mode: the SAME rasterPrintSlip call is used — main.cjs routes
-      // it to the driver-based colour renderer. A failure must SURFACE its error,
-      // never fall through to the thermal driver clone below (that would print the
-      // 80mm thermal slip instead of the colour receipt).
-      const colorForm = rates.print_mode === 'color_form'
+      // Overlay (LAB رسید only) is the one driver-based path: the SAME rasterPrintSlip
+      // call is used — main.cjs routes it to the Canon. A failure must SURFACE its
+      // error, never fall through to the thermal driver clone (which would print a
+      // full 80mm slip over the pre-printed form).
+      // A per-print forceMode (the اوورلے button) overrides the settings print_mode.
+      const effMode = forceMode || rates.print_mode
+      const overlay = effMode === 'overlay_form' && receipt === 'lab'
       if (payload) {
         try {
           const res = await window.api.rasterPrintSlip(payload)
           if (res && res.ok) return
-          if (colorForm) {
+          if (overlay) {
             showPrintError(res && res.reason)
             return
           }
           console.warn('raster print unavailable, using driver path:', res && res.reason)
         } catch (e) {
-          if (colorForm) {
+          if (overlay) {
             showPrintError(e && e.message ? e.message : String(e))
             return
           }
           console.warn('raster print failed, using driver path:', e)
         }
-      } else if (colorForm) {
-        // No structured slipData (legacy clone-HTML caller) — the colour renderer
+      } else if (overlay) {
+        // No structured slipData (legacy clone-HTML caller) — the overlay renderer
         // has no field values, and the thermal-driver fallback is wrong here.
-        showPrintError('color-form-needs-slip-data')
+        showPrintError('overlay-needs-slip-data')
         return
       }
     }
@@ -706,22 +720,23 @@ export function AppProvider({ children }) {
       const url = `https://wa.me/${num}?text=${encodeURIComponent(text || '')}`
       if (typeof window !== 'undefined') window.open(url, '_blank')
     }
-    // ── Colour-form mode: the shared picture must be what the CANON prints (the
-    // full colour receipt), not the thermal-style slip card. The main process
-    // renders it and puts the PNG on the clipboard; the WhatsApp auto-paste flow
-    // is identical from there. Any failure falls through to the normal card
-    // snapshot below, so the button still never breaks.
-    if (rates.print_mode === 'color_form' && slipData && hasApi && window.api.colorFormShareImage) {
+    // ── Overlay mode, LAB رسید only: the shared picture is the VALUES composited on
+    // top of the uploaded blank-form scan, so the WhatsApp copy looks like the
+    // finished pre-printed slip. Udhaar/naqad (and other modes) fall through.
+    const overlayLab = rates.print_mode === 'overlay_form' &&
+      ((panelEl && panelEl.getAttribute && panelEl.getAttribute('data-receipt') === 'lab') ||
+        (slipData && slipData.title === 'لیب رسید'))
+    if (overlayLab && slipData && hasApi && window.api.overlayShareImage) {
       try {
-        const r = await window.api.colorFormShareImage({ ...slipData })
+        const r = await window.api.overlayShareImage({ ...slipData })
         if (r && r.ok) {
           showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V)', true)
           openWa()
           return
         }
-        console.warn('color-form share image failed, using card snapshot:', r && r.reason)
+        console.warn('overlay share image failed, using card snapshot:', r && r.reason)
       } catch (e) {
-        console.warn('color-form share image threw, using card snapshot:', e)
+        console.warn('overlay share image threw, using card snapshot:', e)
       }
     }
     if (!panelEl || typeof document === 'undefined' || !hasApi || !window.api.captureToClipboard) {

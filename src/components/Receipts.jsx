@@ -186,12 +186,16 @@ function SavedChk({ on }) {
   )
 }
 
-function ActionBar({ children, onWa, onPrint }) {
+// onOverlay (optional) → a second print button that forces the OVERLAY path
+// (values-only onto the pre-printed slip, to the Canon). Only the lab رسید passes
+// it, so it appears there only; the plain 🖨 keeps the print_mode behaviour.
+function ActionBar({ children, onWa, onPrint, onOverlay }) {
   return (
     <div className="no-print flex flex-wrap items-center gap-1 mt-1 px-1 pb-1">
       {children}
       <div className="flex-1 min-w-0" />
       <Btn variant="green" onClick={onWa}>WhatsApp</Btn>
+      {onOverlay && <Btn title="اوورلے (کینن — پہلے سے چھپی پرچی)" onClick={onOverlay}>اوورلے</Btn>}
       <Btn title="پرنٹ" onClick={onPrint}>🖨</Btn>
     </div>
   )
@@ -486,6 +490,7 @@ export function LabReceipt({ row, lab, ctx, embed }) {
         <ActionBar
           onWa={(e) => waSlip(ctx, e, customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`, slipData)}
           onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
+          onOverlay={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData, 'overlay_form')}
         >
           <SavedChk on={ctx.savedFlags?.lab} />
           <span className="urdu text-[10px]">رسید</span>

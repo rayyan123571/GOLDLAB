@@ -316,7 +316,13 @@ function loadAppCss() {
   return appCssCache
 }
 
-async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal = true, printScale, rawMode = 'auto' }) {
+// deviceName (optional): route the RAW ESC/POS spool to a SPECIFIC printer by name
+// (the dual-printer setup — the thermal printer chosen in settings). When omitted,
+// behaviour is IDENTICAL to before: the Windows default printer is used, with the
+// thermal-name guard. Passing an explicit name means the operator chose it on
+// purpose, so the guard is skipped. This only changes WHICH printer is spooled to;
+// the 576-dot render → 1-bit threshold → ESC/POS bytes are untouched.
+async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal = true, printScale, rawMode = 'auto', deviceName = '' }) {
   if (!html) return { ok: false, reason: 'no-html' }
   if (html.includes('/*__APP_CSS__*/')) {
     const css = loadAppCss()
@@ -332,15 +338,22 @@ async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal =
   if (process.env.GOLDLAB_PRINT_PDF_DIR) {
     try {
       const dump = dryRunDump({ bits, bpr, width: rendered.width, height: rendered.height, bytes: payload, tag })
-      return { ok: true, reason: 'dry-run', widthDots: rendered.width, heightDots: rendered.height, ...dump }
+      // deviceName echoed so a dry-run can verify the routing target.
+      return { ok: true, reason: 'dry-run', widthDots: rendered.width, heightDots: rendered.height, deviceName: deviceName || null, ...dump }
     } catch (e) { return { ok: false, reason: 'dry-run: ' + (e.message || e) } }
   }
   let printer
-  try { printer = await defaultPrinter(win) } catch (e) { return { ok: false, reason: 'printer-list: ' + (e.message || e) } }
-  if (!printer) return { ok: false, reason: 'no-default-printer' }
-  // printer name carried on failure returns too, so the main process can log it.
-  if (requireThermal && !looksThermal(printer, rawMode)) {
-    return { ok: false, printer: printer.name, reason: 'default-printer-not-thermal: ' + printer.name }
+  if (deviceName) {
+    // Explicit printer chosen in settings — spool straight to it, skip the default
+    // lookup + thermal-name guard (deliberate operator choice).
+    printer = { name: deviceName }
+  } else {
+    try { printer = await defaultPrinter(win) } catch (e) { return { ok: false, reason: 'printer-list: ' + (e.message || e) } }
+    if (!printer) return { ok: false, reason: 'no-default-printer' }
+    // printer name carried on failure returns too, so the main process can log it.
+    if (requireThermal && !looksThermal(printer, rawMode)) {
+      return { ok: false, printer: printer.name, reason: 'default-printer-not-thermal: ' + printer.name }
+    }
   }
   try {
     await rawSpool(printer.name, payload)
@@ -568,12 +581,13 @@ function worstCaseHtml() {
   return buildReceiptHtml(WORST_CASE_DATA)
 }
 
-async function testPrint({ kind, win, printScale }) {
+async function testPrint({ kind, win, printScale, deviceName = '' }) {
   const html = kind === 'worstcase' ? worstCaseHtml() : calibrationHtml()
   // explicit user action from settings — skip the thermal-name guard so the
-  // operator can test whatever printer is set as default. printScale honours the
-  // saved setting so the test page matches what real receipts will look like.
-  return printHtml({ html, copies: 1, win, tag: kind || 'calibration', requireThermal: false, printScale })
+  // operator can test whatever printer is chosen. printScale honours the saved
+  // setting so the test page matches what real receipts will look like. deviceName
+  // (optional) routes the test to the chosen thermal printer; blank → default.
+  return printHtml({ html, copies: 1, win, tag: kind || 'calibration', requireThermal: false, printScale, deviceName })
 }
 
 module.exports = { printHtml, testPrint, DOTS, clampScale, buildReceiptHtml }

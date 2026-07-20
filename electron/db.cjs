@@ -9,7 +9,8 @@
 const path = require('path')
 const fs = require('fs')
 const initSqlJs = require('sql.js')
-const { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS } = require('./shopDefaults.cjs')
+const { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS, FORM_THEME_DEFAULT, FORM_FOOTER_DEFAULT } = require('./shopDefaults.cjs')
+const { DEFAULT_COORDS: OVERLAY_DEFAULT_COORDS, DEFAULT_OFFSETS: OVERLAY_DEFAULT_OFFSETS } = require('./overlayDefaults.cjs')
 
 let SQL = null
 let db = null
@@ -221,7 +222,10 @@ function migrateSchema() {
   // The colour form replaced the earlier pre-printed-form "overlay" approach,
   // whose mode value was 'laser_form'. Rename any DB still carrying it. Idempotent
   // (no rows match after the first run), so it is safe on every launch.
-  db.run("UPDATE settings SET print_mode = 'color_form' WHERE print_mode = 'laser_form'")
+  // The colour full-form mode ('color_form') was removed — the shop only uses
+  // thermal + overlay. Normalise any DB still on it (or the older 'laser_form') to
+  // 'thermal' so no one is stuck in a removed mode. Idempotent, safe every launch.
+  db.run("UPDATE settings SET print_mode = 'thermal' WHERE print_mode IN ('laser_form', 'color_form')")
   // settings.form_paper — the plain-paper sheet the colour form is printed on:
   // 'A5' (default) | 'A4' | 'Letter' | 'custom' (then form_paper_w_mm /
   // form_paper_h_mm apply).
@@ -262,6 +266,65 @@ function migrateSchema() {
   // URL the shop uploads in ڈیفالٹ سیٹنگز, or a file path). Blank → a CSS diamond
   // gem is drawn instead. Additive, no backfill (blank is the valid default).
   if (!sCols.includes('shop_logo_path')) db.run('ALTER TABLE settings ADD COLUMN shop_logo_path TEXT')
+
+  // settings.form_theme — the colour-form PALETTE (JSON blob of the seven themed
+  // colours; see shopDefaults.cjs FORM_THEME_DEFAULT). Read by colorFormPrint.cjs
+  // to drive both the preview and the Canon print, so a shop can recolour its
+  // parchi from ڈیفالٹ سیٹنگز. Seeded once with the reference palette; a missing
+  // key falls back to the default at render time, so partial blobs are safe.
+  if (!sCols.includes('form_theme')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_theme TEXT')
+    db.run('UPDATE settings SET form_theme = ? WHERE form_theme IS NULL OR form_theme = ?', [JSON.stringify(FORM_THEME_DEFAULT), ''])
+  }
+  // settings.form_footer — the editable footer press line on the colour form
+  // (above the fixed Rayyan brand line). Same one-time guard as slip_warning: the
+  // column being absent IS the guard, so the default is seeded exactly once and a
+  // shop that later clears it (blank → the line hides) is never re-seeded.
+  if (!sCols.includes('form_footer')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_footer TEXT')
+    db.run('UPDATE settings SET form_footer = ? WHERE form_footer IS NULL OR form_footer = ?', [FORM_FOOTER_DEFAULT, ''])
+  }
+  // settings.form_style — the Canon-form look: 'bw' (black-and-white line-art, the
+  // default — prints crisp on a mono laser like the Canon LBP6030) or 'color' (the
+  // themed colour design, for a colour printer). Default 'bw'.
+  if (!sCols.includes('form_style')) {
+    db.run('ALTER TABLE settings ADD COLUMN form_style TEXT')
+    db.run("UPDATE settings SET form_style = 'bw' WHERE form_style IS NULL")
+  }
+
+  // ── Overlay mode (electron/overlayForm.cjs) — LAB رسید on PRE-PRINTED slips ──
+  // print_mode = 'overlay_form' drops VALUES ONLY into the blank cells of the
+  // customer's pre-printed 2-up colour slip. These columns configure the geometry;
+  // all additive + defaulted, so old DBs migrate cleanly. overlay_coords holds the
+  // JSON per-field map the calibration tool tunes; overlay_bg_path is the uploaded
+  // blank-form scan (base64 data URL) used for the calibration canvas + WhatsApp.
+  const overlayCols = [
+    ['overlay_paper', 'TEXT', "'halfletter_landscape'"],
+    ['overlay_offx', 'REAL', '0'],
+    ['overlay_offy', 'REAL', '0'],
+    ['overlay_scalex', 'REAL', '1'],
+    ['overlay_scaley', 'REAL', '1'],
+    ['overlay_right_dx', 'REAL', '108'],
+    ['overlay_right_dy', 'REAL', '0'],
+    ['overlay_font_pt', 'REAL', '10']
+  ]
+  for (const [col, type, def] of overlayCols) {
+    if (!sCols.includes(col)) {
+      db.run(`ALTER TABLE settings ADD COLUMN ${col} ${type}`)
+      db.run(`UPDATE settings SET ${col} = ${def} WHERE ${col} IS NULL`)
+    }
+  }
+  // overlay_coords / overlay_bg_path — no backfill (blank is the valid default: the
+  // renderer falls back to DEFAULT_COORDS, and no scan means an empty calibration bg).
+  if (!sCols.includes('overlay_coords')) db.run('ALTER TABLE settings ADD COLUMN overlay_coords TEXT')
+  if (!sCols.includes('overlay_bg_path')) db.run('ALTER TABLE settings ADD COLUMN overlay_bg_path TEXT')
+
+  // Dual-printer routing (the machine has a thermal printer AND the Canon LBP6030
+  // attached at once). printer_thermal = device name for ESC/POS receipts;
+  // printer_canon = device name for the colour/overlay Canon jobs. Blank = use the
+  // Windows default. No backfill — blank is the valid default until the shop picks.
+  if (!sCols.includes('printer_thermal')) db.run('ALTER TABLE settings ADD COLUMN printer_thermal TEXT')
+  if (!sCols.includes('printer_canon')) db.run('ALTER TABLE settings ADD COLUMN printer_canon TEXT')
 
   // settings.shop_* — the printed slip header (name / tagline / owner / three
   // phones / address). Added per column, then BACKFILLED with the Chaudhary
@@ -337,11 +400,22 @@ function seedSettings() {
     const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
     // The shop header is seeded with the real Chaudhary values (shopDefaults.cjs),
     // so a brand-new install prints a complete header before anyone opens Defaults.
+    // Overlay is seeded with the CALIBRATED coordinate map + geometry (overlayDefaults
+    // .cjs), so a fresh install lands values in the pre-printed cells with NO dragging.
+    // Fresh-only (this runs when count==0); existing installs keep their own values.
+    const OVERLAY_SEED = [
+      ['overlay_paper', 'halfletter_landscape'],
+      ...Object.entries(OVERLAY_DEFAULT_OFFSETS),
+      ['overlay_coords', JSON.stringify(OVERLAY_DEFAULT_COORDS)]
+    ]
+    const ovCols = OVERLAY_SEED.map(([c]) => c).join(', ')
+    const ovPlace = OVERLAY_SEED.map(() => '?').join(', ')
+    const ovVals = OVERLAY_SEED.map(([, v]) => v)
     db.run(
       `INSERT INTO settings (id, date, rate_tezabi_tola, parchi_charges, fc_per_gram, rate_tezabi_gram, point, slip_count, raw_print_mode, print_scale,
-                             ${SLIP_TEXT_FIELDS.join(', ')}, shop_seeded)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SLIP_TEXT_FIELDS.map(() => '?').join(', ')}, 1)`,
-      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15, ...SLIP_TEXT_FIELDS.map((f) => SLIP_TEXT_DEFAULTS[f])]
+                             form_style, form_theme, form_footer, ${ovCols}, ${SLIP_TEXT_FIELDS.join(', ')}, shop_seeded)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${ovPlace}, ${SLIP_TEXT_FIELDS.map(() => '?').join(', ')}, 1)`,
+      [today, 9000, 100, 80, 772, 100, 1, 'auto', 1.15, 'bw', JSON.stringify(FORM_THEME_DEFAULT), FORM_FOOTER_DEFAULT, ...ovVals, ...SLIP_TEXT_FIELDS.map((f) => SLIP_TEXT_DEFAULTS[f])]
     )
   }
 }
@@ -438,11 +512,17 @@ const api = {
     // are passed through Number() so a stringly UI value can't corrupt the
     // column; print_mode / form_paper are clamped to their known values.
     const FORM_NUM_FIELDS = ['form_paper_w_mm', 'form_paper_h_mm', 'form_offset_x_mm', 'form_offset_y_mm', 'form_scale_x', 'form_scale_y', 'form_font_pt']
+    // Overlay-mode numeric columns follow the same COALESCE + Number() rule.
+    const OVERLAY_NUM_FIELDS = ['overlay_offx', 'overlay_offy', 'overlay_scalex', 'overlay_scaley', 'overlay_right_dx', 'overlay_right_dy', 'overlay_font_pt']
     run(
       `UPDATE settings SET date=?, rate_tezabi_tola=?, parchi_charges=?, fc_per_gram=?, rate_tezabi_gram=?, point=?, slip_count=?,
               raw_print_mode=COALESCE(?, raw_print_mode), print_scale=COALESCE(?, print_scale),
               print_mode=COALESCE(?, print_mode), form_paper=COALESCE(?, form_paper), form_template=COALESCE(?, form_template),
               shop_logo_path=COALESCE(?, shop_logo_path),
+              form_style=COALESCE(?, form_style), form_theme=COALESCE(?, form_theme), form_footer=COALESCE(?, form_footer),
+              overlay_paper=COALESCE(?, overlay_paper), overlay_coords=COALESCE(?, overlay_coords), overlay_bg_path=COALESCE(?, overlay_bg_path),
+              printer_thermal=COALESCE(?, printer_thermal), printer_canon=COALESCE(?, printer_canon),
+              ${OVERLAY_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
               ${FORM_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
               ${SLIP_TEXT_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')} WHERE id=1`,
       [
@@ -455,11 +535,29 @@ const api = {
         rates.slip_count != null ? rates.slip_count : 1,
         rates.raw_print_mode != null ? rates.raw_print_mode : null,
         rates.print_scale != null ? Number(rates.print_scale) : null,
-        rates.print_mode != null ? (rates.print_mode === 'color_form' ? 'color_form' : 'thermal') : null,
+        // print_mode clamped to a known value; anything unknown → 'thermal'.
+        rates.print_mode != null ? (['overlay_form', 'thermal'].includes(rates.print_mode) ? rates.print_mode : 'thermal') : null,
         rates.form_paper != null ? (['A5', 'A4', 'Letter', 'custom'].includes(rates.form_paper) ? rates.form_paper : 'A5') : null,
         rates.form_template != null ? String(rates.form_template) : null,
         // Logo: '' (deliberately cleared → CSS gem) is saved; only undefined/null is skipped.
         rates.shop_logo_path != null ? String(rates.shop_logo_path) : null,
+        // form_style: 'bw' | 'color' (anything else → 'bw'); undefined/null keeps stored.
+        rates.form_style != null ? (rates.form_style === 'color' ? 'color' : 'bw') : null,
+        // form_theme: accept an object (stringified here) or a ready JSON string;
+        // undefined/null keeps the stored palette. form_footer: '' (cleared → line
+        // hidden) is saved; only undefined/null is skipped.
+        rates.form_theme != null ? (typeof rates.form_theme === 'string' ? rates.form_theme : JSON.stringify(rates.form_theme)) : null,
+        rates.form_footer != null ? String(rates.form_footer) : null,
+        // overlay_paper (only the known value for now), overlay_coords (JSON string
+        // or object → stringified), overlay_bg_path (base64 data URL or path; ''
+        // clears the scan). undefined/null keeps the stored value.
+        rates.overlay_paper != null ? String(rates.overlay_paper) : null,
+        rates.overlay_coords != null ? (typeof rates.overlay_coords === 'string' ? rates.overlay_coords : JSON.stringify(rates.overlay_coords)) : null,
+        rates.overlay_bg_path != null ? String(rates.overlay_bg_path) : null,
+        // Chosen printer device names ('' clears → default). undefined/null keeps stored.
+        rates.printer_thermal != null ? String(rates.printer_thermal) : null,
+        rates.printer_canon != null ? String(rates.printer_canon) : null,
+        ...OVERLAY_NUM_FIELDS.map((f) => (rates[f] != null && Number.isFinite(Number(rates[f])) ? Number(rates[f]) : null)),
         ...FORM_NUM_FIELDS.map((f) => (rates[f] != null && Number.isFinite(Number(rates[f])) ? Number(rates[f]) : null)),
         ...SLIP_TEXT_FIELDS.map((f) => (rates[f] != null ? String(rates[f]) : null))
       ]

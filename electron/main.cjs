@@ -5,7 +5,9 @@ const { spawn } = require('child_process')
 const db = require('./db.cjs')
 const backup = require('./backup.cjs')
 const raster = require('./rasterPrint.cjs')
-const colorForm = require('./colorFormPrint.cjs')
+const overlayForm = require('./overlayForm.cjs')
+const { routeFor } = require('./printRouting.cjs')
+const { DEFAULT_OFFSETS: OVERLAY_DEFAULT_OFFSETS } = require('./overlayDefaults.cjs')
 const { SHOP_FIELDS } = require('./shopDefaults.cjs')
 const liveGold = require('./liveGold.cjs')
 const trial = require('./trial/trialManager.cjs')
@@ -287,58 +289,66 @@ function printSettings() {
   let rawMode = 'auto'
   let printScale = 1.15
   let printMode = 'thermal'
-  let formCfg = {}
+  let overlayCfg = {}
+  let printerThermal = ''
+  let printerCanon = ''
   try {
     const r = db.api.getRates() || {}
     if (r.raw_print_mode === 'force') rawMode = 'force'
     if (r.print_scale != null && Number.isFinite(Number(r.print_scale))) printScale = Number(r.print_scale)
-    // Colour-form routing (see electron/colorFormPrint.cjs). Anything other than
-    // the explicit 'color_form' value stays thermal, so an old/NULL column can
-    // never reroute a thermal shop's receipts.
-    if (r.print_mode === 'color_form') printMode = 'color_form'
-    // cfg for the colour renderer: sheet size + the editable red-warning / green-
-    // note text + the shop identity block + optional logo. shop/terms are ALSO
-    // sent inside the slip data for real prints; here they seed the test print
-    // and act as a fallback.
-    formCfg = {
-      form_paper: r.form_paper,
-      form_paper_w_mm: r.form_paper_w_mm,
-      form_paper_h_mm: r.form_paper_h_mm,
-      warning: r.slip_warning,
-      terms: r.slip_terms,
-      logo: r.shop_logo_path,
-      shop: Object.fromEntries(SHOP_FIELDS.map((f) => [f, r[f]]))
+    // Print-path routing: only 'overlay_form' reroutes (lab رسید → Canon overlay);
+    // anything else (incl. a legacy 'color_form' from a removed mode) stays thermal.
+    if (r.print_mode === 'overlay_form') printMode = 'overlay_form'
+    // Overlay (pre-printed slip) geometry — see electron/overlayForm.cjs.
+    overlayCfg = {
+      overlay_paper: r.overlay_paper,
+      offsetX: r.overlay_offx, offsetY: r.overlay_offy,
+      scaleX: r.overlay_scalex, scaleY: r.overlay_scaley,
+      rightDX: r.overlay_right_dx, rightDY: r.overlay_right_dy,
+      fontPt: r.overlay_font_pt,
+      coords: r.overlay_coords,
+      bg: r.overlay_bg_path
     }
+    // Dual-printer device names (blank = Windows default).
+    printerThermal = r.printer_thermal || ''
+    printerCanon = r.printer_canon || ''
   } catch (e) { console.warn('[print] settings read failed, using defaults:', e && e.message || e) }
   const envScale = parseFloat(process.env.GOLDLAB_PRINT_SCALE)
   if (Number.isFinite(envScale)) printScale = envScale
-  return { rawMode, printScale, printMode, formCfg }
+  return { rawMode, printScale, printMode, overlayCfg, printerThermal, printerCanon }
 }
 
-ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies } = {}) => {
+ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, forceMode } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
-  const { rawMode, printScale, printMode, formCfg } = printSettings()
-  // ── Colour-form branch (print_mode = 'color_form') ─────────────────────────
-  // Same renderer call, different engine: the software draws the WHOLE receipt
-  // in colour from the slip data and prints it on plain paper through the Windows
-  // (Canon) driver — never ESC/POS. The thermal path below is untouched. The
-  // colour renderer needs the structured slip data; the legacy clone-HTML payload
-  // has no field values, so it reports back instead of guessing.
-  if (printMode === 'color_form') {
+  const { rawMode, printScale, printMode, overlayCfg, printerThermal, printerCanon } = printSettings()
+  // A per-print forceMode (the lab receipt's اوورلے button) overrides the settings
+  // print_mode for THIS job only, so the two buttons pick the printer explicitly.
+  const effMode = ['overlay_form', 'thermal'].includes(forceMode) ? forceMode : printMode
+  // Dual-printer routing decision (pure): which engine + which physical printer.
+  const route = routeFor({ printMode: effMode, receipt, printerThermal, printerCanon })
+  // ── Overlay engine — LAB رسید ONLY, to the Canon ───────────────────────────
+  // Drops VALUES ONLY onto the customer's pre-printed 2-up slip. If the Canon isn't
+  // configured we STOP (a toast asks the user to pick it) — never fall back to
+  // thermal, which would print a full slip over the pre-printed form.
+  if (route.engine === 'overlay') {
+    if (route.error) return { ok: false, reason: route.error }
     try {
-      if (!data) return { ok: false, reason: 'color-form-needs-slip-data' }
-      return await colorForm.printColorForm({ data, cfg: formCfg, win, copies })
+      if (!data) return { ok: false, reason: 'overlay-needs-slip-data' }
+      return await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies })
     } catch (e) {
-      console.warn('[raster-print-slip] color-form render threw:', e && e.message || e)
+      console.warn('[raster-print-slip] overlay render threw:', e && e.message || e)
       return { ok: false, reason: String(e && e.message || e) }
     }
   }
+  // ── Thermal engine (ESC/POS) — to the thermal printer ───────────────────────
   // `data` (the lab receipt) → build HTML from the shared template here so the
   // real slip and the worst-case test page use ONE source of truth. `html` (the
-  // other receipts) still comes pre-built from the renderer's clone path.
+  // other receipts) still comes pre-built from the renderer's clone path. The
+  // chosen thermal device name is passed explicitly so the job lands on the right
+  // printer even when the Canon is the Windows default.
   try {
     const slipHtml = data ? raster.buildReceiptHtml(data) : html
-    const res = await raster.printHtml({ html: slipHtml, copies, win, tag: 'slip', printScale, rawMode })
+    const res = await raster.printHtml({ html: slipHtml, copies, win, tag: 'slip', printScale, rawMode, deviceName: route.deviceName })
     // LOUD log (main process) when the raster path can't be used and the renderer
     // is about to fall back to the Windows driver (the driver stretches/blurs the
     // slip — this is the #1 cause of a wrong-length / faint print). Printer name +
@@ -363,56 +373,81 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies } = {}) =>
 // receipt, straight through the raster pipeline to the DEFAULT printer.
 ipcMain.handle('raster-test-print', async (_evt, { kind } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
-  const { printScale } = printSettings()
-  try { return await raster.testPrint({ kind, win, printScale }) }
+  const { printScale, printerThermal } = printSettings()
+  try { return await raster.testPrint({ kind, win, printScale, deviceName: printerThermal }) }
   catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
-// WhatsApp share image for color_form mode: render the SAME full colour receipt
-// the Canon prints and put it on the clipboard as a PNG (the existing WhatsApp
-// auto-paste flow then attaches it). The renderer calls this INSTEAD of
-// capture-to-clipboard when print_mode = 'color_form', so the shared picture
-// always matches what actually comes out of the printer.
-ipcMain.handle('color-form-share-image', async (_evt, { data } = {}) => {
-  const { printMode, formCfg } = printSettings()
-  if (printMode !== 'color_form') return { ok: false, reason: 'not-color-form' }
-  try { return await colorForm.colorFormImageToClipboard({ data, cfg: formCfg }) }
-  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
-})
+// ── Overlay (pre-printed slip) IPC ──────────────────────────────────────────
+// Merge the calibration tool's live (possibly unsaved) edits over the stored cfg
+// so a test print / share reflects the current on-screen calibration.
+function overlayCfgWith(override = {}) {
+  const { overlayCfg } = printSettings()
+  const pick = (k, dbk) => (override[k] != null ? override[k] : overlayCfg[dbk != null ? dbk : k])
+  return {
+    overlay_paper: pick('overlay_paper'),
+    offsetX: pick('offsetX'), offsetY: pick('offsetY'),
+    scaleX: pick('scaleX'), scaleY: pick('scaleY'),
+    rightDX: pick('rightDX'), rightDY: pick('rightDY'),
+    fontPt: pick('fontPt'),
+    coords: override.coords != null ? override.coords : overlayCfg.coords,
+    bg: override.bg != null ? override.bg : overlayCfg.bg
+  }
+}
 
-// Colour-form LIVE preview HTML for the settings dialog: returns the same
-// buildColorFormHtml the printer/WhatsApp use, filled with a sample receipt and
-// the shop's CURRENT (possibly unsaved) header/warning/note/logo/paper passed
-// from the form, so the preview reflects edits instantly. No printing.
-ipcMain.handle('color-form-preview-html', async (_evt, override = {}) => {
+// Static metadata for the calibration canvas: the default per-field coordinates,
+// Urdu labels, and realistic sample values — so the renderer draws the draggable
+// chips without duplicating this map. Also returns the current saved coords/bg.
+ipcMain.handle('overlay-meta', async () => {
   try {
-    const { formCfg } = printSettings()
-    const shop = override.shop || formCfg.shop
-    const cfg = {
-      form_paper: override.form_paper || formCfg.form_paper,
-      form_paper_w_mm: override.form_paper_w_mm != null ? override.form_paper_w_mm : formCfg.form_paper_w_mm,
-      form_paper_h_mm: override.form_paper_h_mm != null ? override.form_paper_h_mm : formCfg.form_paper_h_mm,
-      warning: override.warning != null ? override.warning : formCfg.warning,
-      terms: override.terms != null ? override.terms : formCfg.terms,
-      logo: override.logo != null ? override.logo : formCfg.logo,
-      shop
+    const { overlayCfg } = printSettings()
+    let coords = {}
+    try { coords = overlayCfg.coords ? (typeof overlayCfg.coords === 'string' ? JSON.parse(overlayCfg.coords) : overlayCfg.coords) : {} } catch { coords = {} }
+    return {
+      ok: true,
+      defaultCoords: overlayForm.DEFAULT_COORDS,
+      defaultOffsets: OVERLAY_DEFAULT_OFFSETS, // for the "reset to defaults" button
+      fieldLabels: overlayForm.FIELD_LABELS,
+      sample: overlayForm.sampleFieldValues(),
+      coords,
+      cfg: {
+        offsetX: overlayCfg.offsetX, offsetY: overlayCfg.offsetY,
+        scaleX: overlayCfg.scaleX, scaleY: overlayCfg.scaleY,
+        rightDX: overlayCfg.rightDX, rightDY: overlayCfg.rightDY,
+        fontPt: overlayCfg.fontPt
+      }
     }
-    const data = { ...colorForm.buildSampleData(), shop, terms: cfg.terms }
-    return { ok: true, html: colorForm.buildColorFormHtml(data, cfg) }
   } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
-// Colour-form preview / test print (settings → کلر فارم پرنٹ ٹیسٹ): render a
-// realistic FILLED sample receipt with the shop's current header/warning/note so
-// the shopkeeper can see the whole colour layout. Honours GOLDLAB_PRINT_PDF_DIR.
-ipcMain.handle('color-form-test-print', async () => {
+// Overlay TEST PRINT (settings → ٹیسٹ پرنٹ): print the VALUES ONLY with the current
+// (possibly unsaved) calibration, so the shop lays it over a real pre-printed slip.
+ipcMain.handle('overlay-test-print', async (_evt, override = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
-  const { formCfg } = printSettings()
+  const { printerCanon } = printSettings()
+  if (!printerCanon) return { ok: false, reason: 'canon-printer-not-set' }
   try {
-    // Sample tables + the shop's real header/terms so the preview is faithful.
-    const data = { ...colorForm.buildSampleData(), shop: formCfg.shop, terms: formCfg.terms }
-    return await colorForm.printColorForm({ data, cfg: formCfg, win, copies: 1, tag: 'test' })
+    const data = overlayForm.buildSampleData() // lab-shaped sample tables
+    return await overlayForm.printOverlay({ data, cfg: { ...overlayCfgWith(override), deviceName: printerCanon }, win, copies: 1, tag: 'test' })
   } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// Installed-printer list for the two device-name dropdowns in settings.
+ipcMain.handle('list-printers', async () => {
+  if (!win) return { ok: false, reason: 'no-window', printers: [] }
+  try {
+    const list = await win.webContents.getPrintersAsync()
+    return { ok: true, printers: (list || []).map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: !!p.isDefault })) }
+  } catch (e) { return { ok: false, reason: String(e && e.message || e), printers: [] } }
+})
+
+// Overlay WhatsApp/preview COMPOSITE: values on top of the uploaded blank-form
+// scan → PNG (clipboard for the WhatsApp auto-paste flow; dataUrl returned too).
+ipcMain.handle('overlay-share-image', async (_evt, { data } = {}) => {
+  const { printMode, overlayCfg } = printSettings()
+  if (printMode !== 'overlay_form') return { ok: false, reason: 'not-overlay' }
+  try { return await overlayForm.overlayImageToClipboard({ data, cfg: overlayCfg, toClipboard: true }) }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
 ipcMain.handle('print-page', async (_evt, opts = {}) => {

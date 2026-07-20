@@ -42,10 +42,32 @@ const SLIP_TERMS_DEFAULT = 'سونا ٹیسٹ کرنے کی فیس 100 روپے 
 // Not used by the thermal slip. Default is the Imtiaz-style warning.
 const SLIP_WARNING_DEFAULT = 'رزلٹ کے بعد سونا لینے یا نہ لینے کا دکاندار پابند نہیں ہوگا۔ چوری کا سونا نکلنے پر ہم ذمہ دار نہ ہوں گے۔'
 
+// ── Colour-form THEME (کینن کلر mode) ────────────────────────────────────────
+// The seven palette colours the shop can change in ڈیفالٹ سیٹنگز; stored as a
+// JSON blob in settings.form_theme and read by electron/colorFormPrint.cjs to
+// drive BOTH the live preview and the actual Canon print. Defaults match the
+// approved color_form_template.html so an un-customized shop prints the reference
+// look. Only these keys are themed (frame / banner / title / name / rules /
+// warning / note); the pink header tints and per-unit header colours stay fixed.
+const FORM_THEME_DEFAULT = {
+  frame: '#d68a26',   // ornate gold outer frame
+  banner: '#123a7a',  // blue header banner
+  titleEn: '#2e8b40', // green English title
+  name: '#e11d24',    // red Urdu shop name (+ بقایا رقم box text)
+  rule: '#c62828',    // red table rules / labels
+  warn: '#c1272d',    // red warning bar
+  note: '#1a7a3c'     // green note box
+}
+
+// The small footer PRESS line on the colour form (above the Rayyan brand line).
+// Seeded into settings.form_footer, editable per shop. Blank = the line is hidden
+// (the Rayyan brand line always stays). Not used by the thermal slip.
+const FORM_FOOTER_DEFAULT = 'سافٹ ویئر بنوانے کے لیے ہم سے رابطہ کریں'
+
 // Every free-text settings column seeded from this file: the seven header fields
 // plus the terms paragraph and the colour-form warning bar. db.cjs uses THIS for
 // schema/seed/save; SHOP_FIELDS stays header-only.
 const SLIP_TEXT_FIELDS = [...SHOP_FIELDS, 'slip_terms', 'slip_warning']
 const SLIP_TEXT_DEFAULTS = { ...SHOP_DEFAULTS, slip_terms: SLIP_TERMS_DEFAULT, slip_warning: SLIP_WARNING_DEFAULT }
 
-module.exports = { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS }
+module.exports = { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS, FORM_THEME_DEFAULT, FORM_FOOTER_DEFAULT }

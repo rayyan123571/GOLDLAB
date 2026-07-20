@@ -90,14 +90,14 @@ contextBridge.exposeInMainWorld('api', {
   rasterPrintSlip: (opts) => ipcRenderer.invoke('raster-print-slip', opts),
   // Calibration / worst-case printer test pages from the settings dialog.
   rasterTestPrint: (kind) => ipcRenderer.invoke('raster-test-print', { kind }),
-  // Colour-form preview / test print (print_mode = 'color_form'): a filled
-  // sample receipt. Real slip printing goes through rasterPrintSlip — main routes it.
-  colorFormTestPrint: () => ipcRenderer.invoke('color-form-test-print', {}),
-  // Live colour-form preview HTML for the settings dialog (reflects unsaved edits).
-  colorFormPreviewHtml: (override) => ipcRenderer.invoke('color-form-preview-html', override || {}),
-  // Colour mode WhatsApp share: put the full colour receipt (what the Canon
-  // prints) on the clipboard as an image, instead of the slip snapshot.
-  colorFormShareImage: (data) => ipcRenderer.invoke('color-form-share-image', { data }),
+  // Overlay mode (pre-printed slip, LAB رسید only): calibration metadata (default
+  // coords / labels / sample), values-only test print (reflects unsaved edits),
+  // and the WhatsApp composite (values over the blank-form scan).
+  overlayMeta: () => ipcRenderer.invoke('overlay-meta'),
+  overlayTestPrint: (override) => ipcRenderer.invoke('overlay-test-print', override || {}),
+  overlayShareImage: (data) => ipcRenderer.invoke('overlay-share-image', { data }),
+  // Installed-printer list for the dual-printer (thermal + Canon) device pickers.
+  listPrinters: () => ipcRenderer.invoke('list-printers'),
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
   captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
   // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.
