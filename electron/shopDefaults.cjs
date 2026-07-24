@@ -64,10 +64,21 @@ const FORM_THEME_DEFAULT = {
 // (the Rayyan brand line always stays). Not used by the thermal slip.
 const FORM_FOOTER_DEFAULT = 'سافٹ ویئر بنوانے کے لیے ہم سے رابطہ کریں'
 
-// Every free-text settings column seeded from this file: the seven header fields
-// plus the terms paragraph and the colour-form warning bar. db.cjs uses THIS for
-// schema/seed/save; SHOP_FIELDS stays header-only.
-const SLIP_TEXT_FIELDS = [...SHOP_FIELDS, 'slip_terms', 'slip_warning']
-const SLIP_TEXT_DEFAULTS = { ...SHOP_DEFAULTS, slip_terms: SLIP_TERMS_DEFAULT, slip_warning: SLIP_WARNING_DEFAULT }
+// The واٹس ایپ یاد دہانی message sent from the "لینا ہے" balance reports. Seeded
+// into settings.whatsapp_reminder_text; editable in ڈیفالٹ سیٹنگز.
+//   {رقم} → the outstanding amount, exactly as that report prints it on screen
+//           (rupees on the رقم report, تولہ/ماشہ on the تیزابی one)
+// {رقم} is the ONLY placeholder. The message never carries the customer's name —
+// it addresses him as محترم. (A stray {نام} left in an edited template is stripped
+// out before sending rather than filled in, so a name can never leak through.)
+// Nothing is ever sent automatically: the button only OPENS the chat with this
+// text filled in, and the shopkeeper presses Send.
+const WA_REMINDER_DEFAULT = 'محترم، آپ کے ذمے {رقم} باقی ہیں۔ برائے مہربانی ادائیگی کر دیں۔ شکریہ'
 
-module.exports = { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS, FORM_THEME_DEFAULT, FORM_FOOTER_DEFAULT }
+// Every free-text settings column seeded from this file: the seven header fields,
+// the terms paragraph, the colour-form warning bar and the WhatsApp reminder
+// template. db.cjs uses THIS for schema/seed/save; SHOP_FIELDS stays header-only.
+const SLIP_TEXT_FIELDS = [...SHOP_FIELDS, 'slip_terms', 'slip_warning', 'whatsapp_reminder_text']
+const SLIP_TEXT_DEFAULTS = { ...SHOP_DEFAULTS, slip_terms: SLIP_TERMS_DEFAULT, slip_warning: SLIP_WARNING_DEFAULT, whatsapp_reminder_text: WA_REMINDER_DEFAULT }
+
+module.exports = { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, WA_REMINDER_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS, FORM_THEME_DEFAULT, FORM_FOOTER_DEFAULT }

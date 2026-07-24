@@ -9,7 +9,11 @@ const { spawnSync } = require('child_process')
 
 const ROOT = path.join(__dirname, '..')
 // require('electron') outside an Electron runtime returns the path to electron.exe.
-const electronPath = require('electron')
+// GOLDLAB_ELECTRON_BIN overrides it so a build for a DIFFERENT Electron than the
+// devDependency (the Windows 7 build uses Electron 22 — see scripts/build-win7.cjs)
+// compiles its bytecode with that Electron's V8. A .jsc built by the wrong V8 dies
+// on the customer with "invalid or incompatible cached data".
+const electronPath = process.env.GOLDLAB_ELECTRON_BIN || require('electron')
 const worker = path.join(__dirname, 'bytecode-worker.cjs')
 
 console.log('[bytecode] compiling electron-dist with Electron V8 (this is quick)...')

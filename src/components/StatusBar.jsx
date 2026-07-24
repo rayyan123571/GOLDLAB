@@ -1,9 +1,21 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useApp } from '../state/store.jsx'
-import { fmtMoney, fmtNum } from '../logic/units.js'
 import useLiveGold from '../logic/useLiveGold.js'
 import DefaultsForm from './DefaultsForm.jsx'
 import IndrajForm from './IndrajForm.jsx'
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const BACKUP_STALE_DAYS = 7 // older than this → the "! بیک اپ کریں" nudge appears
+
+// Urdu message for each failure reason electron/manualBackup.cjs can return. A
+// backup must NEVER fail silently, so every path here ends in a visible message.
+const BACKUP_ERROR = {
+  'no-folder': 'بیک اپ فولڈر منتخب نہیں کیا گیا',
+  'not-writable': 'بیک اپ فولڈر نہیں ملا یا اس میں لکھا نہیں جا سکتا',
+  'no-db': 'ڈیٹا بیس فائل نہیں ملی',
+  'busy': 'بیک اپ پہلے سے جاری ہے',
+  'copy-failed': 'بیک اپ محفوظ نہیں ہو سکا — جگہ یا اجازت چیک کریں'
+}
 
 // Live gold spot box (display-only reference — no rates/receipts involvement).
 // MT5 Market-Watch style: bid (bold, larger) / ask (smaller, muted) side by
@@ -50,18 +62,67 @@ function GoldTicker() {
 }
 
 export default function StatusBar() {
-  const { totals, resetEntry, searchReceiptNo, resetKachaCounter, cashDisplay } = useApp()
+  const { resetEntry, searchReceiptNo } = useApp()
   const [search, setSearch] = useState('')
   const [searchMsg, setSearchMsg] = useState('')
   const [showDefaults, setShowDefaults] = useState(false)
   const [showIndraj, setShowIndraj] = useState(false) // اندراج (manual balance adjust) modal
-  const [showKachaConfirm, setShowKachaConfirm] = useState(false) // کچا سونا reset gate
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [backupMsg, setBackupMsg] = useState(null) // { text, ok } | null — self-dismissing
+  const [lastBackupAt, setLastBackupAt] = useState(null)
+  const backupTimer = useRef(null)
 
-  // A negative bottom-bar value turns the box BACKGROUND red (text stays the
-  // class's white — best contrast, colorblind-safe); zero/positive falls back to
-  // the .status-green class's green. Inline style beats the class regardless of
-  // Tailwind layer order. Condition on the RAW number, never the formatted string.
-  const negStyle = (v) => ({ backgroundColor: Number(v) < 0 ? '#dc2626' : undefined })
+  // Last manual-backup time — drives the overdue nudge beside the button. Read
+  // once on mount and refreshed after every successful backup.
+  useEffect(() => {
+    if (!window.api || !window.api.manualBackupStatus) return
+    window.api.manualBackupStatus()
+      .then((s) => { if (s && s.ok) setLastBackupAt(s.lastBackupAt || null) })
+      .catch(() => { /* status is advisory only — never block the bar */ })
+  }, [])
+
+  useEffect(() => () => { if (backupTimer.current) clearTimeout(backupTimer.current) }, [])
+
+  // Brief inline message in the bar itself — never a blocking dialog.
+  const flashBackup = (text, ok) => {
+    setBackupMsg({ text, ok })
+    if (backupTimer.current) clearTimeout(backupTimer.current)
+    backupTimer.current = setTimeout(() => setBackupMsg(null), 4000)
+  }
+
+  // One click = one dated snapshot copied into the chosen folder. With no folder
+  // chosen yet the picker opens first, then the backup continues in the same click.
+  const doBackup = async () => {
+    if (backupBusy) return
+    if (!window.api || !window.api.manualBackupRun) { flashBackup('بیک اپ اس موڈ میں دستیاب نہیں', false); return }
+    setBackupBusy(true)
+    try {
+      const status = await window.api.manualBackupStatus()
+      if (!status || !status.folder) {
+        const picked = await window.api.manualBackupPickFolder()
+        if (!picked || !picked.ok) {
+          flashBackup(BACKUP_ERROR[picked && picked.reason] || BACKUP_ERROR['no-folder'], false)
+          return
+        }
+      }
+      const res = await window.api.manualBackupRun()
+      if (res && res.ok) {
+        setLastBackupAt(res.lastBackupAt || null)
+        flashBackup(`ڈیٹا محفوظ ہو گیا — ${res.fileName}`, true)
+      } else {
+        flashBackup(BACKUP_ERROR[res && res.reason] || 'بیک اپ محفوظ نہیں ہو سکا', false)
+      }
+    } catch (e) {
+      console.warn('Manual backup failed:', e)
+      flashBackup('بیک اپ محفوظ نہیں ہو سکا', false)
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
+  // Overdue = never backed up at all, or more than a week since the last one.
+  const backupOverdue = !lastBackupAt || (Date.now() - new Date(lastBackupAt).getTime()) > BACKUP_STALE_DAYS * DAY_MS
+
 
   // Look up a parchi by its number, triggered by pressing Enter in the رسید نمبر
   // field. Delegates to the store's searchReceiptNo, which walks the merged
@@ -87,33 +148,38 @@ export default function StatusBar() {
 
   return (
     <div dir="rtl" className="flex items-stretch gap-1 px-1 py-1 bg-panel border-t border-line h-[40px]">
-      {/* live shop totals on the RIGHT — 3 boxes: کیش | کچا سونا | تیزابی */}
-      <div className="flex items-stretch gap-3">
-        <div className="flex items-stretch gap-2">
-          <div className="urdu flex items-center px-1 text-[15px] font-bold">کیش</div>
-          {/* dir=ltr so a negative renders standard "-25,000" (minus on the LEFT). */}
-          <div dir="ltr" style={negStyle(cashDisplay)} className="status-green flex items-center justify-center px-3 min-w-[175px] text-[18px] font-bold whitespace-nowrap">{fmtMoney(cashDisplay)}</div>
-        </div>
+      {/* The live shop totals (کیش | کچا سونا | تیزابی) no longer live here —
+          they moved, unchanged, into the top bar's ٹوٹل panel (TotalsPanel.jsx). */}
 
-        <div className="flex items-stretch gap-1">
-          <div className="urdu flex items-center px-1 text-[15px] font-bold">کچا سونا</div>
-          <div dir="ltr" style={negStyle(totals.kacha_sona)} className="status-green flex items-center justify-center px-3 min-w-[120px] text-[18px] font-bold whitespace-nowrap">{fmtNum(totals.kacha_sona, 3)}</div>
-          {/* Reset ONLY this bottom-bar کچا سونا COUNTER to 0. Records are KEPT —
-              the اُدھار report's کچا سونا لیا stays intact (baseline offset). */}
-          <button
-            type="button"
-            onClick={() => setShowKachaConfirm(true)}
-            title="کچا سونا کاؤنٹر صفر کریں (ریکارڈ محفوظ رہے گا)"
-            className="self-center flex items-center justify-center w-6 h-[26px] rounded border border-gray-300 bg-white text-gray-600 text-[14px] leading-none hover:bg-gray-100 active:bg-gray-200 transition-colors"
-          >
-            ↺
-          </button>
-        </div>
-
-        <div className="flex items-stretch gap-2">
-          <div className="urdu flex items-center px-1 text-[15px] font-bold">تیزابی</div>
-          <div dir="ltr" style={negStyle(totals.tezabi_sona)} className="status-green flex items-center justify-center px-3 min-w-[130px] text-[18px] font-bold whitespace-nowrap">{fmtNum(totals.tezabi_sona, 3)}</div>
-        </div>
+      {/* بیک اپ — manual snapshot of the database into the chosen (Google Drive)
+          folder. FIRST DOM child on purpose: this bar is dir="rtl", so the first
+          child renders at the far RIGHT, and the flex-1 spacer below then pushes
+          everything else to the left. Moving this after the spacer would put it
+          on the wrong end of the bar. */}
+      <div className="self-center flex items-center gap-1.5 flex-shrink-0">
+        <button
+          type="button"
+          onClick={doBackup}
+          disabled={backupBusy}
+          title="ڈیٹا کا بیک اپ منتخب فولڈر میں محفوظ کریں"
+          className="self-center flex items-center gap-1.5 px-4 h-[26px] rounded-md bg-purple-600 text-white text-[12px] font-bold urdu shadow-sm hover:bg-purple-700 active:bg-purple-800 disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-purple-400 transition-colors"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M20 16.6A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25" />
+            <path d="M12 12v9" />
+            <path d="m16 16-4-4-4 4" />
+          </svg>
+          {backupBusy ? 'محفوظ ہو رہا ہے…' : 'بیک اپ'}
+        </button>
+        {backupMsg ? (
+          <span className={`urdu text-[10px] whitespace-nowrap ${backupMsg.ok ? 'text-emerald-700' : 'text-red-600'}`}>
+            {backupMsg.text}
+          </span>
+        ) : backupOverdue ? (
+          <span className="urdu text-[10px] text-red-600 whitespace-nowrap" title="سات دن سے بیک اپ نہیں ہوا">
+            ! بیک اپ کریں
+          </span>
+        ) : null}
       </div>
 
       <div className="flex-1" />
@@ -166,46 +232,6 @@ export default function StatusBar() {
       <DefaultsForm open={showDefaults} onClose={() => setShowDefaults(false)} />
       <IndrajForm open={showIndraj} onClose={() => setShowIndraj(false)} />
 
-      {/* کچا سونا COUNTER reset confirmation — zeroes the bottom-bar counter only,
-          کچا سونا لیا records are KEPT (اُدھار report stays intact). */}
-      {showKachaConfirm && (
-        <div
-          className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4"
-          onClick={() => setShowKachaConfirm(false)}
-        >
-          <div
-            dir="rtl"
-            className="bg-white rounded-lg shadow-2xl w-[360px] max-w-[92vw] overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="urdu font-bold text-[15px] text-gray-800 bg-slate-100 border-b border-gray-200 px-4 py-2.5">
-              کچا سونا کاؤنٹر صفر کریں؟
-            </div>
-            <div className="px-4 py-4 flex flex-col gap-2">
-              <p className="urdu text-[14px] text-gray-800">کیا آپ نیچے کا کچا سونا ٹوٹل صفر کرنا چاہتے ہیں؟</p>
-              <p className="urdu text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
-                صرف نیچے والا کاؤنٹر صفر ہوگا — کوئی ریکارڈ حذف نہیں ہوگا، اُدھار فارم میں کچا سونا لیا کا ریکارڈ محفوظ رہے گا
-              </p>
-            </div>
-            <div className="flex gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50">
-              <button
-                type="button"
-                onClick={() => { resetKachaCounter(); setShowKachaConfirm(false) }}
-                className="urdu flex-1 rounded-md bg-rose-600 text-white text-[14px] font-bold py-2 hover:bg-rose-700 active:bg-rose-800 transition-colors"
-              >
-                ہاں
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowKachaConfirm(false)}
-                className="urdu rounded-md border border-gray-300 bg-white text-gray-700 text-[14px] font-bold px-5 py-2 hover:bg-gray-100 transition-colors"
-              >
-                نہیں
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

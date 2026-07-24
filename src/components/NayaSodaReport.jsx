@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { GRAMS_PER_TOLA, fmtMoney } from '../logic/units'
 import { amountOf, sumAmount } from '../logic/nayaSoda.js'
+import { useApp } from '../state/store.jsx'
 
 // نیا سودا report — shared by the بھگتان سودا and بقایا سودا buttons (status
 // prop = 'bhugtan' | 'bakaya'). Reads ONLY the naya_soda table via
@@ -160,6 +161,7 @@ function ThermalNaya({ rows, title, range, status }) {
 }
 
 export default function NayaSodaReport({ status, from, to, onClose }) {
+  const { scheduleReportsExport } = useApp() // debounced Drive-export trigger
   const [rows, setRows] = useState([])
   // id of the row awaiting confirmation, plus what ہاں will do: 'move' (بقایا →
   // بھگتان) or 'delete' (remove outright). Both null when no modal is open.
@@ -225,6 +227,9 @@ export default function NayaSodaReport({ status, from, to, onClose }) {
     if (id == null || !window.api) return
     if (action === 'delete') await window.api.deleteNayaSoda(id)
     else await window.api.setNayaSodaStatus(id, 'bhugtan')
+    // A delete or بقایا→بھگتان move changed both سودا sets → refresh Drive reports
+    // via the same debounced/guarded pipeline. Best-effort; never blocks the UI.
+    try { scheduleReportsExport && scheduleReportsExport() } catch {}
     load()
   }
 
@@ -237,6 +242,7 @@ export default function NayaSodaReport({ status, from, to, onClose }) {
     if (!ids.length || !window.api) { setSelected(new Set()); return }
     for (const id of ids) await window.api.setNayaSodaStatus(id, 'bhugtan')
     setSelected(new Set())
+    try { scheduleReportsExport && scheduleReportsExport() } catch {}
     load()
   }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { useApp } from '../state/store.jsx'
+import { useApp, WA_REMINDER_DEFAULT } from '../state/store.jsx'
 import { fmtMoney, fmtNum, gramsToTMR } from '../logic/units.js'
 import { computeTable, buildLabReceipt } from '../logic/purity.js'
 import { CreditReceipt } from './Receipts.jsx'
@@ -50,6 +50,41 @@ const goldVal = (r) => Number(r.total_khalis ?? r.khalis_sona) || 0
 // entries point is always 100, so wazan == khalis and this matches the old display.
 const wazanVal = (r) => Number(r.total_wazan ?? r.sona_wazan) || goldVal(r)
 const cashVal = (r) => Number(r.total_cash ?? r.cash_amount) || 0
+
+// Fill the یاد دہانی template. {رقم} is the ONLY placeholder — the message addresses
+// the customer as محترم and never carries his name. A {نام} left behind in a template
+// edited before that was settled is REMOVED, not filled: dropping it keeps the name
+// out (which is the point) and also stops a raw "{نام}" reaching the customer. The
+// space/comma tidy-up is what stops "محترم {نام}،" from going out as "محترم ،".
+// Exported so the settings preview shows exactly what will be sent.
+export const fillReminder = (template, amountText) =>
+  String(template || '')
+    .split('{نام}').join('')
+    .split('{رقم}').join(amountText)
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([،۔,.])/g, '$1')
+    .trim()
+
+// {رقم} for the واٹس ایپ یاد دہانی message. Built from the SAME value and the SAME
+// helper the row on screen is rendered from — goldVal(r) → gramsToTMR() is the very
+// call goldBalanceColumns() makes for its تولہ / ماشہ cells, and cashVal(r) → fmtMoney
+// is what the رقم cell shows. So the message the customer receives reads exactly what
+// the shopkeeper is looking at. No conversion math is re-derived here.
+//
+// ONLY what this report actually prints: تولہ and ماشہ. رتی is deliberately left out —
+// this balance report has no رتی column (goldBalanceColumns drops it), so quoting one
+// would tell the customer a figure the shopkeeper cannot see on his own screen.
+// A zero component is dropped (5 تولہ, never 5 تولہ 0 ماشہ). Grams are the fallback if
+// both round away — the eps filter in _netBalanceReport means that should never
+// reach a row.
+const reminderAmountText = (r, gold) => {
+  if (!gold) return `${fmtMoney(cashVal(r))} روپے`
+  const { tola, masha } = gramsToTMR(goldVal(r))
+  const parts = []
+  if (tola) parts.push(`${tola} تولہ`)
+  if (masha) parts.push(`${masha} ماشہ`)
+  return parts.length ? parts.join(' ') : `${fmtNum(goldVal(r))} گرام`
+}
 
 // ═══ REPORT COLUMN CONFIG — edit here to change columns per report. ═══
 const goldColumns = ({ parchi = false, date = false } = {}) => {
@@ -234,7 +269,10 @@ export default function UdharForm({ open, onClose }) {
       const res = (hasApi && fn)
         ? await fn(side, { ...customerFilter() })
         : await getReportGroup1({ category: a.category, ...customerFilter() })
-      setReport({ group: 1, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldBalanceColumns() : cashColumns({}), title: a.label, meta: { customer: customerLabel(), dateNote: 'تمام تواریخ (بیلنس)' } })
+      // `side` is carried on the report so the یاد دہانی column can appear on the
+      // two RECEIVABLE balance reports only ('lena'). No other report sets it, so
+      // the column is structurally impossible anywhere else.
+      setReport({ group: 1, side, kind: a.kind, gold: a.kind === 'gold', rows: res.rows || [], columns: a.kind === 'gold' ? goldBalanceColumns() : cashColumns({}), title: a.label, meta: { customer: customerLabel(), dateNote: 'تمام تواریخ (بیلنس)' } })
     } else if (d.type === 'g2') {
       const a = d.a
       // Date-RANGE report via the shared From/To fields. Blank dates keep the
@@ -623,6 +661,7 @@ function ThermalReceipt({ report }) {
 
 // ─── Report view: group 1/2 table or group 3 statement, + print/PDF ───────────
 function ReportView({ report, total, onBack, onEdit, onDelete }) {
+  const { rates } = useApp() // یاد دہانی template lives in settings
   const [note, setNote] = useState('')
   const [thermal, setThermal] = useState(true) // default to the thermal roll layout
   if (!report) return null
@@ -637,6 +676,29 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
   // The statement (کسٹمر کی تفصیلی رسید) is ALWAYS the wide A4 layout — never thermal.
   const useThermal = thermal && !isKacha && !isStatement && !isNaqad && !isAdjust
   const canRowEdit = !isKacha && !isNaqad && !isAdjust && !report.noActions && (report.rows || []).some((r) => r.id != null)
+
+  // واٹس ایپ یاد دہانی — the two RECEIVABLE balance reports only (تیزابی لینا ہے /
+  // رقم لینی ہے). `side` is set by the g1 branch alone, so no g2 range report, کچا,
+  // نیا سودا, روزنامچہ, statement or the دینا side can ever satisfy this.
+  const isLenaBalance = report.group === 1 && report.side === 'lena'
+  const sendReminder = async (r, amountText) => {
+    const template = String((rates && rates.whatsapp_reminder_text) || WA_REMINDER_DEFAULT)
+    const text = fillReminder(template, amountText)
+    // The SAME bridge the receipt-share flow uses — number normalization and the
+    // desktop/web routing all live in the main process. This only OPENS the chat
+    // with the text filled in; the shopkeeper presses Send himself.
+    if (hasApiFn() && window.api.openWhatsApp) {
+      try {
+        const res = await window.api.openWhatsApp({ mobile: r.mobile, text })
+        if (res && res.ok) return
+      } catch { /* fall through to the browser link */ }
+    }
+    const num = String(r.mobile || '').replace(/[^0-9]/g, '')
+    if (typeof window !== 'undefined') window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, '_blank')
+  }
+  const reminder = isLenaBalance
+    ? { onSend: sendReminder, amountText: (r) => reminderAmountText(r, !!report.gold) }
+    : null
 
   // The statement forces the wide A4 page; other reports honour the thermal toggle.
   const applyPrintMode = (on) => {
@@ -689,6 +751,23 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
             تھرمل ({THERMAL_PAPER_MM}mm)
           </button>
         )}
+        {/* Shortcut, "لینا ہے" balance reports only. The یاد دہانی column lives in the
+            wide table, and these reports open on the thermal preview by DEFAULT (left
+            deliberately unchanged — the habit of opening and printing straight away
+            must not shift). Without this the button would exist where nobody looks.
+            It flips the SAME thermal toggle above and nothing else: no default, no
+            print behaviour, no report data is touched. Once the table is showing the
+            shortcut has done its job, so it hides itself. */}
+        {isLenaBalance && thermal && (
+          <button
+            type="button"
+            onClick={() => setThermal(false)}
+            title="یاد دہانی کے بٹن دیکھنے کے لیے تفصیلی جدول کھولیں"
+            className="urdu text-[12px] font-semibold inline-flex items-center gap-1.5 text-white bg-emerald-600 border border-emerald-600 rounded-md px-3 py-1.5 hover:bg-emerald-700 active:bg-emerald-800 transition-colors"
+          >
+            <WaGlyph /> واٹس ایپ یاد دہانی
+          </button>
+        )}
         <div className="flex-1" />
         {note && <span className="urdu text-[11px] text-emerald-600">{note}</span>}
         <button type="button" onClick={doPrint} className="urdu text-[12px] font-semibold text-gray-700 border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-100 transition-colors">پرنٹ 🖨</button>
@@ -731,7 +810,7 @@ function ReportView({ report, total, onBack, onEdit, onDelete }) {
             ) : isStatement ? (
               <StatementView parchis={report.parchis} rows={report.rows} />
             ) : (
-              <TableReport columns={report.columns} rows={report.rows} total={total} gold={report.gold} canRowEdit={canRowEdit} onEdit={onEdit} onDelete={onDelete} />
+              <TableReport columns={report.columns} rows={report.rows} total={total} gold={report.gold} canRowEdit={canRowEdit} onEdit={onEdit} onDelete={onDelete} reminder={reminder} />
             )}
           </div>
         </>
@@ -750,7 +829,40 @@ function RowActions({ r, onEdit, onDelete }) {
   )
 }
 
-function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete }) {
+// WhatsApp mark, inline so nothing is fetched and print never sees a broken glyph.
+const WaGlyph = () => (
+  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+    <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2zm0 18.18h-.01a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.11.82.83-3.04-.2-.31a8.22 8.22 0 0 1-1.26-4.41c0-4.54 3.7-8.23 8.24-8.23 2.2 0 4.27.86 5.83 2.41a8.19 8.19 0 0 1 2.41 5.83c0 4.54-3.7 8.24-8.24 8.24zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.13-.16.24-.64.8-.79.97-.14.16-.29.18-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.24-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.29.37-.43.12-.15.16-.25.25-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.4-.42-.56-.43h-.48c-.16 0-.43.06-.65.31-.22.25-.85.83-.85 2.03s.87 2.35.99 2.51c.12.16 1.71 2.61 4.15 3.66.58.25 1.03.4 1.39.51.58.19 1.11.16 1.53.1.47-.07 1.47-.6 1.68-1.18.21-.58.21-1.07.14-1.18-.06-.11-.22-.17-.47-.29z" />
+  </svg>
+)
+
+// یاد دہانی cell. A customer with no stored mobile keeps the button's shape but
+// greyed and inert — the shopkeeper SEES the number is missing and can go add it,
+// which hiding the button would never tell him. Fixed 24px height so a row with a
+// button is exactly as tall as one without: the table's geometry never shifts.
+function ReminderButton({ r, amountText, onSend }) {
+  const mobile = String(r.mobile || '').replace(/[^0-9]/g, '')
+  const base = 'inline-flex items-center justify-center gap-1 h-[24px] px-2 rounded urdu text-[11px] font-semibold whitespace-nowrap'
+  if (!mobile) {
+    return (
+      <span title="موبائل نمبر موجود نہیں" className={`${base} bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed select-none`}>
+        <WaGlyph /> یاد دہانی
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      title={`${r.customer_name || 'کسٹمر'} کو واٹس ایپ پر یاد دہانی بھیجیں`}
+      onClick={() => onSend(r, amountText)}
+      className={`${base} text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 transition-colors`}
+    >
+      <WaGlyph /> یاد دہانی
+    </button>
+  )
+}
+
+function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete, reminder }) {
   const totalIdx = columns.findIndex((c) => c.total)
   const totalText = gold ? `${fmtNum(total)} گرام` : fmtMoney(total)
   const totalLabel = gold ? 'کل خالص سونا' : 'کل رقم'
@@ -766,6 +878,9 @@ function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete 
         <tr className="bg-slate-100 text-gray-700 border-b-2 border-slate-300 urdu">
           {columns.map((c) => <th key={c.label} className={`px-3 py-2 border-l border-gray-200 ${c.num ? 'text-center' : 'text-right'}`}>{c.label}</th>)}
           {canRowEdit && <th className="no-print px-3 py-2 text-center w-[80px]">ایکشن</th>}
+          {/* no-print — same mechanism the ایکشن column already uses, so neither the
+              printed page nor the exported PDF ever shows this column. */}
+          {reminder && <th className="no-print px-2 py-2 text-center w-[100px]">یاد دہانی</th>}
         </tr>
       </thead>
       <tbody>
@@ -775,6 +890,11 @@ function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete 
               <td key={c.label} className={`px-3 py-1.5 border-l border-gray-100 ${c.num ? 'text-center tabular-nums' : 'text-right urdu'}`} dir={c.num ? 'ltr' : 'rtl'}>{c.get(r)}</td>
             ))}
             {canRowEdit && <td className="no-print px-3 py-1.5 text-center"><RowActions r={r} onEdit={onEdit} onDelete={onDelete} /></td>}
+            {reminder && (
+              <td className="no-print px-2 py-1 text-center">
+                <ReminderButton r={r} amountText={reminder.amountText(r)} onSend={reminder.onSend} />
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
@@ -791,6 +911,7 @@ function TableReport({ columns, rows, total, gold, canRowEdit, onEdit, onDelete 
             return <td key={c.label} className="px-3 py-2.5" />
           })}
           {canRowEdit && <td className="no-print" />}
+          {reminder && <td className="no-print" />}
         </tr>
       </tfoot>
     </table>

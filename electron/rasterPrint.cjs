@@ -197,7 +197,7 @@ function toEscPos({ buf, width, height }) {
 // ── RAW spool via winspool (PowerShell P/Invoke) ─────────────────────────────
 // Datatype RAW hands our bytes to the printer untouched — no driver rendering.
 const RAW_PS =
-  "param([string]$PrinterName,[string]$File)\n" +
+  "param([string]$PrinterName,[string]$File,[string]$Dll)\n" +
   "$ErrorActionPreference = 'Stop'\n" +
   "$sig = @'\n" +
   "using System; using System.Runtime.InteropServices;\n" +
@@ -214,7 +214,14 @@ const RAW_PS =
   "  public static void Send(string printer, byte[] bytes) {\n" +
   "    IntPtr h; if (!OpenPrinter(printer, out h, IntPtr.Zero)) throw new Exception(\"OpenPrinter \" + Marshal.GetLastWin32Error());\n" +
   "    try {\n" +
-  "      var di = new DOCINFOA { pDocName = \"GoldLab Receipt\", pDataType = \"RAW\" };\n" +
+  // C# 2.0 syntax ONLY below this line. Windows 7 ships PowerShell 2.0, whose
+  // Add-Type compiles with the C# 2.0 compiler by default — `var` and object-
+  // initializer syntax (`new DOCINFOA { pDocName = ... }`) are C# 3.0 and make
+  // Add-Type throw a compile error there, killing the RAW path before a single
+  // byte reaches the printer. Windows 10/11 compiled it fine, so this only ever
+  // broke on the old machines. Plain assignments work on every Windows.
+  "      DOCINFOA di = new DOCINFOA();\n" +
+  "      di.pDocName = \"GoldLab Receipt\"; di.pDataType = \"RAW\";\n" +
   "      if (!StartDocPrinter(h, 1, ref di)) throw new Exception(\"StartDocPrinter \" + Marshal.GetLastWin32Error());\n" +
   "      try {\n" +
   "        if (!StartPagePrinter(h)) throw new Exception(\"StartPagePrinter \" + Marshal.GetLastWin32Error());\n" +
@@ -225,9 +232,37 @@ const RAW_PS =
   "  }\n" +
   "}\n" +
   "'@\n" +
-  "Add-Type -TypeDefinition $sig\n" +
+  // COMPILE ONCE, REUSE. Add-Type shells out to the C# compiler, and on Windows 7's
+  // PowerShell 2.0 that costs a few seconds — on EVERY print, which is exactly the
+  // "print slow hai" complaint from the shop. -OutputAssembly caches the compiled
+  // type as a DLL in temp; every later print just loads it (near-instant). Each
+  // step is guarded: a missing/corrupt/locked DLL silently falls back to compiling
+  // inline, so a caching problem can never stop a receipt from printing. The final
+  // `-as [type]` check is the safety net before the call.
+  "if ($Dll -and (Test-Path $Dll)) { try { Add-Type -Path $Dll } catch { } }\n" +
+  "if (-not ('RawPrn' -as [type]) -and $Dll) {\n" +
+  "  try { Add-Type -TypeDefinition $sig -OutputAssembly $Dll; try { Add-Type -Path $Dll } catch { } } catch { }\n" +
+  "}\n" +
+  "if (-not ('RawPrn' -as [type])) { Add-Type -TypeDefinition $sig }\n" +
   "[RawPrn]::Send($PrinterName, [System.IO.File]::ReadAllBytes($File))\n" +
   "Write-Output 'RAW-OK'\n"
+
+// Cached compiled assembly for the script above. The -vN suffix is part of the
+// contract: bump it whenever the C# in RAW_PS changes, or old machines keep
+// loading a stale DLL compiled from the previous source.
+const RAW_DLL = path.join(os.tmpdir(), 'goldlab-rawprn-v1.dll')
+
+// Failures carry `mayHavePrinted`: TRUE when the bytes could already be in the
+// Windows spooler (the job was handed over and we simply never heard back), FALSE
+// only when we know nothing was sent. The caller MUST NOT retry on the driver path
+// when it is true — that is what produced the second receipt a few seconds after a
+// perfectly good print: a slow printer tripped the watchdog, the app assumed
+// failure, and the fallback printed the same slip again.
+function spoolError(message, mayHavePrinted) {
+  const e = new Error(message)
+  e.mayHavePrinted = !!mayHavePrinted
+  return e
+}
 
 function rawSpool(printerName, bytes) {
   return new Promise((resolve, reject) => {
@@ -238,20 +273,31 @@ function rawSpool(printerName, bytes) {
       fs.writeFileSync(ps1, RAW_PS)
       fs.writeFileSync(bin, bytes)
       const p = spawn('powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-PrinterName', printerName, '-File', bin],
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1,
+          '-PrinterName', printerName, '-File', bin, '-Dll', RAW_DLL],
         { windowsHide: true })
       let out = '', err = ''
       p.stdout.on('data', (d) => { out += d })
       p.stderr.on('data', (d) => { err += d })
       const cleanup = () => { try { fs.rmSync(dir, { recursive: true, force: true }) } catch {} }
-      const timer = setTimeout(() => { try { p.kill() } catch {}; cleanup(); reject(new Error('spool timeout')) }, 30000)
-      p.on('error', (e) => { clearTimeout(timer); cleanup(); reject(e) })
+      // Watchdog: the job may well be printing — killing our watcher does not
+      // unqueue it, so this is the classic "maybe printed" case.
+      const timer = setTimeout(() => {
+        try { p.kill() } catch {}
+        cleanup()
+        reject(spoolError('spool timeout (job may already be printing)', true))
+      }, 30000)
+      // Spawn itself failed (no powershell.exe) — nothing was sent, so a driver
+      // retry is safe and wanted.
+      p.on('error', (e) => { clearTimeout(timer); cleanup(); reject(spoolError(e.message || String(e), false)) })
       p.on('close', (code) => {
         clearTimeout(timer); cleanup()
-        if (code === 0 && out.includes('RAW-OK')) resolve()
-        else reject(new Error((err || out || ('exit ' + code)).trim().slice(0, 300)))
+        if (code === 0 && out.includes('RAW-OK')) return resolve()
+        // Exit 0 without the marker: PowerShell ran to completion, so the bytes
+        // most likely went out even though we lost the confirmation.
+        reject(spoolError((err || out || ('exit ' + code)).trim().slice(0, 300), code === 0))
       })
-    } catch (e) { reject(e) }
+    } catch (e) { reject(spoolError(e.message || String(e), false)) }
   })
 }
 
@@ -359,7 +405,9 @@ async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal =
     await rawSpool(printer.name, payload)
     return { ok: true, printer: printer.name, widthDots: rendered.width, heightDots: rendered.height }
   } catch (e) {
-    return { ok: false, printer: printer.name, reason: 'spool: ' + (e.message || e) }
+    // mayHavePrinted travels up to the renderer, which uses it to decide whether a
+    // driver retry is safe (see rawSpool) — without it the shop gets two receipts.
+    return { ok: false, printer: printer.name, reason: 'spool: ' + (e.message || e), mayHavePrinted: !!e.mayHavePrinted }
   }
 }
 

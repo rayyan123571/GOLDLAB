@@ -94,8 +94,16 @@ function FitValue({ value, align = 'right', strong, red, min = 6, fit = false, a
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    el.style.fontSize = '' // reset to the inherited size before measuring
+    // Reset to the inherited size before measuring — but ONLY when a previous pass
+    // actually shrank this element. An unconditional style write dirties layout for
+    // every field on screen, so each field's following scrollWidth read forced its
+    // own reflow (~100 fields per parchi = ~100 forced reflows on every navigation).
+    // Guarding the write lets the browser answer the reads from one layout pass.
+    if (el.style.fontSize) el.style.fontSize = ''
     if (!doFit || !el.clientWidth) return
+    // Already fits (the overwhelmingly common case) → no measurement loop and, more
+    // importantly, no getComputedStyle call, which is itself a style-recalc trigger.
+    if (el.scrollWidth <= el.clientWidth) return
     let size = parseFloat(getComputedStyle(el).fontSize) || 10
     let guard = 0
     while (el.scrollWidth > el.clientWidth && size > min && guard < 40) {
@@ -531,14 +539,18 @@ export function CreditReceipt({ ctx, embed }) {
     // ctx.ledger injected (e.g. the customer statement passes each parchi's OWN
     // running/cumulative balance) → use it as-is, never fetch the live grand total.
     if (ctx.ledger) return
-    if (hasApi && customer.id)
+    if (hasApi && customer.id) {
       // Balance of the parchis numbered BEFORE this one — i.e. سابقہ itself, straight
-      // from the DB (see the getCustomerLedger note in db.cjs). Keyed on the parchi's
+      // from the DB (see the getCustomerBalance note in db.cjs). Keyed on the parchi's
       // own displayed number, so it reads the same whether this parchi is a fresh
-      // unsaved one, just saved, or navigated back to later.
-      window.api.getCustomerLedger(customer.id, receiptNo)
-        .then((l) => setLed(l || { balance_gold: 0, balance_cash: 0 }))
-    else setLed({ balance_gold: 0, balance_cash: 0 })
+      // unsaved one, just saved, or navigated back to later. Only the two balances are
+      // read (this receipt shows nothing else from the ledger); getCustomerLedger is
+      // the fallback for an older preload.
+      const read = window.api.getCustomerBalance
+        ? window.api.getCustomerBalance(customer.id, receiptNo)
+        : window.api.getCustomerLedger(customer.id, receiptNo)
+      read.then((l) => setLed(l || { balance_gold: 0, balance_cash: 0 }))
+    } else setLed({ balance_gold: 0, balance_cash: 0 })
   }, [customer.id, bump, hasApi, ctx.ledger, receiptNo])
   const led = ctx.ledger || ledFetched
 

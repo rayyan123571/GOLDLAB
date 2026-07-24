@@ -43,7 +43,7 @@ const REPORTS = {
 const BTN = 'urdu text-[16px] font-bold text-black bg-gray-100 border border-gray-400 rounded-sm px-2 py-2.5 min-h-[58px] flex items-center justify-center text-center leading-snug break-words hover:bg-gray-200 active:bg-gray-300 transition-colors'
 
 export default function AkhrajatForm({ open, onClose }) {
-  const { rates } = useApp()
+  const { rates, entryDate } = useApp()
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [view, setView] = useState('menu') // 'menu' | 'report'
@@ -52,15 +52,16 @@ export default function AkhrajatForm({ open, onClose }) {
   const [entryOpen, setEntryOpen] = useState(false)
   const [msg, setMsg] = useState(null)
 
-  // WORKING date = the app's current settings date (rates.date), NOT the system
-  // clock. Expenses are stamped with this so they belong to the day the operator
-  // is working on, and so the bottom-bar کیش (which subtracts every expense with
-  // date ≤ rates.date) includes an expense the instant it's added — even when the
-  // settings date has been moved off the real today. Falls back to the system date
-  // only if rates.date isn't ready yet.
+  // WORKING date = the store's entryDate, NOT the system clock. That is the تاریخ
+  // field in every normal case — a date the operator chose is still honoured, and
+  // the bottom-bar کیش (which subtracts every expense with date ≤ rates.date)
+  // includes a new کھرچہ instantly. It differs on ONE case the raw rates.date got
+  // wrong: while a saved OLD parchi is open for viewing, rates.date holds THAT
+  // parchi's date, which silently filed new کھرچہ entries days in the past.
+  // Falls back to the system date only if the store isn't ready yet.
   const now = new Date()
   const systemISO = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`
-  const todayISO = (rates && rates.date) || systemISO
+  const todayISO = entryDate || (rates && rates.date) || systemISO
 
   useEffect(() => {
     if (!open) return

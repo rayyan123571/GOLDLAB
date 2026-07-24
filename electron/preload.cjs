@@ -6,6 +6,11 @@ const call = (fn, ...args) => ipcRenderer.invoke('db', { fn, args })
 contextBridge.exposeInMainWorld('api', {
   getRates: () => call('getRates'),
   saveRates: (r) => call('saveRates', r),
+  // ٹوٹل panel pin gate. The raw pin crosses only on these three calls and is
+  // hashed in the main process (see electron/pinGate.cjs) — never stored plain.
+  pinStatus: () => call('pinStatus'),
+  pinCheck: (code) => call('pinCheck', code),
+  pinSet: (newPin, auth) => call('pinSet', newPin, auth),
   receiptNoExists: (n) => call('receiptNoExists', n),
   listDrafts: () => call('listDrafts'),
   upsertDraft: (seq, d) => call('upsertDraft', seq, d),
@@ -72,6 +77,10 @@ contextBridge.exposeInMainWorld('api', {
   // beforeReceiptNo (optional) → the balance as it stood BEFORE that parchi (سابقہ).
   // Omitted by the statement / customer-list callers, which want the live total.
   getCustomerLedger: (id, beforeReceiptNo) => call('getCustomerLedger', id, beforeReceiptNo),
+  // Balances only ({ balance_gold, balance_cash }) — same math as getCustomerLedger
+  // without shipping the customer's whole transaction list across IPC. Used by the
+  // live on-screen boxes that display nothing but those two numbers.
+  getCustomerBalance: (id, beforeReceiptNo) => call('getCustomerBalance', id, beforeReceiptNo),
   listCustomersWithBalances: () => call('listCustomersWithBalances'),
   getDaybook: (date) => call('getDaybook', date),
   listDates: () => call('listDates'),
@@ -98,6 +107,15 @@ contextBridge.exposeInMainWorld('api', {
   overlayShareImage: (data) => ipcRenderer.invoke('overlay-share-image', { data }),
   // Installed-printer list for the dual-printer (thermal + Canon) device pickers.
   listPrinters: () => ipcRenderer.invoke('list-printers'),
+  // Auto report-PDF export to the synced (Google Drive) folder after a transaction.
+  generateReportPdfs: (payload) => ipcRenderer.invoke('generate-report-pdfs', payload || {}),
+  // Folder picker for the REPORTS_DIR setting.
+  pickFolder: () => ipcRenderer.invoke('pick-folder'),
+  // Manual بیک اپ button — its own folder/config, independent of the automatic
+  // backup. status → { folder, lastBackupAt }; run → one dated snapshot copy.
+  manualBackupStatus: () => ipcRenderer.invoke('manual-backup-status'),
+  manualBackupPickFolder: () => ipcRenderer.invoke('manual-backup-pick-folder'),
+  manualBackupRun: () => ipcRenderer.invoke('manual-backup-run'),
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
   captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
   // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.

@@ -14,6 +14,7 @@
     "obfuscate": "node scripts/obfuscate-electron.cjs",
     "bytecode": "node scripts/bytecode-electron.cjs",
     "dist:win": "npm run build && npm run obfuscate && npm run bytecode && electron-builder --win",
+    "dist:allwin": "node scripts/build-allwin.cjs",
     "dist:win:unlocked": "node scripts/build-unlocked.cjs"
   },
   "build": {

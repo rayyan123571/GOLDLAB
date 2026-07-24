@@ -1,6 +1,9 @@
 node_modules/
 dist/
 release/
+release-allwin/
+.win7-toolchain/
+electron-builder.allwin.json
 electron-dist/
 .claude/
 *.log

@@ -9,7 +9,9 @@
 const path = require('path')
 const fs = require('fs')
 const initSqlJs = require('sql.js')
-const { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS, FORM_THEME_DEFAULT, FORM_FOOTER_DEFAULT } = require('./shopDefaults.cjs')
+// ٹوٹل-panel pin gate: hashing + the developer recovery code (see pinGate.cjs).
+const pinGate = require('./pinGate.cjs')
+const { SHOP_FIELDS, SHOP_DEFAULTS, SLIP_TERMS_DEFAULT, SLIP_WARNING_DEFAULT, WA_REMINDER_DEFAULT, SLIP_TEXT_FIELDS, SLIP_TEXT_DEFAULTS, FORM_THEME_DEFAULT, FORM_FOOTER_DEFAULT } = require('./shopDefaults.cjs')
 const { DEFAULT_COORDS: OVERLAY_DEFAULT_COORDS, DEFAULT_OFFSETS: OVERLAY_DEFAULT_OFFSETS } = require('./overlayDefaults.cjs')
 
 let SQL = null
@@ -69,7 +71,8 @@ CREATE TABLE IF NOT EXISTS settings (
   shop_phone3 TEXT,
   shop_address TEXT,
   shop_seeded INTEGER,   -- 1 once the header defaults have been filled in (see migrateSchema)
-  slip_terms TEXT        -- لیب رسید terms/fee paragraph; blank hides the box (see migrateSchema)
+  slip_terms TEXT,       -- لیب رسید terms/fee paragraph; blank hides the box (see migrateSchema)
+  whatsapp_reminder_text TEXT  -- واٹس ایپ یاد دہانی template, {رقم} placeholder (see migrateSchema)
 );
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -156,6 +159,25 @@ CREATE TABLE IF NOT EXISTS naya_soda_draft (
   payload TEXT,
   updated_at TEXT
 );
+
+-- Indexes. Every lookup below was a full table scan before these existed, which
+-- is invisible on a new shop and painful after a year of trading (a روزنامچہ open
+-- on a 100k-row ledger read all 100k rows to find one day's 40). Only ORIGINAL
+-- columns are indexed — this block runs BEFORE migrateSchema(), so a column added
+-- by a later migration must never appear here. Creating an index is idempotent and
+-- costs a few ms at startup; it changes no data and no query's RESULT, only speed.
+-- (date, category) not date alone: روزنامچہ and listDates both filter on the date
+-- AND read the category, so the wider index answers them from the index itself.
+-- With date only, listDates had to fetch every matching row from the table just to
+-- check its category, which was measurably SLOWER than the old full scan.
+CREATE INDEX IF NOT EXISTS idx_txn_date_category ON transactions(date, category);
+CREATE INDEX IF NOT EXISTS idx_txn_customer ON transactions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_txn_receipt ON transactions(receipt_no);
+CREATE INDEX IF NOT EXISTS idx_receipts_no ON receipts(receipt_no);
+CREATE INDEX IF NOT EXISTS idx_receipts_date ON receipts(date);
+CREATE INDEX IF NOT EXISTS idx_receipts_customer ON receipts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+CREATE INDEX IF NOT EXISTS idx_naya_soda_date ON naya_soda(date);
 `
 
 // Lightweight, idempotent migration. `CREATE TABLE IF NOT EXISTS` never alters
@@ -326,6 +348,12 @@ function migrateSchema() {
   if (!sCols.includes('printer_thermal')) db.run('ALTER TABLE settings ADD COLUMN printer_thermal TEXT')
   if (!sCols.includes('printer_canon')) db.run('ALTER TABLE settings ADD COLUMN printer_canon TEXT')
 
+  // settings.reports_dir — the synced (Google Drive Desktop) folder where per-
+  // report PDFs are auto-written after each transaction (see electron/reportPdf.cjs).
+  // Blank = feature OFF. No backfill; the shopkeeper picks the folder once in
+  // ڈیفالٹ سیٹنگز. The DB itself is NEVER written to this folder.
+  if (!sCols.includes('reports_dir')) db.run('ALTER TABLE settings ADD COLUMN reports_dir TEXT')
+
   // settings.shop_* — the printed slip header (name / tagline / owner / three
   // phones / address). Added per column, then BACKFILLED with the Chaudhary
   // default ONLY where the column is NULL or '' — a shop that already customized
@@ -365,6 +393,17 @@ function migrateSchema() {
     db.run('UPDATE settings SET slip_warning = ? WHERE slip_warning IS NULL OR slip_warning = ?', [SLIP_WARNING_DEFAULT, ''])
   }
 
+  // settings.whatsapp_reminder_text — the یاد دہانی template the "لینا ہے" balance
+  // reports send. Own guard, same style as slip_terms/slip_warning: every existing
+  // DB is already past shop_seeded, so this column has to add AND backfill itself
+  // or the first shopkeeper to press the button would send an empty message. Once
+  // the column exists this never runs again — a template edited (or cleared) by
+  // the shopkeeper is his own.
+  if (!sCols.includes('whatsapp_reminder_text')) {
+    db.run('ALTER TABLE settings ADD COLUMN whatsapp_reminder_text TEXT')
+    db.run('UPDATE settings SET whatsapp_reminder_text = ? WHERE whatsapp_reminder_text IS NULL OR whatsapp_reminder_text = ?', [WA_REMINDER_DEFAULT, ''])
+  }
+
   // expenses.ts — full timestamp. Patch DBs that had expenses before it existed.
   const xCols = query('PRAGMA table_info(expenses)').map((r) => r.name)
   if (xCols.length && !xCols.includes('ts')) db.run('ALTER TABLE expenses ADD COLUMN ts TEXT')
@@ -381,6 +420,17 @@ function migrateSchema() {
     try { db.run('ALTER TABLE transactions ADD COLUMN updated_at TEXT') } catch (e) { /* already exists */ }
   }
 
+  // settings.pin_hash / pin_salt — the ٹوٹل panel's owner pin, stored ONLY as a
+  // salted PBKDF2-SHA256 digest (never the raw pin). Both NULL = no pin set yet,
+  // which is what makes the login screen offer "create a pin" on first use.
+  // Written exclusively by pinSet(); read exclusively by pinStatus()/pinCheck().
+  if (!sCols.includes('pin_hash')) {
+    try { db.run('ALTER TABLE settings ADD COLUMN pin_hash TEXT') } catch (e) { /* already exists */ }
+  }
+  if (!sCols.includes('pin_salt')) {
+    try { db.run('ALTER TABLE settings ADD COLUMN pin_salt TEXT') } catch (e) { /* already exists */ }
+  }
+
   // naya_soda.receipt_no — tag saved deals with the parchi they were entered on.
   // Patch DBs created before the نیا سودا ↔ receipt linkage existed. The draft
   // table itself is created by SCHEMA (CREATE TABLE IF NOT EXISTS), no migration.
@@ -388,6 +438,46 @@ function migrateSchema() {
   if (nCols.length && !nCols.includes('receipt_no')) {
     try { db.run('ALTER TABLE naya_soda ADD COLUMN receipt_no INTEGER') } catch (e) { /* already exists */ }
   }
+
+  slimReceiptPayloads()
+}
+
+// The rate context a saved parchi legitimately owns — the mirror of the renderer's
+// RATE_CONTEXT_KEYS (src/state/store.jsx). Keep the two lists in step.
+const RATE_CONTEXT_KEYS = ['date', 'rate_tezabi_tola', 'rate_tezabi_gram', 'parchi_charges', 'fc_per_gram', 'point']
+
+// ONE-TIME (idempotent): shrink already-saved parchi payloads.
+//
+// Every parchi used to snapshot the WHOLE settings row into payload.rates, and
+// settings holds the print-overlay background as a ~200 KB base64 image. So each
+// saved receipt weighed ~205 KB: the database grew to megabytes, every single
+// write re-exported all of it to disk, and merely opening a parchi with ◀/▶ read,
+// parsed and shipped a 200 KB image the app then threw away. saveParchi now stores
+// only the rate context and loadReceipt reads back only the rate context, so this
+// pass drops what old rows are still carrying. Purely a size cut — no field the
+// app reads is touched. Runs at startup, does nothing once there is nothing to cut.
+function slimReceiptPayloads() {
+  let rows = []
+  try { rows = query('SELECT id, payload FROM receipts WHERE payload IS NOT NULL') } catch { return }
+  let slimmed = 0
+  for (const r of rows) {
+    let p
+    try { p = JSON.parse(r.payload || '{}') } catch { continue } // unreadable → leave untouched
+    if (!p || typeof p !== 'object' || !p.rates || typeof p.rates !== 'object') continue
+    const keep = {}
+    for (const k of RATE_CONTEXT_KEYS) if (p.rates[k] !== undefined) keep[k] = p.rates[k]
+    if (Object.keys(keep).length === Object.keys(p.rates).length) continue // already slim
+    p.rates = keep
+    try {
+      db.run('UPDATE receipts SET payload = ? WHERE id = ?', [JSON.stringify(p), r.id])
+      slimmed++
+    } catch { /* skip this row */ }
+  }
+  if (!slimmed) return
+  // Reclaim the freed pages, so the file the app rewrites on every save is small
+  // again instead of staying at its high-water mark.
+  try { db.run('VACUUM') } catch { /* not fatal — the rows are already slim */ }
+  console.log(`[db] slimmed ${slimmed} receipt payload(s)`)
 }
 
 function seedSettings() {
@@ -498,9 +588,56 @@ function namePrefixLike(name) {
 const NAME_PREFIX_SQL = "c.name LIKE ? ESCAPE '\\'"
 
 const api = {
+  // ── ٹوٹل PANEL PIN GATE ─────────────────────────────────────────────────────
+  // Reads/writes settings.pin_hash + settings.pin_salt and NOTHING else. The raw
+  // pin arrives only as an argument, is hashed by pinGate.cjs, and is never
+  // stored or logged. The developer recovery code lives at the top of pinGate.cjs.
+
+  // Has the owner set a pin yet? Drives create-vs-enter on the login screen.
+  pinStatus() {
+    const r = query('SELECT pin_hash, pin_salt FROM settings WHERE id = 1')
+    const row = r[0] || {}
+    return { hasPin: !!(row.pin_hash && row.pin_salt) }
+  },
+
+  // Verify a typed code. `ok` = it matches the owner's stored pin; `recovery` =
+  // it is the developer recovery code (which is accepted anywhere the pin is,
+  // and is what lets a forgotten pin be reset).
+  pinCheck(code) {
+    const raw = String(code == null ? '' : code)
+    if (pinGate.isRecoveryCode(raw)) return { ok: true, recovery: true }
+    const r = query('SELECT pin_hash, pin_salt FROM settings WHERE id = 1')
+    const row = r[0] || {}
+    if (!row.pin_hash || !row.pin_salt) return { ok: false, recovery: false }
+    const ok = pinGate.safeEqual(pinGate.hashPin(raw, row.pin_salt), row.pin_hash)
+    return { ok, recovery: false }
+  },
+
+  // Set (or change) the pin. When one already exists, `auth` must be the current
+  // pin or the recovery code — so a change can never happen unauthenticated. A
+  // FRESH salt is generated every time. flush() writes through immediately, so a
+  // pin set now still applies after a restart.
+  pinSet(newPin, auth) {
+    if (!pinGate.isValidPin(newPin)) return { ok: false, error: 'invalid' }
+    if (api.pinStatus().hasPin) {
+      const chk = api.pinCheck(auth)
+      if (!chk.ok) return { ok: false, error: 'auth' }
+    }
+    const salt = pinGate.makeSalt()
+    run('UPDATE settings SET pin_hash = ?, pin_salt = ? WHERE id = 1',
+      [pinGate.hashPin(newPin, salt), salt])
+    flush() // persist immediately — a new pin must survive an instant restart
+    return { ok: true }
+  },
+
   getRates() {
     const r = query('SELECT * FROM settings WHERE id = 1')
-    return r[0] || null
+    if (!r[0]) return null
+    // The pin digest/salt live in this same row but are NOT settings — strip them
+    // so the ٹوٹل pin never travels to the renderer. Nothing else is altered:
+    // every rate/print/shop field is returned exactly as before.
+    const { pin_hash, pin_salt, ...rates } = r[0]
+    return rates
   },
 
   saveRates(rates) {
@@ -522,6 +659,7 @@ const api = {
               form_style=COALESCE(?, form_style), form_theme=COALESCE(?, form_theme), form_footer=COALESCE(?, form_footer),
               overlay_paper=COALESCE(?, overlay_paper), overlay_coords=COALESCE(?, overlay_coords), overlay_bg_path=COALESCE(?, overlay_bg_path),
               printer_thermal=COALESCE(?, printer_thermal), printer_canon=COALESCE(?, printer_canon),
+              reports_dir=COALESCE(?, reports_dir),
               ${OVERLAY_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
               ${FORM_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
               ${SLIP_TEXT_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')} WHERE id=1`,
@@ -557,6 +695,8 @@ const api = {
         // Chosen printer device names ('' clears → default). undefined/null keeps stored.
         rates.printer_thermal != null ? String(rates.printer_thermal) : null,
         rates.printer_canon != null ? String(rates.printer_canon) : null,
+        // Synced reports folder ('' clears → feature off). undefined/null keeps stored.
+        rates.reports_dir != null ? String(rates.reports_dir) : null,
         ...OVERLAY_NUM_FIELDS.map((f) => (rates[f] != null && Number.isFinite(Number(rates[f])) ? Number(rates[f]) : null)),
         ...FORM_NUM_FIELDS.map((f) => (rates[f] != null && Number.isFinite(Number(rates[f])) ? Number(rates[f]) : null)),
         ...SLIP_TEXT_FIELDS.map((f) => (rates[f] != null ? String(rates[f]) : null))
@@ -581,6 +721,12 @@ const api = {
       run('INSERT INTO drafts (payload) VALUES (?)', [json])
       return { ok: true, seq: lastInsertId() }
     }
+    // Identical payload → no UPDATE, so scheduleSave() is not armed and the whole
+    // database is not re-exported to disk for a write that changes nothing. (The
+    // renderer already skips most of these; this is the backstop for every other
+    // caller.)
+    const cur = query('SELECT payload FROM drafts WHERE seq = ?', [seq])
+    if (cur.length && cur[0].payload === json) return { ok: true, seq }
     run('UPDATE drafts SET payload = ? WHERE seq = ?', [json, seq])
     return { ok: true, seq }
   },
@@ -932,14 +1078,18 @@ const api = {
     if (customerId != null && customerId !== '') { where.push('t.customer_id = ?'); params.push(customerId) }
     else if (name && String(name).trim()) { where.push(NAME_PREFIX_SQL); params.push(namePrefixLike(name)) }
     const raw = query(
-      `SELECT t.customer_id, c.name AS customer_name,
+      // c.mobile rides along for the واٹس ایپ یاد دہانی button on the "لینا ہے"
+      // reports. It is per-customer, so adding it to GROUP BY splits nothing that
+      // wasn't already split by customer_id — the groups, the netting, eps, the
+      // ordering and the totals below are all exactly as before.
+      `SELECT t.customer_id, c.name AS customer_name, c.mobile AS mobile,
               SUM((CASE WHEN t.direction = 'out' THEN 1 ELSE -1 END) * COALESCE(t.${col}, 0)) AS net,
               MAX(t.date) AS date,
               MAX(t.updated_at) AS updated_at,
               COUNT(*) AS cnt
        FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id
        WHERE ${where.join(' AND ')}
-       GROUP BY t.customer_id, c.name
+       GROUP BY t.customer_id, c.name, c.mobile
        ORDER BY c.name ASC`,
       params
     )
@@ -952,6 +1102,7 @@ const api = {
       rows.push({
         customer_id: r.customer_id,
         customer_name: r.customer_name,
+        mobile: r.mobile, // یاد دہانی button only; no report column reads it
         [out]: amount,
         date: r.date,
         updated_at: r.updated_at,
@@ -1335,6 +1486,10 @@ const api = {
   // Drop this parchi's draft (on save or when the form is emptied).
   clearNayaSodaDraft(receiptNo) {
     if (receiptNo == null) return { ok: false }
+    // Nothing stored for this parchi → skip the DELETE, so no database re-export is
+    // scheduled for a row that never existed (the common case while navigating).
+    const rows = query('SELECT 1 AS x FROM naya_soda_draft WHERE receipt_no = ? LIMIT 1', [Number(receiptNo)])
+    if (!rows.length) return { ok: true }
     run('DELETE FROM naya_soda_draft WHERE receipt_no = ?', [Number(receiptNo)])
     return { ok: true }
   },
@@ -1488,6 +1643,30 @@ const api = {
     return { rows, balance_gold: gold, balance_cash: cash }
   },
 
+  // Just the two BALANCE figures getCustomerLedger ends up with — no rows. The
+  // نقد/ادھار panel and the ادھار receipt both display only balance_gold /
+  // balance_cash, but were pulling that customer's ENTIRE transaction history
+  // across IPC (twice, on every parchi navigation) to get them. Same customer,
+  // same exclusions, same signs as getCustomerLedger — summed by SQLite instead —
+  // so the numbers are identical to the ledger's, by construction.
+  getCustomerBalance(customerId, beforeReceiptNo) {
+    const before = Number(beforeReceiptNo)
+    const hasBefore = Number.isFinite(before)
+    const rows = query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN category IN ('gold_give','gold_take')
+              THEN (CASE WHEN direction = 'out' THEN 1 ELSE -1 END) * COALESCE(khalis_sona, 0) ELSE 0 END), 0) AS balance_gold,
+         COALESCE(SUM(CASE WHEN category IN ('cash_give','cash_take')
+              THEN (CASE WHEN direction = 'out' THEN 1 ELSE -1 END) * COALESCE(cash_amount, 0) ELSE 0 END), 0) AS balance_cash
+       FROM transactions
+       WHERE customer_id = ? AND category <> 'adjustment'
+       ${hasBefore ? 'AND (receipt_no IS NULL OR receipt_no < ?)' : ''}`,
+      hasBefore ? [customerId, before] : [customerId]
+    )
+    const r = rows[0] || {}
+    return { balance_gold: Number(r.balance_gold) || 0, balance_cash: Number(r.balance_cash) || 0 }
+  },
+
   // Every customer with their running gold + cash balance, computed in ONE pass
   // over the transactions table (not N ledger queries). The per-transaction math
   // is IDENTICAL to getCustomerLedger: sign = 'out' ? +1 : -1 (shop gave to
@@ -1495,34 +1674,38 @@ const api = {
   // from cash_give/cash_take on cash_amount. Customers with no transactions are
   // included with a zero balance. Sorted by name ASC.
   listCustomersWithBalances() {
-    const customers = query('SELECT id, name, mobile, image FROM customers ORDER BY name ASC')
-    const txns = query(
-      'SELECT customer_id, direction, category, khalis_sona, cash_amount FROM transactions'
-    )
-    const bal = new Map() // customer_id -> { gold, cash }
-    for (const t of txns) {
-      if (t.customer_id == null) continue
-      let b = bal.get(t.customer_id)
-      if (!b) { b = { gold: 0, cash: 0 }; bal.set(t.customer_id, b) }
-      const sign = t.direction === 'out' ? 1 : -1
-      if (t.category === 'gold_give' || t.category === 'gold_take') {
-        b.gold += sign * (t.khalis_sona || 0)
-      }
-      if (t.category === 'cash_give' || t.category === 'cash_take') {
-        b.cash += sign * (t.cash_amount || 0)
-      }
-    }
-    return customers.map((c) => {
-      const b = bal.get(c.id) || { gold: 0, cash: 0 }
-      return {
-        id: c.id,
-        name: c.name,
-        mobile: c.mobile,
-        image: c.image,
-        balance_gold: b.gold,
-        balance_cash: b.cash
-      }
-    })
+    // Balances grouped by SQLite instead of by a JS Map over every transaction in
+    // the shop's history (0.7s on a 100k-row ledger — the کسٹمر فہرست visibly
+    // stalled). Identical sign rule to the ledger: out = the customer owes us
+    // (+1), in = we owe him (−1); only the four ادھار categories move a balance,
+    // نقد/lab rows and rows with no customer are ignored. Customers with no
+    // transactions still appear, at zero, via the LEFT JOIN.
+    const sign = "(CASE WHEN direction = 'out' THEN 1 ELSE -1 END)"
+    const rows = query(`
+      SELECT c.id, c.name, c.mobile, c.image,
+             COALESCE(b.gold, 0) AS balance_gold,
+             COALESCE(b.cash, 0) AS balance_cash
+      FROM customers c
+      LEFT JOIN (
+        SELECT customer_id,
+               SUM(CASE WHEN category IN ('gold_give', 'gold_take')
+                        THEN ${sign} * COALESCE(khalis_sona, 0) ELSE 0 END) AS gold,
+               SUM(CASE WHEN category IN ('cash_give', 'cash_take')
+                        THEN ${sign} * COALESCE(cash_amount, 0) ELSE 0 END) AS cash
+        FROM transactions
+        WHERE customer_id IS NOT NULL
+        GROUP BY customer_id
+      ) b ON b.customer_id = c.id
+      ORDER BY c.name ASC
+    `)
+    return rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      mobile: c.mobile,
+      image: c.image,
+      balance_gold: Number(c.balance_gold) || 0,
+      balance_cash: Number(c.balance_cash) || 0
+    }))
   },
 
   getDaybook(date) {
@@ -1562,42 +1745,51 @@ const api = {
   },
 
   getShopTotals() {
-    const txns = query('SELECT * FROM transactions')
-    let cash = 0
-    let gold = 0
-    let parchun = 0
-    let kacha = 0 // کچا سونا: running total of وزن کانٹے پر ONLY (kacha_gold_take)
-    for (const t of txns) {
-      // کچا سونا accumulates ONLY the raw scale-weight of kacha entries and feeds
-      // no other total; conversely it must not pollute تیزابی/کیش, so skip it there.
-      if (t.category === 'kacha_gold_take') {
-        kacha += t.sona_wazan || 0
-        gold -= t.sona_diya || 0 // refined gold handed out for the kacha → reduces تیزابی
-        cash -= t.cash_diya || 0 // cash paid out for the kacha → reduces کیش
-        continue
-      }
-      // Manual balance adjustment (اندراج): direction-signed into کیش / تیزابی
-      // ONLY. `continue` so the general gold line below never double-counts it,
-      // and it never touches kacha_sona or parchun.
-      if (t.category === 'adjustment') {
-        const s = t.direction === 'in' ? 1 : -1
-        cash += s * (t.cash_amount || 0)
-        gold += s * (t.khalis_sona || 0)
-        continue
-      }
-      const goldSign = t.direction === 'in' ? 1 : -1
-      // Bottom-bar تیزابی is a RAW-WEIGHT running counter: a gold entry adds/subtracts
-      // its full سونا وزن (sona_wazan), NOT khalis. Shop convention — this bottom total
-      // intentionally differs from the khalis-based reports; do not "fix" it back.
-      gold += goldSign * (t.sona_wazan || 0)
-      // cash: money flowing into shop minus out
-      if (t.category === 'gold_buy') cash -= t.qeemat || 0
-      if (t.category === 'gold_sell') cash += t.qeemat || 0
-      if (t.category === 'cash_take') cash += t.cash_amount || 0
-      if (t.category === 'cash_give') cash -= t.cash_amount || 0
-      if (t.category === 'lab_job') cash += t.qeemat || 0
-      parchun += t.point || 0
-    }
+    // Summed by SQLite, not by JavaScript. This runs after EVERY write (the bottom
+    // bar refreshes on each save), and the old version pulled all 20 columns of
+    // every transaction ever made into JS objects just to add four numbers —
+    // measured at 2.6 SECONDS of frozen bottom bar on a 100k-row ledger. The CASE
+    // arms below are a line-for-line translation of that loop; the rules are
+    // unchanged:
+    //   • kacha_gold_take — کچا سونا takes ONLY the raw scale weight; the refined
+    //     gold and cash handed out for it REDUCE تیزابی/کیش. It contributes to no
+    //     other total (no parchun, no general gold line).
+    //   • adjustment (اندراج) — direction-signed into کیش/تیزابی ONLY, never into
+    //     kacha or parchun, and never double-counted by the general gold line.
+    //   • everything else — تیزابی is a RAW-WEIGHT counter (sona_wazan, NOT khalis;
+    //     shop convention, deliberately unlike the khalis-based reports), cash is
+    //     money in minus money out, parchun accumulates point.
+    // A NULL category matches no WHEN and falls to ELSE — exactly like the old
+    // `if` chain, which tested equality and then ran the general branch.
+    const sign = "(CASE WHEN direction = 'in' THEN 1 ELSE -1 END)"
+    const rows = query(`
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN category = 'kacha_gold_take' THEN -COALESCE(cash_diya, 0)
+          WHEN category = 'adjustment'      THEN ${sign} * COALESCE(cash_amount, 0)
+          WHEN category = 'gold_buy'        THEN -COALESCE(qeemat, 0)
+          WHEN category = 'gold_sell'       THEN COALESCE(qeemat, 0)
+          WHEN category = 'cash_take'       THEN COALESCE(cash_amount, 0)
+          WHEN category = 'cash_give'       THEN -COALESCE(cash_amount, 0)
+          WHEN category = 'lab_job'         THEN COALESCE(qeemat, 0)
+          ELSE 0 END), 0) AS cash,
+        COALESCE(SUM(CASE
+          WHEN category = 'kacha_gold_take' THEN -COALESCE(sona_diya, 0)
+          WHEN category = 'adjustment'      THEN ${sign} * COALESCE(khalis_sona, 0)
+          ELSE ${sign} * COALESCE(sona_wazan, 0) END), 0) AS gold,
+        COALESCE(SUM(CASE
+          WHEN category IN ('kacha_gold_take', 'adjustment') THEN 0
+          ELSE COALESCE(point, 0) END), 0) AS parchun,
+        COALESCE(SUM(CASE
+          WHEN category = 'kacha_gold_take' THEN COALESCE(sona_wazan, 0)
+          ELSE 0 END), 0) AS kacha
+      FROM transactions
+    `)
+    const agg = rows[0] || {}
+    const cash = Number(agg.cash) || 0
+    const gold = Number(agg.gold) || 0
+    const parchun = Number(agg.parchun) || 0
+    const kacha = Number(agg.kacha) || 0 // کچا سونا: وزن کانٹے پر ONLY
     // The bottom-bar کچا سونا is a RESETTABLE running counter: subtract the stored
     // baseline (set by the ↺ reset) so zeroing the counter never deletes any کچا
     // سونا لیا record — the اُدھار report reads those records independently.

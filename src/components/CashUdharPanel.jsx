@@ -26,10 +26,21 @@ const gridStyle = {
 const hasData = (st) => String(st.wazan).trim() !== '' && Number(st.wazan) > 0
 
 // One gold line: label (right) + سونا وزن | پوائنٹ | خالص سونا | ریٹ | قیمت.
-// `disabled` locks/greys all three inputs (used for نقد mutual exclusion).
+// `disabled` locks/greys the inputs (used for نقد mutual exclusion).
 // `onCommit` (ادھار rows only) fires on BLUR with the row's current state — i.e.
 // when a value is actually committed, not on every keystroke.
+//
+// The row works in BOTH directions. Normally سونا وزن drives the line
+// (وزن → خالص سونا → قیمت), but قیمت is editable too and runs the same chain
+// backwards (قیمت → خالص سونا → سونا وزن), for the common counter case where the
+// customer names a rupee amount instead of a weight. Only wazan/point/rate are
+// stored — khalis and the price are derived — so the reverse edit simply writes
+// wazan and every other cell recomputes exactly as it always did.
 function GoldRow({ label, st, set, rateTola, disabled = false, onCommit }) {
+  // Raw text held ONLY while the قیمت cell has focus. Without it the field would
+  // fight the typist: each keystroke recomputes wazan, which recomputes the price,
+  // which would rewrite the box mid-word.
+  const [qEdit, setQEdit] = useState(null)
   // Enter-to-advance focus flow (per-row ref, so wazan → this row's own rate):
   // wazan → (Enter) → rate → (Enter) → blur. point is skipped in the flow —
   // Enter inside point just blurs. Purely focus movement; no data changes.
@@ -47,6 +58,22 @@ function GoldRow({ label, st, set, rateTola, disabled = false, onCommit }) {
   const rate = st.rate === '' ? rateTola : Number(st.rate)
   const q = qeemat(khalis, rate)
   const lock = disabled ? ' opacity-50 cursor-not-allowed bg-gray-100' : ''
+  // ── قیمت → سونا وزن (the inverse of the two lines above) ────────────────────
+  //   khalis = price / rate * TOLA                    (inverse of qeemat)
+  //   wazan  = khalis / (1 - (point-100)/100 * RATTI/TOLA)   (inverse of deduction)
+  // At the standard point of 100 the factor is 1, so wazan == khalis — the same
+  // identity the forward direction has.
+  const purityFactor = 1 - (above / 100) * (GRAMS_PER_RATTI / GRAMS_PER_TOLA)
+  // No rate (or an impossible point) leaves nothing to divide by — the price cell
+  // stays locked rather than silently producing a wrong weight.
+  const canInvert = rate > 0 && purityFactor > 0
+  const wazanFromQeemat = (text) => {
+    const price = Number(text)
+    if (!Number.isFinite(price) || price <= 0) return ''
+    // 4 decimals: 0.0001g is under 2 rupees at shop rates, so the price typed and
+    // the price the row shows back agree to the rupee.
+    return String(round(price / rate * GRAMS_PER_TOLA / purityFactor, 4))
+  }
   return (
     <div className="grid flex-1 min-h-0" style={gridStyle}>
       <div className="cell justify-end pr-1 urdu text-[15px] font-bold text-right leading-tight bg-white">
@@ -60,7 +87,18 @@ function GoldRow({ label, st, set, rateTola, disabled = false, onCommit }) {
       <div className="cell cell-c text-[15px] font-bold">{khalis ? fmtNum(khalis) : '-'}</div>
       <input ref={rateRef} dir="ltr" className={`inp text-center text-[15px] font-bold${lock}`} value={st.rate} disabled={disabled}
         onChange={(e) => set({ ...st, rate: e.target.value })} onKeyDown={onEnterBlur} placeholder={fmtMoney(rateTola)} />
-      <div className="cell cell-c text-[15px] font-bold">{q ? fmtMoney(q) : '-'}</div>
+      <input dir="ltr" className={`inp text-center text-[15px] font-bold${lock}`}
+        value={qEdit != null ? qEdit : (q ? fmtMoney(q) : '')}
+        disabled={disabled || !canInvert}
+        // Focus swaps the formatted "444,444" for the plain number, so typing
+        // starts from a value the field can actually parse.
+        onFocus={() => setQEdit(q ? String(q) : '')}
+        onChange={(e) => { setQEdit(e.target.value); set({ ...st, wazan: wazanFromQeemat(e.target.value) }) }}
+        onKeyDown={onEnterBlur}
+        // Same commit contract as the wazan box: an ادھار row entered by price
+        // must trigger the customer-name reminder too.
+        onBlur={() => { setQEdit(null); if (onCommit) onCommit(hasData(st)) }}
+        placeholder="-" />
     </div>
   )
 }
@@ -112,7 +150,14 @@ export default function CashUdharPanel() {
 
   useEffect(() => {
     if (hasApi && customer.id) {
-      window.api.getCustomerLedger(customer.id).then(setLedger)
+      // Balances only — the two yellow boxes below use nothing else. getCustomerBalance
+      // sums them in SQLite; getCustomerLedger (the fallback for an older preload)
+      // returns the customer's entire transaction history to compute the same two
+      // numbers, which is pure IPC weight on every parchi navigation.
+      const read = window.api.getCustomerBalance
+        ? window.api.getCustomerBalance(customer.id)
+        : window.api.getCustomerLedger(customer.id)
+      read.then((l) => setLedger(l || { balance_gold: 0, balance_cash: 0 }))
     } else {
       setLedger({ balance_gold: 0, balance_cash: 0 })
     }

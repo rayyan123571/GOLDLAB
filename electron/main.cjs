@@ -4,9 +4,12 @@ const fs = require('fs')
 const { spawn } = require('child_process')
 const db = require('./db.cjs')
 const backup = require('./backup.cjs')
+const manualBackup = require('./manualBackup.cjs') // manual "بیک اپ" button — separate from the automatic backup above
 const raster = require('./rasterPrint.cjs')
 const overlayForm = require('./overlayForm.cjs')
+const reportPdf = require('./reportPdf.cjs')
 const { routeFor } = require('./printRouting.cjs')
+const printLog = require('./printLog.cjs') // userData/print-log.txt — see printLog.cjs
 const { DEFAULT_OFFSETS: OVERLAY_DEFAULT_OFFSETS } = require('./overlayDefaults.cjs')
 const { SHOP_FIELDS } = require('./shopDefaults.cjs')
 const liveGold = require('./liveGold.cjs')
@@ -326,17 +329,27 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
   const effMode = ['overlay_form', 'thermal'].includes(forceMode) ? forceMode : printMode
   // Dual-printer routing decision (pure): which engine + which physical printer.
   const route = routeFor({ printMode: effMode, receipt, printerThermal, printerCanon })
+  // Log BEFORE printing: if the app dies or the printer hangs, the file still says
+  // which button was pressed and where the job was aimed.
+  printLog.log('print-slip', {
+    receipt: receipt || '(none)', mode: effMode, engine: route.engine,
+    target: route.deviceName, thermalSet: printerThermal, canonSet: printerCanon,
+    copies: copies || 1, rawMode, routeError: route.error
+  })
   // ── Overlay engine — LAB رسید ONLY, to the Canon ───────────────────────────
   // Drops VALUES ONLY onto the customer's pre-printed 2-up slip. If the Canon isn't
   // configured we STOP (a toast asks the user to pick it) — never fall back to
   // thermal, which would print a full slip over the pre-printed form.
   if (route.engine === 'overlay') {
-    if (route.error) return { ok: false, reason: route.error }
+    if (route.error) { printLog.log('overlay-result', { ok: false, reason: route.error }); return { ok: false, reason: route.error } }
     try {
-      if (!data) return { ok: false, reason: 'overlay-needs-slip-data' }
-      return await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies })
+      if (!data) { printLog.log('overlay-result', { ok: false, reason: 'overlay-needs-slip-data' }); return { ok: false, reason: 'overlay-needs-slip-data' } }
+      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies })
+      printLog.log('overlay-result', { ok: !!(r && r.ok), printer: route.deviceName, reason: r && r.reason })
+      return r
     } catch (e) {
       console.warn('[raster-print-slip] overlay render threw:', e && e.message || e)
+      printLog.log('overlay-result', { ok: false, threw: String(e && e.message || e) })
       return { ok: false, reason: String(e && e.message || e) }
     }
   }
@@ -349,6 +362,13 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
   try {
     const slipHtml = data ? raster.buildReceiptHtml(data) : html
     const res = await raster.printHtml({ html: slipHtml, copies, win, tag: 'slip', printScale, rawMode, deviceName: route.deviceName })
+    printLog.log('thermal-result', {
+      ok: !!(res && res.ok), printer: (res && res.printer) || route.deviceName,
+      reason: res && res.reason, mayHavePrinted: res && res.mayHavePrinted,
+      next: res && res.ok === false
+        ? (res.mayHavePrinted ? 'NO driver retry (would double-print)' : 'renderer falls back to Windows driver')
+        : ''
+    })
     // LOUD log (main process) when the raster path can't be used and the renderer
     // is about to fall back to the Windows driver (the driver stretches/blurs the
     // slip — this is the #1 cause of a wrong-length / faint print). Printer name +
@@ -365,6 +385,7 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
     return res
   } catch (e) {
     console.warn('[raster-print-slip] threw → driver fallback:', e && e.message || e)
+    printLog.log('thermal-result', { ok: false, threw: String(e && e.message || e) })
     return { ok: false, reason: String(e && e.message || e) }
   }
 })
@@ -374,8 +395,15 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
 ipcMain.handle('raster-test-print', async (_evt, { kind } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
   const { printScale, printerThermal } = printSettings()
-  try { return await raster.testPrint({ kind, win, printScale, deviceName: printerThermal }) }
-  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+  printLog.log('test-print', { kind, target: printerThermal })
+  try {
+    const r = await raster.testPrint({ kind, win, printScale, deviceName: printerThermal })
+    printLog.log('test-print-result', { ok: !!(r && r.ok), printer: (r && r.printer) || printerThermal, reason: r && r.reason })
+    return r
+  } catch (e) {
+    printLog.log('test-print-result', { ok: false, threw: String(e && e.message || e) })
+    return { ok: false, reason: String(e && e.message || e) }
+  }
 })
 
 // ── Overlay (pre-printed slip) IPC ──────────────────────────────────────────
@@ -432,6 +460,59 @@ ipcMain.handle('overlay-test-print', async (_evt, override = {}) => {
   } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
+// ── Auto report-PDF export (see electron/reportPdf.cjs) ─────────────────────
+// The renderer sends REPORTS_DIR + the reports' HTML after a transaction; we
+// delete each report's old PDF and write a fresh one into that folder. Fully
+// guarded (never touches the DB, only files inside REPORTS_DIR) and never throws
+// out to the renderer, so a failed export can NEVER block a save or crash the app.
+ipcMain.handle('generate-report-pdfs', async (_evt, { reportsDir, reports, staleKeys } = {}) => {
+  try {
+    // The DB directory is the userData folder (goldlab.sqlite lives there). The
+    // safety assert refuses to run if reportsDir is equal to / inside / a parent
+    // of this — so the export can never sit next to or over the database.
+    const dbDir = app.getPath('userData')
+    // staleKeys forwards the removed reports' keys so their orphaned PDFs get
+    // cleaned by the same narrow filter (it was being dropped here before).
+    return await reportPdf.generateReportPdfs({ reportsDir, dbDir, reports, staleKeys })
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message || e) }
+  }
+})
+
+// Folder picker for the REPORTS_DIR setting (so a non-technical user just clicks
+// their Google Drive folder once). Returns { ok, path } or { canceled }.
+ipcMain.handle('pick-folder', async () => {
+  if (!win) return { ok: false, reason: 'no-window' }
+  try {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'رپورٹس فولڈر منتخب کریں (Google Drive)',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, canceled: true }
+    return { ok: true, path: r.filePaths[0] }
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// ── Manual backup (electron/manualBackup.cjs) ────────────────────────────────
+// The bottom-bar بیک اپ button: one click copies a dated snapshot of the DB into
+// a folder the shopkeeper picked. Entirely separate from the automatic backup —
+// its own config file, own folder, own filenames; nothing here reads or writes
+// backup-config.json. Never throws into the renderer: always resolves an object.
+ipcMain.handle('manual-backup-status', async () => {
+  try { return manualBackup.getStatus() }
+  catch (e) { return { ok: false, reason: String(e && e.message ? e.message : e) } }
+})
+
+ipcMain.handle('manual-backup-pick-folder', async () => {
+  try { return await manualBackup.pickFolder(win) }
+  catch (e) { return { ok: false, reason: 'error', detail: String(e && e.message ? e.message : e) } }
+})
+
+ipcMain.handle('manual-backup-run', async () => {
+  try { return manualBackup.run() }
+  catch (e) { return { ok: false, reason: 'copy-failed', detail: String(e && e.message ? e.message : e) } }
+})
+
 // Installed-printer list for the two device-name dropdowns in settings.
 ipcMain.handle('list-printers', async () => {
   if (!win) return { ok: false, reason: 'no-window', printers: [] }
@@ -476,15 +557,36 @@ ipcMain.handle('print-page', async (_evt, opts = {}) => {
   }
   const wantSilent = opts.silent !== false
   const base = { printBackground: true, ...opts }
+  // Silent prints from here are RECEIPTS (the thermal raster path fell back, or an
+  // udhaar/naya-soda slip). They must land on the thermal printer chosen in
+  // settings — WITHOUT this, webContents.print goes to the WINDOWS DEFAULT printer.
+  // On a shop PC whose default is some other device, the receipt silently printed
+  // somewhere else: no paper on the thermal, and no error either (the job did
+  // "succeed"), which is exactly the "print dabaya, kuch nahi hua" report from the
+  // field. The dialog path (silent:false, e.g. روزنامچہ) is left alone — there the
+  // operator picks the printer.
+  if (wantSilent && !base.deviceName) {
+    const { printerThermal } = printSettings()
+    if (printerThermal) base.deviceName = printerThermal
+  }
+  // This is the Windows-driver path the thermal raster falls back to — the LAST
+  // stop before the paper. Both attempts are logged: a job that reports ok here
+  // but prints nothing is a printer/driver problem, while a failure here is ours.
+  printLog.log('driver-print-target', { deviceName: base.deviceName || '(Windows default)', silent: wantSilent })
   if (wantSilent) {
     const first = await printOnce({ ...base, silent: true }, 30000)
+    printLog.log('driver-print', { attempt: 'silent', ok: first.ok, reason: first.reason, timedOut: first.timedOut })
     if (first.ok || first.timedOut) return first
     // Explicit driver refusal (e.g. no default printer) → offer the dialog once.
     // Dialog attempts get a LONG watchdog (the user may sit in the dialog a
     // while) so a dead callback still can't hang the renderer forever.
-    return printOnce({ ...base, silent: false }, 180000)
+    const second = await printOnce({ ...base, silent: false }, 180000)
+    printLog.log('driver-print', { attempt: 'dialog', ok: second.ok, reason: second.reason, timedOut: second.timedOut })
+    return second
   }
-  return printOnce({ ...base, silent: false }, 180000)
+  const only = await printOnce({ ...base, silent: false }, 180000)
+  printLog.log('driver-print', { attempt: 'dialog-forced', ok: only.ok, reason: only.reason, timedOut: only.timedOut })
+  return only
 })
 
 // Open WhatsApp for a receipt share, smartest route first:
@@ -577,7 +679,16 @@ async function startApp(userDataDir, dbPath) {
   // Silent automatic backups: shortly after launch, then every ~10 minutes, and
   // once more on quit below. Best-effort only — cannot crash or block the app.
   backup.start({ userDataDir, dbPath, flush: db.flush })
+  // Manual "بیک اپ" button (electron/manualBackup.cjs). This only records the
+  // paths — no timers, no schedule; it runs solely when the shopkeeper clicks.
+  // Same db.flush as the automatic backup, so a click always copies fresh data.
+  manualBackup.init({ userDataDir, dbPath, flush: db.flush })
+  // Print diagnostics start here so the machine details are on record before the
+  // first print attempt (see electron/printLog.cjs).
+  printLog.init(userDataDir, { build: app.getVersion() })
   createWindow()
+  // Printer list once the window exists — getPrintersAsync needs a webContents.
+  if (win) win.webContents.once('did-finish-load', () => { printLog.logPrinters(win) })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
