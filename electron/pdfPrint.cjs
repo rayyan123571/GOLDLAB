@@ -10,13 +10,16 @@
 // no-install Windows PDF printer with a documented "noscale" switch:
 //     SumatraPDF.exe -print-to "<printer>" -print-settings "noscale,copies=N"
 //                    -silent -exit-when-done "<file.pdf>"
-// It is NOT bundled in this repo — see resolveExe() for where to drop it. When
-// it is absent the caller falls back to the hardened webContents.print path and
-// says so in the print log; printing must never simply stop because a helper
-// binary is missing.
+// It IS bundled in this repo (vendor/pdfprint/SumatraPDF.exe) and shipped to
+// resources/bin/ via package.json build.extraResources — see resolveExe() for the
+// lookup order. When it is absent (or fails its integrity pin below), a REAL slip
+// does NOT fall back to the driver: overlayForm.printOverlay refuses with
+// 'pdf-engine-unavailable' and prints nothing, because the driver path would ruin
+// an expensive pre-printed slip. Only proof/test prints (plain paper) fall back.
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const crypto = require('crypto')
 const { spawn } = require('child_process')
 
 // Accepted file names, in order. PDFtoPrinter is a common alternative the shop
@@ -24,22 +27,56 @@ const { spawn } = require('child_process')
 // argsFor() below branches on the name.
 const EXE_NAMES = ['SumatraPDF.exe', 'SumatraPDF-portable.exe', 'PDFtoPrinter.exe']
 
+// Integrity pin for the binary we SHIP. A candidate whose basename is listed here
+// must match this SHA-256 or it is treated as ABSENT — a tampered or wrong-version
+// SumatraPDF.exe must never run as our silent print spooler (it prints to real
+// paper, unattended). Names we do not ship (PDFtoPrinter.exe, a custom env
+// override) carry no pin and are accepted as the operator's own choice.
+const EXPECTED_SHA256 = {
+  'sumatrapdf.exe': '3793fa285bc890a5e4c263f6f9854cf425bee63c72e52f5362dbc41d60956bcf'
+}
+
+// path -> verified?, so the 17MB hash runs at most once per path per process.
+const _pinCache = new Map()
+// Pinned files that FAILED — surfaced via pinFailures() so main.cjs can log why a
+// present-on-disk binary is being treated as missing (otherwise very confusing).
+const _pinFailures = new Set()
+
+function passesPin(file) {
+  const want = EXPECTED_SHA256[path.basename(file).toLowerCase()]
+  if (!want) return true // unpinned name — accept as chosen
+  if (_pinCache.has(file)) return _pinCache.get(file)
+  let ok = false
+  try {
+    ok = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') === want
+  } catch { ok = false }
+  _pinCache.set(file, ok)
+  if (!ok) _pinFailures.add(file)
+  return ok
+}
+
+// Paths that exist but failed their integrity pin (for diagnostic logging).
+function pinFailures() { return Array.from(_pinFailures) }
+
 // Where the binary is looked for, first hit wins:
 //   1. GOLDLAB_PDF_PRINT_EXE — full path override (testing / odd installs)
 //   2. packaged app: resources/bin/<name>   (package.json build.extraResources)
 //   3. dev checkout:  <repo>/vendor/pdfprint/<name>
 // Returns { exe, source } or null. Never throws.
+// A candidate counts only when it exists AND passes its integrity pin — a pinned
+// binary that fails the hash is skipped as if it were not there, so resolveExe
+// returns null and the caller treats the spooler as missing.
 function resolveExe() {
   try {
     const override = process.env.GOLDLAB_PDF_PRINT_EXE
-    if (override && fs.existsSync(override)) return { exe: override, source: 'env' }
+    if (override && fs.existsSync(override) && passesPin(override)) return { exe: override, source: 'env' }
     const dirs = []
     if (process.resourcesPath) dirs.push({ dir: path.join(process.resourcesPath, 'bin'), source: 'packaged' })
     dirs.push({ dir: path.join(__dirname, '..', 'vendor', 'pdfprint'), source: 'dev' })
     for (const { dir, source } of dirs) {
       for (const name of EXE_NAMES) {
         const p = path.join(dir, name)
-        if (fs.existsSync(p)) return { exe: p, source }
+        if (fs.existsSync(p) && passesPin(p)) return { exe: p, source }
       }
     }
   } catch {}
@@ -144,4 +181,4 @@ function countPages(buf) {
   } catch { return null }
 }
 
-module.exports = { resolveExe, available, printPdfBuffer, countPages, writeTempPdf, EXE_NAMES }
+module.exports = { resolveExe, available, printPdfBuffer, countPages, writeTempPdf, pinFailures, EXE_NAMES }

@@ -536,6 +536,11 @@ async function overlayPreflight() {
     const exe = pdfPrint.resolveExe()
     out.spooler = !!exe
     out.spoolerPath = exe ? exe.exe : null
+    // A binary present on disk but rejected by the SHA-256 pin reads as "missing"
+    // to everything else — log the rejected path so that is diagnosable instead of
+    // a baffling "spooler missing" next to a file that is clearly there.
+    const pinBad = pdfPrint.pinFailures()
+    if (pinBad.length) out.spoolerPinFailed = pinBad
 
     if (win && printerCanon) {
       try {
@@ -561,6 +566,7 @@ async function overlayPreflight() {
     }
     printLog.log('overlay-preflight', {
       engine: out.engine, spooler: out.spooler, spoolerPath: out.spoolerPath,
+      spoolerPinFailed: out.spoolerPinFailed ? out.spoolerPinFailed.join(';') : undefined,
       canon: out.canonName || '(unset)', canonFound: out.canonFound,
       form: out.formPresent == null ? 'unknown' : (out.formPresent ? out.formName : 'MISSING'),
       defaultPaper: out.defaultPaperName || 'unknown',

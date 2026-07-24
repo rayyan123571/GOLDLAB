@@ -8,3 +8,7 @@ electron-builder.allwin.json
 electron-dist/
 .claude/
 *.log
+# Generated PDF test output (overlay/thermal dry-runs). The regression BASELINE
+# images (e.g. artifacts/thermal-worstcase-regression.png) stay tracked; only the
+# throwaway PDFs are ignored.
+artifacts/*.pdf
