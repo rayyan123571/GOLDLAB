@@ -352,8 +352,11 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
       if (!data) { printLog.log('overlay-result', { ok: false, reason: 'overlay-needs-slip-data' }); return { ok: false, reason: 'overlay-needs-slip-data' } }
       // printLog.log is handed down so overlayForm records the FULL geometry of
       // every attempt (engine, paper, landscape, rotate180, scales, page count) —
-      // a rotated/shrunken print is unexplainable without it.
-      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies, log: printLog.log })
+      // a rotated/shrunken print is unexplainable without it. paperMismatch (from
+      // the cached preflight) makes a REAL slip refuse when the printer's default
+      // paper is not the parchi size — the print would centre-shift off the slip,
+      // wasting it, exactly like a missing PDF engine does.
+      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies, log: printLog.log, paperMismatch: cachedPaperMismatch() })
       printLog.log('overlay-result', { ok: !!(r && r.ok), printer: route.deviceName, engine: r && r.engine, pageCount: r && r.pageCount, reason: r && r.reason })
       return r
     } catch (e) {
@@ -500,16 +503,29 @@ ipcMain.handle('overlay-proof-print', async (_evt, override = {}) => {
 })
 
 // ── Overlay PREFLIGHT (settings badge + app-start log) ───────────────────────
-// Answers the two questions that decide whether a real slip can be printed
-// safely: is the PDF spooler present, and does the configured Canon resolve to an
-// installed printer whose driver has a form matching the 215.9×139.7 sheet? The
-// renderer shows a persistent badge from this; nothing here prints.
+// Answers the questions that decide whether a real slip can be printed safely: is
+// the PDF spooler present, does the configured Canon resolve to an installed
+// printer whose driver has a form matching the 215.9×139.7 sheet, and is that
+// form the printer's DEFAULT paper. The renderer shows a persistent badge from
+// this; nothing here prints.
+//
+// The result is CACHED: the paper probe shells out to PowerShell, too slow to run
+// on every print. It is refreshed at app start (did-finish-load) and whenever the
+// renderer calls overlay-preflight (the Defaults dialog opening, the Canon
+// changing, or the "دوبارہ جانچیں" button). A real slip reads this cache to
+// refuse a print that would land on the wrong-size default paper — see the
+// raster-print-slip handler's paperMismatch.
+let overlayPreflightCache = null
 async function overlayPreflight() {
   const out = {
     engine: 'pdf', spooler: false, spoolerPath: null,
     canonSet: false, canonName: '', canonFound: false,
     formPresent: null, formName: '', paperW: 215.9, paperH: 139.7,
-    sizesReadable: false
+    sizesReadable: false,
+    // The centering risk: even with the form present, if it is not the printer's
+    // DEFAULT paper, noscale centres our sheet on whatever the default is (often
+    // Letter) and every value shifts down off the slip. null = couldn't check.
+    defaultPaperOk: null, defaultPaperName: ''
   }
   try {
     const { printMode, overlayCfg, printerCanon } = printSettings()
@@ -535,18 +551,34 @@ async function overlayPreflight() {
         const hit = printerForms.findForm(forms.sizes, out.paperW, out.paperH, 0.5)
         out.formPresent = !!hit
         out.formName = hit ? hit.name : ''
+        // Is the CURRENT default paper already our sheet size? If not, the print
+        // will centre-shift even though the form exists.
+        if (forms.default) {
+          out.defaultPaperName = forms.default.name
+          out.defaultPaperOk = printerForms.sizeMatches(forms.default, out.paperW, out.paperH, 0.5)
+        }
       }
     }
     printLog.log('overlay-preflight', {
       engine: out.engine, spooler: out.spooler, spoolerPath: out.spoolerPath,
       canon: out.canonName || '(unset)', canonFound: out.canonFound,
       form: out.formPresent == null ? 'unknown' : (out.formPresent ? out.formName : 'MISSING'),
+      defaultPaper: out.defaultPaperName || 'unknown',
+      defaultPaperOk: out.defaultPaperOk == null ? 'unknown' : out.defaultPaperOk,
       printMode
     })
   } catch (e) {
     printLog.log('overlay-preflight-error', { reason: String(e && e.message || e) })
   }
+  overlayPreflightCache = out // real-slip printing reads this (paperMismatch)
   return out
+}
+
+// Definitive default-paper mismatch from the cache. TRUE only when the probe ran
+// AND the default paper is not the parchi size — a null/unknown result (probe
+// couldn't run) is NOT a mismatch, so it never blocks a print on a false alarm.
+function cachedPaperMismatch() {
+  return !!(overlayPreflightCache && overlayPreflightCache.defaultPaperOk === false)
 }
 
 ipcMain.handle('overlay-preflight', async () => {

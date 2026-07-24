@@ -49,17 +49,23 @@ function resolveExe() {
 function available() { return !!resolveExe() }
 
 // noscale is the whole point: it forbids the "shrink/fit to printable area"
-// rescaling that produced the shrunken, rotated print. Copies are handled by the
-// spooler so the PDF is rendered once.
-function argsFor(exe, { file, deviceName, copies }) {
+// rescaling that produced the shrunken, rotated print. monochrome forces solid-K
+// black instead of letting the driver halftone the text into faint grey — the
+// same intent the driver-fallback's `color:false` had, which was MISSING from
+// this (the actually-used) engine. Copies are handled by the spooler so the PDF
+// is rendered once. `mono` defaults true (this path only ever feeds the Canon
+// LBP6030, a mono laser); pass false to leave colour to the printer's own setting.
+function argsFor(exe, { file, deviceName, copies, mono = true }) {
   const n = Math.max(1, Math.min(5, parseInt(copies, 10) || 1))
   if (/pdftoprinter/i.test(path.basename(exe))) {
-    // PDFtoPrinter.exe <file> "<printer>" [copies]
+    // PDFtoPrinter.exe <file> "<printer>" [copies]  (no per-setting switches)
     return [file, deviceName, String(n)]
   }
+  const settings = ['noscale', `copies=${n}`]
+  if (mono) settings.push('monochrome')
   return [
     '-print-to', deviceName,
-    '-print-settings', `noscale,copies=${n}`,
+    '-print-settings', settings.join(','),
     '-silent', '-exit-when-done',
     file
   ]
@@ -76,7 +82,7 @@ function writeTempPdf(buf, tag = 'overlay') {
 // Spool `buf` to `deviceName`. Resolves { ok, engine:'pdf', exe, source } or
 // { ok:false, reason } — the caller decides whether to fall back. Deliberately
 // never throws: a failure here must be a normal, logged, recoverable outcome.
-function printPdfBuffer({ buf, deviceName, copies = 1, tag = 'overlay', timeoutMs = 60000 }) {
+function printPdfBuffer({ buf, deviceName, copies = 1, tag = 'overlay', mono = true, timeoutMs = 60000 }) {
   return new Promise((resolve) => {
     const found = resolveExe()
     if (!found) return resolve({ ok: false, reason: 'pdf-spooler-missing' })
@@ -84,7 +90,7 @@ function printPdfBuffer({ buf, deviceName, copies = 1, tag = 'overlay', timeoutM
     let tmp = null
     try {
       tmp = writeTempPdf(buf, tag)
-      const args = argsFor(found.exe, { file: tmp.file, deviceName, copies })
+      const args = argsFor(found.exe, { file: tmp.file, deviceName, copies, mono })
       const p = spawn(found.exe, args, { windowsHide: true })
       let err = ''
       let settled = false

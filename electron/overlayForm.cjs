@@ -420,7 +420,12 @@ async function renderOverlayPdf(webContents, c) {
 // { ok:false, reason:'pdf-engine-unavailable' } and prints NOTHING. Proof/test
 // prints on plain paper pass allowFallback:true (a wasted plain sheet is fine),
 // and stamp the engine they actually used into the footer.
-function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, allowFallback = false }) {
+//
+// paperMismatch: TRUE (from main.cjs's cached preflight) when the printer's
+// default paper is NOT the parchi size. noscale centres our short sheet on that
+// larger default and every value shifts off the slip — same wasted-slip outcome
+// as a missing engine, so a real slip (allowFallback:false) refuses on it too.
+function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, allowFallback = false, paperMismatch = false }) {
   const c = normalizeCfg(cfg)
   const pageHtml = html || (data ? buildOverlayHtml(data, cfg) : null) // print = values only (no bg)
   if (!pageHtml) return Promise.resolve({ ok: false, reason: 'no-data' })
@@ -458,6 +463,14 @@ function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, 
         c.deviceName = dev.name
         geom.device = dev.name
         if (dev.unverified) note('overlay-device-unverified', { device: dev.name, note: 'printer list unreadable — proceeding with the configured name' })
+
+        // Wrong default paper → refuse the REAL slip before rendering anything, so
+        // no pre-printed form is fed into a print that would land shifted off it.
+        // Checked here (not deep in stage 2) so nothing is rendered or spooled.
+        if (!allowFallback && paperMismatch) {
+          note('overlay-print-FAILED', { ...geom, reason: 'default-paper-mismatch', note: 'printer default paper is not the parchi size; refusing to risk a slip' })
+          return { ok: false, engine: c.engine, reason: 'default-paper-mismatch' }
+        }
       }
 
       // STAGE 1 — exact-size PDF (also the dry-run artifact).

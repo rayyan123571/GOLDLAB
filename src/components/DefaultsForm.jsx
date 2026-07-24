@@ -433,6 +433,7 @@ export default function DefaultsForm({ open, onClose }) {
     'canon-printer-missing': 'منتخب کیا ہوا کینن پرنٹر ونڈوز میں نہیں مل رہا — نام بدل گیا یا پرنٹر ہٹا دیا گیا ہے',
     'no-printers-installed': 'ونڈوز میں کوئی پرنٹر نصب نہیں',
     'pdf-engine-unavailable': 'PDF انجن دستیاب نہیں (سپولر غائب) — پرچی ضائع ہونے سے بچانے کے لیے پرنٹ روک دیا گیا',
+    'default-paper-mismatch': 'پرنٹر کا ڈیفالٹ کاغذ پرچی کے ناپ کا نہیں — GOLDLAB PARCHI کو ڈیفالٹ بنائیں',
     'pdf-spooler-missing': 'PDF سپولر موجود نہیں — ونڈوز ڈرائیور سے چھپا (سائز بدل سکتا ہے)',
     'pdf-spool-timeout': 'پرنٹر نے دیر لگائی — دوبارہ نہیں بھیجا گیا',
     timeout: 'پرنٹر نے جواب نہیں دیا'
@@ -1033,6 +1034,17 @@ export default function DefaultsForm({ open, onClose }) {
                         {/* Windows custom form (215.9×139.7). null = couldn't read. */}
                         {preflight.formPresent === true && (
                           <div className="urdu text-[11px]">کاغذ کا ناپ موجود ✓ («{preflight.formName}»)</div>
+                        )}
+                        {/* Centering risk: form exists but is not the DEFAULT paper.
+                            noscale centres on the default, so values shift off the slip. */}
+                        {preflight.defaultPaperOk === false && (
+                          <div className="urdu text-[11px] text-amber-900 font-bold">
+                            پرنٹر کا ڈیفالٹ کاغذ «{preflight.defaultPaperName}» ہے — GOLDLAB PARCHI نہیں۔
+                            Printing Preferences میں GOLDLAB PARCHI کو ڈیفالٹ بنائیں، ورنہ ویلیوز نیچے کھسک کر پرچی سے باہر چھپیں گی۔
+                          </div>
+                        )}
+                        {preflight.defaultPaperOk === true && (
+                          <div className="urdu text-[11px]">ڈیفالٹ کاغذ درست ✓</div>
                         )}
                         {preflight.formPresent === false && (
                           <div className="urdu text-[11px] text-amber-900 font-bold">

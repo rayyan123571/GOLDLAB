@@ -29,6 +29,14 @@ function script(deviceName) {
     `$ps.PrinterName = ${psLiteral(deviceName)}`,
     // IsValid is false for a printer name Windows does not know.
     'if (-not $ps.IsValid) { Write-Output "INVALID"; exit 0 }',
+    // The CURRENT default paper. This is the real centering risk: SumatraPDF's
+    // `noscale` centres our exact-size page on whatever the driver's default
+    // paper is — if that is still Letter, a 139.7mm-tall sheet lands centred on a
+    // 279.4mm page and every value shifts ~70mm down, off the pre-printed slip.
+    // DefaultPageSettings is on PrinterSettings, so this needs no PrintManagement
+    // module (absent on Windows 7).
+    '$d = $ps.DefaultPageSettings.PaperSize',
+    'Write-Output ("DEFAULT|" + $d.PaperName + "|" + $d.Width + "|" + $d.Height)',
     // name|width|height, one per line. Width/Height are hundredths of an inch.
     'foreach ($p in $ps.PaperSizes) { Write-Output ("SIZE|" + $p.PaperName + "|" + $p.Width + "|" + $p.Height) }'
   ].join('\n')
@@ -55,29 +63,31 @@ function listPaperSizes(deviceName, timeoutMs = 20000) {
     p.on('close', () => {
       if (/INVALID/.test(out)) return done({ ok: false, reason: 'printer-not-valid' })
       const sizes = []
+      let dflt = null
+      const toMm = (v) => Math.round(Number(v) * MM_PER_UNIT * 10) / 10
       for (const line of out.split(/\r?\n/)) {
-        const m = /^SIZE\|(.*)\|(\d+)\|(\d+)$/.exec(line.trim())
-        if (!m) continue
-        sizes.push({
-          name: m[1],
-          wMm: Math.round(Number(m[2]) * MM_PER_UNIT * 10) / 10,
-          hMm: Math.round(Number(m[3]) * MM_PER_UNIT * 10) / 10
-        })
+        const s = /^SIZE\|(.*)\|(\d+)\|(\d+)$/.exec(line.trim())
+        if (s) { sizes.push({ name: s[1], wMm: toMm(s[2]), hMm: toMm(s[3]) }); continue }
+        const d = /^DEFAULT\|(.*)\|(\d+)\|(\d+)$/.exec(line.trim())
+        if (d) dflt = { name: d[1], wMm: toMm(d[2]), hMm: toMm(d[3]) }
       }
       if (!sizes.length) return done({ ok: false, reason: err.trim().slice(0, 200) || 'no-sizes-reported' })
-      done({ ok: true, sizes })
+      done({ ok: true, sizes, default: dflt })
     })
   })
 }
 
-// Is there a form matching w × h (mm) within tol? Either orientation counts: a
-// "GOLDLAB PARCHI" defined as 139.7 × 215.9 is the same physical sheet, and the
-// driver rotates between them itself.
-function findForm(sizes, w, h, tol = 0.5) {
+// Does a single size (w × h mm) match the sheet within tol? Either orientation
+// counts — the same physical sheet defined 215.9×139.7 or 139.7×215.9.
+function sizeMatches(s, w, h, tol = 0.5) {
+  if (!s) return false
   const near = (a, b) => Math.abs(a - b) <= tol
-  return (sizes || []).find((s) =>
-    (near(s.wMm, w) && near(s.hMm, h)) || (near(s.wMm, h) && near(s.hMm, w))
-  ) || null
+  return (near(s.wMm, w) && near(s.hMm, h)) || (near(s.wMm, h) && near(s.hMm, w))
+}
+
+// Is there a form matching w × h (mm) within tol?
+function findForm(sizes, w, h, tol = 0.5) {
+  return (sizes || []).find((s) => sizeMatches(s, w, h, tol)) || null
 }
 
 // The click-path the shopkeeper follows to create the form, as plain Urdu text —
@@ -103,13 +113,16 @@ function formInstructionsUrdu(paperW = 215.9, paperH = 139.7, printer = 'Canon L
     '8. Save Form دبائیں، پھر Close۔',
     '',
     `9. اب ${printer} پر دائیں کلک → Printing Preferences۔`,
-    '10. Page Setup میں Page Size = GOLDLAB PARCHI منتخب کریں۔',
+    '10. Page Setup میں Page Size = GOLDLAB PARCHI منتخب کریں (یہی ڈیفالٹ کاغذ ہونا ضروری ہے)۔',
     '11. Scaling / Page Layout: "Off" یا "100%" یا "Actual size" رکھیں — Fit to Page نہ ہو۔',
     '12. Auto-rotate / Rotate بند (Off) رکھیں۔',
     '13. OK دبا کر محفوظ کریں۔',
+    '',
+    'نوٹ: اگر GOLDLAB PARCHI ڈیفالٹ کاغذ نہ ہو تو پرنٹر ہماری شیٹ کو بڑے کاغذ کے',
+    '     بیچ میں رکھ دے گا اور ویلیوز نیچے کھسک کر پرچی سے باہر چلی جائیں گی۔',
     '',
     '14. آخر میں گولڈ لیب میں «پروف شیٹ» چھاپ کر دونوں 100mm بار ناپ لیں۔'
   ].join('\n')
 }
 
-module.exports = { listPaperSizes, findForm, formInstructionsUrdu }
+module.exports = { listPaperSizes, findForm, sizeMatches, formInstructionsUrdu }
