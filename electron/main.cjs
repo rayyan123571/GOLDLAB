@@ -10,6 +10,8 @@ const overlayForm = require('./overlayForm.cjs')
 const reportPdf = require('./reportPdf.cjs')
 const { routeFor } = require('./printRouting.cjs')
 const printLog = require('./printLog.cjs') // userData/print-log.txt — see printLog.cjs
+const pdfPrint = require('./pdfPrint.cjs')
+const printerForms = require('./printerForms.cjs')
 const { DEFAULT_OFFSETS: OVERLAY_DEFAULT_OFFSETS } = require('./overlayDefaults.cjs')
 const { SHOP_FIELDS } = require('./shopDefaults.cjs')
 const liveGold = require('./liveGold.cjs')
@@ -310,7 +312,11 @@ function printSettings() {
       rightDX: r.overlay_right_dx, rightDY: r.overlay_right_dy,
       fontPt: r.overlay_font_pt,
       coords: r.overlay_coords,
-      bg: r.overlay_bg_path
+      bg: r.overlay_bg_path,
+      // Geometry/engine escape hatches (see overlayForm.normalizeCfg).
+      landscape: !!Number(r.overlay_landscape || 0),
+      rotate180: !!Number(r.overlay_rotate180 || 0),
+      engine: r.overlay_engine === 'driver' ? 'driver' : 'pdf'
     }
     // Dual-printer device names (blank = Windows default).
     printerThermal = r.printer_thermal || ''
@@ -344,8 +350,11 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
     if (route.error) { printLog.log('overlay-result', { ok: false, reason: route.error }); return { ok: false, reason: route.error } }
     try {
       if (!data) { printLog.log('overlay-result', { ok: false, reason: 'overlay-needs-slip-data' }); return { ok: false, reason: 'overlay-needs-slip-data' } }
-      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies })
-      printLog.log('overlay-result', { ok: !!(r && r.ok), printer: route.deviceName, reason: r && r.reason })
+      // printLog.log is handed down so overlayForm records the FULL geometry of
+      // every attempt (engine, paper, landscape, rotate180, scales, page count) —
+      // a rotated/shrunken print is unexplainable without it.
+      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies, log: printLog.log })
+      printLog.log('overlay-result', { ok: !!(r && r.ok), printer: route.deviceName, engine: r && r.engine, pageCount: r && r.pageCount, reason: r && r.reason })
       return r
     } catch (e) {
       console.warn('[raster-print-slip] overlay render threw:', e && e.message || e)
@@ -418,6 +427,11 @@ function overlayCfgWith(override = {}) {
     scaleX: pick('scaleX'), scaleY: pick('scaleY'),
     rightDX: pick('rightDX'), rightDY: pick('rightDY'),
     fontPt: pick('fontPt'),
+    // The proof/test print must run through the SAME geometry the real slip uses,
+    // otherwise it proves nothing — so these are merged exactly like the rest.
+    landscape: pick('landscape'),
+    rotate180: pick('rotate180'),
+    engine: pick('engine'),
     coords: override.coords != null ? override.coords : overlayCfg.coords,
     bg: override.bg != null ? override.bg : overlayCfg.bg
   }
@@ -456,7 +470,97 @@ ipcMain.handle('overlay-test-print', async (_evt, override = {}) => {
   if (!printerCanon) return { ok: false, reason: 'canon-printer-not-set' }
   try {
     const data = overlayForm.buildSampleData() // lab-shaped sample tables
-    return await overlayForm.printOverlay({ data, cfg: { ...overlayCfgWith(override), deviceName: printerCanon }, win, copies: 1, tag: 'test' })
+    // A test print is user-initiated onto a real slip they chose to feed, so it
+    // MAY fall back to the driver if the PDF engine is unavailable — but the
+    // result still reports which engine ran, and the UI surfaces it.
+    return await overlayForm.printOverlay({ data, cfg: { ...overlayCfgWith(override), deviceName: printerCanon }, win, copies: 1, tag: 'test', log: printLog.log, allowFallback: true })
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// PROOF SHEET (settings → پروف شیٹ): the calibration sheet on PLAIN paper —
+// 10mm grid, corner crosshairs, two 100mm measuring bars, the sample values at
+// their real coordinates, and a footer of the exact settings used. It goes
+// through the SAME printOverlay pipeline as a real slip (same page size, engine,
+// transforms), which is the entire point: measuring the printed bars is the only
+// way to see whether the Windows driver rotated or rescaled the page. No
+// pre-printed slip is consumed.
+ipcMain.handle('overlay-proof-print', async (_evt, override = {}) => {
+  if (!win) return { ok: false, reason: 'no-window' }
+  const { printerCanon } = printSettings()
+  if (!printerCanon) return { ok: false, reason: 'canon-printer-not-set' }
+  try {
+    const cfg = { ...overlayCfgWith(override), deviceName: printerCanon }
+    // Stamp the engine that will ACTUALLY print into the footer, so the photo of
+    // the sheet shows 'pdf' or 'driver' truthfully (the shop may not have the
+    // spooler yet). The proof is plain paper, so it may fall back.
+    const engineUsed = overlayForm.resolveEngine(cfg)
+    const html = overlayForm.buildProofHtml(cfg, { engineUsed })
+    return await overlayForm.printOverlay({ html, cfg, win, copies: 1, tag: 'proof', log: printLog.log, allowFallback: true })
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// ── Overlay PREFLIGHT (settings badge + app-start log) ───────────────────────
+// Answers the two questions that decide whether a real slip can be printed
+// safely: is the PDF spooler present, and does the configured Canon resolve to an
+// installed printer whose driver has a form matching the 215.9×139.7 sheet? The
+// renderer shows a persistent badge from this; nothing here prints.
+async function overlayPreflight() {
+  const out = {
+    engine: 'pdf', spooler: false, spoolerPath: null,
+    canonSet: false, canonName: '', canonFound: false,
+    formPresent: null, formName: '', paperW: 215.9, paperH: 139.7,
+    sizesReadable: false
+  }
+  try {
+    const { printMode, overlayCfg, printerCanon } = printSettings()
+    out.engine = overlayCfg.engine === 'driver' ? 'driver' : 'pdf'
+    out.canonSet = !!printerCanon
+    out.canonName = printerCanon || ''
+
+    const exe = pdfPrint.resolveExe()
+    out.spooler = !!exe
+    out.spoolerPath = exe ? exe.exe : null
+
+    if (win && printerCanon) {
+      try {
+        const list = await win.webContents.getPrintersAsync()
+        out.canonFound = Array.isArray(list) && list.some((p) => p.name === printerCanon ||
+          String(p.name).toLowerCase() === printerCanon.toLowerCase())
+      } catch {}
+      // Paper-size probe (PowerShell). Best-effort: an unreadable list leaves
+      // formPresent null = "couldn't check", never a false "missing".
+      const forms = await printerForms.listPaperSizes(printerCanon)
+      if (forms.ok) {
+        out.sizesReadable = true
+        const hit = printerForms.findForm(forms.sizes, out.paperW, out.paperH, 0.5)
+        out.formPresent = !!hit
+        out.formName = hit ? hit.name : ''
+      }
+    }
+    printLog.log('overlay-preflight', {
+      engine: out.engine, spooler: out.spooler, spoolerPath: out.spoolerPath,
+      canon: out.canonName || '(unset)', canonFound: out.canonFound,
+      form: out.formPresent == null ? 'unknown' : (out.formPresent ? out.formName : 'MISSING'),
+      printMode
+    })
+  } catch (e) {
+    printLog.log('overlay-preflight-error', { reason: String(e && e.message || e) })
+  }
+  return out
+}
+
+ipcMain.handle('overlay-preflight', async () => {
+  try { return { ok: true, ...(await overlayPreflight()) } }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// The plain-Urdu click-path to create the Windows custom form, for the "کاپی
+// کریں" button (WhatsApp to the shop). Built in printerForms so the dialog, the
+// copied text and any printed hint stay identical.
+ipcMain.handle('overlay-form-instructions', async () => {
+  try {
+    const { printerCanon } = printSettings()
+    return { ok: true, text: printerForms.formInstructionsUrdu(215.9, 139.7, printerCanon || 'Canon LBP6030') }
   } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
 })
 
@@ -688,7 +792,12 @@ async function startApp(userDataDir, dbPath) {
   printLog.init(userDataDir, { build: app.getVersion() })
   createWindow()
   // Printer list once the window exists — getPrintersAsync needs a webContents.
-  if (win) win.webContents.once('did-finish-load', () => { printLog.logPrinters(win) })
+  // The overlay preflight runs right after, so print-log.txt records at startup
+  // whether the PDF engine + Canon form are ready BEFORE the first slip is tried.
+  if (win) win.webContents.once('did-finish-load', () => {
+    printLog.logPrinters(win)
+    overlayPreflight().catch(() => {})
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -104,6 +104,13 @@ contextBridge.exposeInMainWorld('api', {
   // and the WhatsApp composite (values over the blank-form scan).
   overlayMeta: () => ipcRenderer.invoke('overlay-meta'),
   overlayTestPrint: (override) => ipcRenderer.invoke('overlay-test-print', override || {}),
+  // پروف شیٹ — grid + crosshairs + 100mm bars on PLAIN paper, same pipeline as a
+  // real slip, so the driver's own rotation/scaling becomes measurable.
+  overlayProofPrint: (override) => ipcRenderer.invoke('overlay-proof-print', override || {}),
+  // Preflight for the Defaults badge: PDF spooler present? Canon resolves? custom
+  // form present? overlayFormInstructions returns the plain-Urdu click-path text.
+  overlayPreflight: () => ipcRenderer.invoke('overlay-preflight'),
+  overlayFormInstructions: () => ipcRenderer.invoke('overlay-form-instructions'),
   overlayShareImage: (data) => ipcRenderer.invoke('overlay-share-image', { data }),
   // Installed-printer list for the dual-printer (thermal + Canon) device pickers.
   listPrinters: () => ipcRenderer.invoke('list-printers'),

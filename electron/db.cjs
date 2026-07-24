@@ -328,7 +328,15 @@ function migrateSchema() {
     ['overlay_scaley', 'REAL', '1'],
     ['overlay_right_dx', 'REAL', '108'],
     ['overlay_right_dy', 'REAL', '0'],
-    ['overlay_font_pt', 'REAL', '10']
+    ['overlay_font_pt', 'REAL', '10'],
+    // Added after the Canon printed the overlay rotated + shrunken. landscape and
+    // rotate180 are geometry escape hatches; engine chooses the print pipeline
+    // ('pdf' = exact-size PDF spooled with scaling off, 'driver' = the old
+    // webContents.print path). All default to the safe values and are backfilled
+    // for existing installs, so an upgraded DB behaves like a fresh one.
+    ['overlay_landscape', 'INTEGER', '0'],
+    ['overlay_rotate180', 'INTEGER', '0'],
+    ['overlay_engine', 'TEXT', "'pdf'"]
   ]
   for (const [col, type, def] of overlayCols) {
     if (!sCols.includes(col)) {
@@ -658,6 +666,7 @@ const api = {
               shop_logo_path=COALESCE(?, shop_logo_path),
               form_style=COALESCE(?, form_style), form_theme=COALESCE(?, form_theme), form_footer=COALESCE(?, form_footer),
               overlay_paper=COALESCE(?, overlay_paper), overlay_coords=COALESCE(?, overlay_coords), overlay_bg_path=COALESCE(?, overlay_bg_path),
+              overlay_landscape=COALESCE(?, overlay_landscape), overlay_rotate180=COALESCE(?, overlay_rotate180), overlay_engine=COALESCE(?, overlay_engine),
               printer_thermal=COALESCE(?, printer_thermal), printer_canon=COALESCE(?, printer_canon),
               reports_dir=COALESCE(?, reports_dir),
               ${OVERLAY_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
@@ -692,6 +701,12 @@ const api = {
         rates.overlay_paper != null ? String(rates.overlay_paper) : null,
         rates.overlay_coords != null ? (typeof rates.overlay_coords === 'string' ? rates.overlay_coords : JSON.stringify(rates.overlay_coords)) : null,
         rates.overlay_bg_path != null ? String(rates.overlay_bg_path) : null,
+        // Geometry/engine escape hatches. The two flags are stored 0/1 so they read
+        // back as plain numbers; engine is clamped to the two known pipelines so a
+        // stray value can never disable printing.
+        rates.overlay_landscape != null ? (rates.overlay_landscape ? 1 : 0) : null,
+        rates.overlay_rotate180 != null ? (rates.overlay_rotate180 ? 1 : 0) : null,
+        rates.overlay_engine != null ? (rates.overlay_engine === 'driver' ? 'driver' : 'pdf') : null,
         // Chosen printer device names ('' clears → default). undefined/null keeps stored.
         rates.printer_thermal != null ? String(rates.printer_thermal) : null,
         rates.printer_canon != null ? String(rates.printer_canon) : null,

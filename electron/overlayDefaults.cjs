@@ -27,9 +27,20 @@ const DEFAULT_COORDS = {
 }
 
 // Global geometry defaults (match the operator's DB + normalizeCfg fallbacks).
+//
+// font_pt was 10 and printed lighter than the reference slip the shop showed us;
+// 11 plus the text stroke in overlayForm.cjs matches it. Still per-shop settable.
+//
+// landscape stays 0: the sheet is ALREADY described as a wide 215.9×139.7 page,
+// so a landscape flag on top of that is a second rotation — which is how the
+// values ended up sideways. rotate180 is the escape hatch for a slip loaded the
+// other way round. engine 'pdf' = exact-size PDF spooled with scaling disabled
+// (deterministic); 'driver' hands the page to the Windows driver, which is free
+// to rescale it, and exists only as a fallback.
 const DEFAULT_OFFSETS = {
   overlay_offx: 0, overlay_offy: 0, overlay_scalex: 1, overlay_scaley: 1,
-  overlay_right_dx: 108, overlay_right_dy: 0, overlay_font_pt: 10
+  overlay_right_dx: 108, overlay_right_dy: 0, overlay_font_pt: 11,
+  overlay_landscape: 0, overlay_rotate180: 0, overlay_engine: 'pdf'
 }
 
 // Urdu display label per field — used by the calibration tool chips.

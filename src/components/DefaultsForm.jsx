@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useApp, WA_REMINDER_DEFAULT } from '../state/store.jsx'
 import { fillReminder } from './UdharForm.jsx' // the report's own message builder — preview = the real thing
 import { buildSlipHeader, buildSlipTerms, SHOP_FIELDS, SLIP_DESIGN_W } from '../logic/slipHeader.js'
@@ -157,7 +157,11 @@ export default function DefaultsForm({ open, onClose }) {
     whatsapp_reminder_text: '',
     // Overlay (pre-printed slip) geometry.
     overlay_offx: '0', overlay_offy: '0', overlay_scalex: '1', overlay_scaley: '1',
-    overlay_right_dx: '108', overlay_right_dy: '0', overlay_font_pt: '10',
+    overlay_right_dx: '108', overlay_right_dy: '0', overlay_font_pt: '11',
+    // Print pipeline + geometry escape hatches. engine 'pdf' = exact-size PDF
+    // spooled with scaling disabled (the fix for the rotated/shrunken print);
+    // 'driver' hands the page to Windows, which may rescale it.
+    overlay_engine: 'pdf', overlay_landscape: false, overlay_rotate180: false,
     overlay_bg_path: '', overlay_coords: null,
     // Dual-printer device names.
     printer_thermal: '', printer_canon: '',
@@ -179,6 +183,12 @@ export default function DefaultsForm({ open, onClose }) {
   const [overlayMeta, setOverlayMeta] = useState(null)       // {defaultCoords, fieldLabels, sample} for the calibration canvas
   const [ovSel, setOvSel] = useState(null)                   // selected overlay field key (for nudge buttons)
   const [ovMsg, setOvMsg] = useState('')                     // overlay test-print status
+  // What the operator measured off the printed proof sheet with a ruler:
+  // h/v = the two 100mm bars, x/y = where the 10,10 crosshair actually landed.
+  const [meas, setMeas] = useState({ h: '', v: '', x: '', y: '' })
+  // Preflight result (PDF spooler present? Canon resolves? custom form present?).
+  const [preflight, setPreflight] = useState(null)
+  const [copyMsg, setCopyMsg] = useState('')
   const ovCanvasRef = useRef(null)                           // calibration canvas element (px↔mm)
   const ovDrag = useRef(null)                                // active drag {key,startX,startY,ox,oy}
   const savedTimer = useRef(null)
@@ -220,7 +230,10 @@ export default function DefaultsForm({ open, onClose }) {
         overlay_scaley: src.overlay_scaley != null ? String(src.overlay_scaley) : '1',
         overlay_right_dx: src.overlay_right_dx != null ? String(src.overlay_right_dx) : '108',
         overlay_right_dy: src.overlay_right_dy != null ? String(src.overlay_right_dy) : '0',
-        overlay_font_pt: src.overlay_font_pt != null ? String(src.overlay_font_pt) : '10',
+        overlay_font_pt: src.overlay_font_pt != null ? String(src.overlay_font_pt) : '11',
+        overlay_engine: src.overlay_engine === 'driver' ? 'driver' : 'pdf',
+        overlay_landscape: !!Number(src.overlay_landscape || 0),
+        overlay_rotate180: !!Number(src.overlay_rotate180 || 0),
         overlay_bg_path: src.overlay_bg_path != null ? String(src.overlay_bg_path) : '',
         overlay_coords: (() => { try { return src.overlay_coords ? JSON.parse(src.overlay_coords) : null } catch { return null } })(),
         printer_thermal: src.printer_thermal != null ? String(src.printer_thermal) : '',
@@ -303,6 +316,20 @@ export default function DefaultsForm({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, form.print_mode])
 
+  // Preflight the overlay print path whenever the dialog opens in overlay mode or
+  // the chosen Canon changes — the badge must reflect the CURRENT printer, not a
+  // stale check. Re-run after a successful save too (printer_canon may have just
+  // changed). Cheap enough (one PowerShell call) to re-run on those edges.
+  const runPreflight = useCallback(() => {
+    if (!hasApi || !window.api.overlayPreflight) return
+    window.api.overlayPreflight().then((r) => { if (r && r.ok) setPreflight(r) }).catch(() => {})
+  }, [hasApi])
+  useEffect(() => {
+    if (!open || form.print_mode !== 'overlay_form') return
+    runPreflight()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, form.print_mode, form.printer_canon])
+
   useEffect(() => () => {
     if (savedTimer.current) clearTimeout(savedTimer.current)
     if (saveTimer.current) clearTimeout(saveTimer.current)
@@ -372,7 +399,12 @@ export default function DefaultsForm({ open, onClose }) {
       overlay_offx: s(d.overlay_offx, '0'), overlay_offy: s(d.overlay_offy, '0'),
       overlay_scalex: s(d.overlay_scalex, '1'), overlay_scaley: s(d.overlay_scaley, '1'),
       overlay_right_dx: s(d.overlay_right_dx, '108'), overlay_right_dy: s(d.overlay_right_dy, '0'),
-      overlay_font_pt: s(d.overlay_font_pt, '10')
+      overlay_font_pt: s(d.overlay_font_pt, '11'),
+      // Reset also puts the pipeline back to the safe combination, so "ری سیٹ"
+      // recovers from a bad engine/rotation choice as well as from a bad drag.
+      overlay_engine: d.overlay_engine === 'driver' ? 'driver' : 'pdf',
+      overlay_landscape: !!Number(d.overlay_landscape || 0),
+      overlay_rotate180: !!Number(d.overlay_rotate180 || 0)
     })
     setOvSel(null)
     setOvMsg('ڈیفالٹ پر واپس ✓')
@@ -380,25 +412,101 @@ export default function DefaultsForm({ open, onClose }) {
     savedTimer.current = setTimeout(() => setOvMsg(''), 4000)
   }
 
+  // The CURRENT (possibly unsaved) overlay config — shared by the test print and
+  // the proof sheet so both prints are made under exactly the same geometry the
+  // real slip would use. A proof printed with different settings proves nothing.
+  const overlayOverride = () => ({
+    offsetX: Number(form.overlay_offx) || 0, offsetY: Number(form.overlay_offy) || 0,
+    scaleX: Number(form.overlay_scalex) || 1, scaleY: Number(form.overlay_scaley) || 1,
+    rightDX: ovRightDX, rightDY: ovRightDY,
+    fontPt: Number(form.overlay_font_pt) || 11,
+    engine: form.overlay_engine === 'driver' ? 'driver' : 'pdf',
+    landscape: !!form.overlay_landscape,
+    rotate180: !!form.overlay_rotate180,
+    coords: ovCoords(), bg: form.overlay_bg_path
+  })
+
+  // Urdu for the failure codes the overlay path can return, so the operator is
+  // told what to DO rather than shown an English reason string.
+  const ovReason = (code) => ({
+    'canon-printer-not-set': 'کینن پرنٹر منتخب نہیں — اوپر «کینن پرنٹر» میں منتخب کریں',
+    'canon-printer-missing': 'منتخب کیا ہوا کینن پرنٹر ونڈوز میں نہیں مل رہا — نام بدل گیا یا پرنٹر ہٹا دیا گیا ہے',
+    'no-printers-installed': 'ونڈوز میں کوئی پرنٹر نصب نہیں',
+    'pdf-engine-unavailable': 'PDF انجن دستیاب نہیں (سپولر غائب) — پرچی ضائع ہونے سے بچانے کے لیے پرنٹ روک دیا گیا',
+    'pdf-spooler-missing': 'PDF سپولر موجود نہیں — ونڈوز ڈرائیور سے چھپا (سائز بدل سکتا ہے)',
+    'pdf-spool-timeout': 'پرنٹر نے دیر لگائی — دوبارہ نہیں بھیجا گیا',
+    timeout: 'پرنٹر نے جواب نہیں دیا'
+  }[code] || code || 'نامعلوم مسئلہ')
+
+  // Copy the Windows custom-form click-path (built in electron/printerForms.cjs so
+  // it never drifts from the printed footer) to the clipboard for WhatsApp.
+  const copyFormInstructions = async () => {
+    try {
+      const r = hasApi && window.api.overlayFormInstructions ? await window.api.overlayFormInstructions() : null
+      const text = r && r.ok ? r.text : ''
+      if (!text) { setCopyMsg('ہدایات نہیں ملیں'); return }
+      await navigator.clipboard.writeText(text)
+      setCopyMsg('کاپی ہو گیا ✓')
+    } catch { setCopyMsg('کاپی نہیں ہو سکا') }
+    setTimeout(() => setCopyMsg(''), 4000)
+  }
+
   // ٹیسٹ پرنٹ — print the values-only overlay with the CURRENT (unsaved) calibration.
   const runOverlayTest = async () => {
     if (!hasApi || !window.api.overlayTestPrint || testBusy) return
     setTestBusy(true); setOvMsg('ٹیسٹ پرنٹ ہو رہا ہے…')
     try {
-      const res = await window.api.overlayTestPrint({
-        offsetX: Number(form.overlay_offx) || 0, offsetY: Number(form.overlay_offy) || 0,
-        scaleX: Number(form.overlay_scalex) || 1, scaleY: Number(form.overlay_scaley) || 1,
-        rightDX: ovRightDX, rightDY: ovRightDY,
-        fontPt: Number(form.overlay_font_pt) || 10,
-        coords: ovCoords(), bg: form.overlay_bg_path
-      })
-      setOvMsg(res && res.ok ? 'ٹیسٹ پرنٹ ہو گیا ✓' : `ناکام: ${res && res.reason ? res.reason : 'نامعلوم مسئلہ'}`)
+      const res = await window.api.overlayTestPrint(overlayOverride())
+      setOvMsg(res && res.ok
+        ? `ٹیسٹ پرنٹ ہو گیا ✓ (${res.engine === 'pdf' ? 'PDF' : 'ڈرائیور'})`
+        : `ناکام: ${ovReason(res && res.reason)}`)
     } catch (e) { setOvMsg(`ناکام: ${e && e.message ? e.message : e}`) }
     finally {
       setTestBusy(false)
       if (savedTimer.current) clearTimeout(savedTimer.current)
       savedTimer.current = setTimeout(() => setOvMsg(''), 6000)
     }
+  }
+
+  // پروف شیٹ — the SAME pipeline, on PLAIN paper: grid + crosshairs + two 100mm
+  // bars. Measuring those bars is the only way to find out what the Windows
+  // driver actually did to the page; no pre-printed slip is consumed.
+  const runOverlayProof = async () => {
+    if (!hasApi || !window.api.overlayProofPrint || testBusy) return
+    setTestBusy(true); setOvMsg('پروف شیٹ چھپ رہی ہے… (سادہ کاغذ ڈالیں)')
+    try {
+      const res = await window.api.overlayProofPrint(overlayOverride())
+      setOvMsg(res && res.ok
+        ? `پروف شیٹ نکل گئی ✓ (${res.engine === 'pdf' ? 'PDF' : 'ڈرائیور'}) — اب دونوں 100mm بار ناپیں`
+        : `ناکام: ${ovReason(res && res.reason)}`)
+    } catch (e) { setOvMsg(`ناکام: ${e && e.message ? e.message : e}`) }
+    finally {
+      setTestBusy(false)
+      if (savedTimer.current) clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setOvMsg(''), 8000)
+    }
+  }
+
+  // ── Calibration FROM MEASUREMENTS (the proof sheet), not from dragging ───────
+  // Dragging chips over an on-screen scan can only ever fix screen-space error; it
+  // is blind to what the printer does to the page. These four numbers come off the
+  // printed proof sheet with a ruler and describe the printer's ACTUAL behaviour:
+  //   scale  = 100 / (length the 100mm bar really printed)
+  //   offset = 10  - (where the 10,10 crosshair really landed)
+  const applyMeasured = () => {
+    const h = Number(meas.h); const v = Number(meas.v)
+    const cx = Number(meas.x); const cy = Number(meas.y)
+    const next = { ...form }
+    let changed = 0
+    if (Number.isFinite(h) && h > 0) { next.overlay_scalex = String(Math.round((100 / h) * 10000) / 10000); changed++ }
+    if (Number.isFinite(v) && v > 0) { next.overlay_scaley = String(Math.round((100 / v) * 10000) / 10000); changed++ }
+    if (Number.isFinite(cx)) { next.overlay_offx = String(Math.round((10 - cx) * 100) / 100); changed++ }
+    if (Number.isFinite(cy)) { next.overlay_offy = String(Math.round((10 - cy) * 100) / 100); changed++ }
+    if (!changed) { setOvMsg('پہلے ناپ کے نمبر لکھیں'); return }
+    commit(next)
+    setOvMsg('ناپ لاگو ہو گیا ✓ — اب دوبارہ پروف شیٹ نکال کر تصدیق کریں')
+    if (savedTimer.current) clearTimeout(savedTimer.current)
+    savedTimer.current = setTimeout(() => setOvMsg(''), 8000)
   }
 
   // Persist the given form snapshot to the DB + store, and flash the saved tick.
@@ -424,7 +532,11 @@ export default function DefaultsForm({ open, onClose }) {
       overlay_scaley: Number(next.overlay_scaley) || 1,
       overlay_right_dx: Number.isFinite(Number(next.overlay_right_dx)) ? Number(next.overlay_right_dx) : 108,
       overlay_right_dy: Number(next.overlay_right_dy) || 0,
-      overlay_font_pt: Number(next.overlay_font_pt) || 10,
+      overlay_font_pt: Number(next.overlay_font_pt) || 11,
+      // Pipeline + geometry escape hatches (stored 0/1; engine clamped in db.cjs).
+      overlay_engine: next.overlay_engine === 'driver' ? 'driver' : 'pdf',
+      overlay_landscape: next.overlay_landscape ? 1 : 0,
+      overlay_rotate180: next.overlay_rotate180 ? 1 : 0,
       overlay_bg_path: String(next.overlay_bg_path ?? ''),
       overlay_coords: next.overlay_coords ? JSON.stringify(next.overlay_coords) : undefined,
       // Dual-printer device names ('' clears → Windows default).
@@ -891,10 +1003,156 @@ export default function DefaultsForm({ open, onClose }) {
                     ))}
                   </div>
 
+                  {/* Preflight badge — the persistent readiness indicator. Green
+                      only when a real slip WILL print at exact size; amber warns
+                      that a slip could be wasted before the operator finds out. */}
+                  {preflight && (() => {
+                    const engPdf = preflight.engine === 'pdf' && preflight.spooler
+                    const ready = engPdf && (preflight.canonFound || !preflight.canonSet)
+                    const cls = ready
+                      ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
+                      : 'border-amber-400 bg-amber-50 text-amber-800'
+                    return (
+                      <div className={`flex flex-col gap-1 border rounded-md p-3 ${cls}`}>
+                        <div className="urdu font-bold text-[13px]">
+                          {engPdf
+                            ? 'پرنٹ انجن: PDF (عین ناپ) ✅'
+                            : 'پرنٹ انجن: ڈرائیور (فال بیک) ⚠️ — پرچی ضائع ہو سکتی ہے'}
+                        </div>
+                        {!preflight.spooler && preflight.engine === 'pdf' && (
+                          <div className="urdu text-[11px]">
+                            PDF سپولر (SumatraPDF) موجود نہیں — اصل پرچی پرنٹ رُک جائے گی۔ ایپ دوبارہ انسٹال کریں یا سپورٹ سے رابطہ کریں۔
+                          </div>
+                        )}
+                        {preflight.canonSet && !preflight.canonFound && (
+                          <div className="urdu text-[11px]">منتخب کینن پرنٹر «{preflight.canonName}» ونڈوز میں نہیں مل رہا۔</div>
+                        )}
+                        {!preflight.canonSet && (
+                          <div className="urdu text-[11px]">کینن پرنٹر ابھی منتخب نہیں (اوپر «کینن پرنٹر» میں کریں)۔</div>
+                        )}
+                        {/* Windows custom form (215.9×139.7). null = couldn't read. */}
+                        {preflight.formPresent === true && (
+                          <div className="urdu text-[11px]">کاغذ کا ناپ موجود ✓ («{preflight.formName}»)</div>
+                        )}
+                        {preflight.formPresent === false && (
+                          <div className="urdu text-[11px] text-amber-900 font-bold">
+                            پرنٹر میں 215.9×139.7mm کا فارم نہیں — نیچے دی گئی ہدایات سے بنائیں (ورنہ ڈرائیور صفحہ گھما/چھوٹا کر سکتا ہے)۔
+                          </div>
+                        )}
+                        {preflight.canonFound && preflight.formPresent == null && preflight.canonSet && (
+                          <div className="urdu text-[11px]">کاغذ کے ناپ کی جانچ نہیں ہو سکی — پروف شیٹ سے تصدیق کریں۔</div>
+                        )}
+                        <button type="button" onClick={runPreflight}
+                          className="urdu text-[11px] font-bold text-gray-700 bg-white/70 border border-current/30 rounded px-2 py-0.5 self-start mt-1">
+                          دوبارہ جانچیں
+                        </button>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Windows custom form — instructions + copy-for-WhatsApp. Shown
+                      when the form is missing OR the check couldn't run. */}
+                  {preflight && preflight.formPresent !== true && (
+                    <div className="flex flex-col gap-2 border border-sky-300 bg-sky-50 rounded-md p-3">
+                      <div className="urdu font-bold text-[13px] text-gray-800">پرنٹر میں کاغذ کا ناپ بنائیں (ایک بار)</div>
+                      <div className="urdu text-[11px] text-gray-600 leading-relaxed">
+                        Print Server Properties → Create a new form → «GOLDLAB PARCHI» → 21.59cm × 13.97cm → Save →
+                        Canon Printing Preferences میں یہی فارم منتخب کریں → Scaling: Off / 100% / Actual size → Auto-rotate: Off۔
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={copyFormInstructions}
+                          className="urdu text-[12px] font-bold text-white bg-sky-600 rounded-md px-3 py-1.5 hover:bg-sky-700">
+                          کاپی کریں (واٹس ایپ کے لیے)
+                        </button>
+                        {copyMsg && <span className="urdu text-[11px] text-sky-700">{copyMsg}</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Print pipeline + geometry escape hatches */}
+                  <div className="flex flex-col gap-2 border border-gray-200 rounded-md p-3">
+                    <div className="urdu font-bold text-[13px] text-gray-700">پرنٹ کا طریقہ</div>
+                    <div className="urdu text-[11px] text-gray-500 leading-relaxed">
+                      <b>PDF</b> — پرچی کے عین ناپ کی PDF بنا کر پرنٹر کو بھیجی جاتی ہے، سائز بدلنے کی اجازت کے بغیر۔
+                      یہی صحیح طریقہ ہے۔ <b>ونڈوز ڈرائیور</b> صرف اُس وقت چنیں جب PDF والا کام نہ کرے — ڈرائیور صفحہ
+                      خود گھما یا چھوٹا کر سکتا ہے (اسی سے ویلیوز ٹیڑھی اور خانوں سے باہر چھپ رہی تھیں)۔
+                    </div>
+                    <label className="flex items-center justify-between gap-2">
+                      <span className="urdu text-[12px] text-gray-700">انجن</span>
+                      <select dir="rtl" value={form.overlay_engine}
+                        onChange={(e) => commit({ ...form, overlay_engine: e.target.value })}
+                        className={`${INPUT} urdu w-56 py-1`}>
+                        <option value="pdf">PDF (عین ناپ — تجویز کردہ)</option>
+                        <option value="driver">ونڈوز ڈرائیور (متبادل)</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={!!form.overlay_rotate180}
+                        onChange={(e) => commit({ ...form, overlay_rotate180: e.target.checked })} />
+                      <span className="urdu text-[12px] text-gray-700">
+                        180° گھمائیں — اگر پرچی الٹی طرف سے ٹرے میں لگتی ہے
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={!!form.overlay_landscape}
+                        onChange={(e) => commit({ ...form, overlay_landscape: e.target.checked })} />
+                      <span className="urdu text-[12px] text-gray-700">
+                        لینڈ اسکیپ — عام طور پر <b>بند</b> رکھیں (شیٹ پہلے ہی چوڑی ہے؛ اسے آن کرنا دوسری بار گھمانا ہے)
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* پروف شیٹ — plain-paper calibration, then calibrate FROM the ruler */}
+                  <div className="flex flex-col gap-2 border border-amber-300 bg-amber-50 rounded-md p-3">
+                    <div className="urdu font-bold text-[13px] text-gray-800">پروف شیٹ (سادہ کاغذ پر)</div>
+                    <div className="urdu text-[11px] text-gray-600 leading-relaxed">
+                      یہ شیٹ <b>سادہ کاغذ</b> پر چھپتی ہے — قیمتی پرچی خرچ نہیں ہوتی۔ اس پر 10mm کا جال، چاروں کونوں
+                      پر نشان، اور دو بار (ایک افقی، ایک عمودی) چھپتے ہیں جن کی لمبائی <b>ٹھیک 100mm</b> ہونی چاہیے۔
+                      اسکیل سے دونوں بار ناپیں: اگر 100mm سے کم یا زیادہ ہیں تو پرنٹر نے صفحہ چھوٹا/بڑا کیا ہے۔ اگر
+                      بار الٹے رخ پر ہیں تو پرنٹر نے صفحہ گھما دیا ہے۔ پھر پروف شیٹ کو اصل پرچی کے ساتھ ملا کر
+                      <b> کھڑکی کی روشنی میں</b> دیکھیں — خانے بغیر پرچی ضائع کیے مل جائیں گے۔
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" disabled={testBusy} onClick={runOverlayProof}
+                        className="urdu text-[13px] font-bold text-white bg-amber-600 rounded-md px-3 py-2 hover:bg-amber-700 disabled:opacity-50">
+                        پروف شیٹ چھاپیں
+                      </button>
+                    </div>
+                    <div className="urdu font-bold text-[12px] text-gray-700 mt-1">ناپ کے مطابق کیلیبریشن</div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {[
+                        ['h', 'افقی 100mm بار اصل میں کتنا آیا؟ (mm)'],
+                        ['v', 'عمودی 100mm بار اصل میں کتنا آیا؟ (mm)'],
+                        ['x', 'اوپر بائیں نشان کی اصل X (mm)'],
+                        ['y', 'اوپر بائیں نشان کی اصل Y (mm)']
+                      ].map(([k, label]) => (
+                        <label key={k} className="flex items-center justify-between gap-2">
+                          <span className="urdu text-[11px] text-gray-700 truncate">{label}</span>
+                          <input dir="ltr" inputMode="decimal" value={meas[k]}
+                            onChange={(e) => setMeas({ ...meas, [k]: e.target.value.replace(/[^\d.\-]/g, '') })}
+                            className={`${INPUT} w-20 py-1`} />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="urdu text-[10px] text-gray-500">
+                      نشان کی X/Y کاغذ کے بائیں اور اوپری کنارے سے ناپیں (درست ہو تو دونوں 10 آنے چاہییں)۔
+                    </div>
+                    <button type="button" onClick={applyMeasured}
+                      className="urdu text-[13px] font-bold text-white bg-slate-700 rounded-md px-3 py-2 hover:bg-slate-800 self-start">
+                      ناپ سے اسکیل/آفسیٹ لگائیں
+                    </button>
+                  </div>
+
                   {/* Calibration canvas — drag each value onto its pre-printed cell */}
                   {overlayMeta ? (
                     <div className="flex flex-col gap-2">
-                      <div className="urdu font-bold text-[13px] text-gray-700">کیلیبریشن (ہر ویلیو کو اس کے خانے پر گھسیٹیں)</div>
+                      <div className="urdu font-bold text-[13px] text-gray-700">باریک ایڈجسٹمنٹ — ہر ویلیو کو اس کے خانے پر گھسیٹیں</div>
+                      {/* The drag tool is screen-space only: it cannot see driver
+                          rotation/scaling, so it must come AFTER the proof sheet. */}
+                      <div className="urdu text-[11px] text-amber-700">
+                        پہلے اوپر والی <b>پروف شیٹ</b> سے اسکیل/آفسیٹ درست کریں۔ یہ گھسیٹنے والا حصہ صرف
+                        <b> آخری باریک ایڈجسٹمنٹ</b> کے لیے ہے — یہ پرنٹر کے گھمانے یا سائز بدلنے کو نہیں پکڑ سکتا۔
+                      </div>
                       <div
                         ref={ovCanvasRef}
                         className="relative w-full border border-gray-400 overflow-hidden select-none"

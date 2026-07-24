@@ -2,6 +2,7 @@ node_modules/
 dist/
 release/
 release-allwin/
+vendor/pdfprint/SumatraPDF-settings.txt
 .win7-toolchain/
 electron-builder.allwin.json
 electron-dist/

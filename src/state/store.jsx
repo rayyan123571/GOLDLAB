@@ -125,11 +125,56 @@ function showPrintError(reason) {
     'font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,.35);max-width:80vw;text-align:center'
   // The Canon isn't picked yet (overlay/Canon jobs need it) — tell the user exactly
   // what to do instead of a raw reason code.
-  el.textContent = reason === 'canon-printer-not-set'
-    ? 'کینن پرنٹر منتخب کریں (ڈیفالٹ سیٹنگز میں)'
-    : `پرنٹ نہیں ہو سکا${reason ? ` (${reason})` : ''} — پرنٹر آن اور کنیکٹڈ چیک کریں`
+  // The overlay path's failure codes get their own Urdu wording: each one has a
+  // different fix, and "پرنٹ نہیں ہو سکا" alone sends the shopkeeper hunting.
+  const OVERLAY_REASONS = {
+    'canon-printer-not-set': 'کینن پرنٹر منتخب کریں (ڈیفالٹ سیٹنگز میں)',
+    'canon-printer-missing': 'کینن پرنٹر ونڈوز میں نہیں مل رہا — سیٹنگز میں دوبارہ منتخب کریں',
+    'no-printers-installed': 'ونڈوز میں کوئی پرنٹر نصب نہیں',
+    'pdf-spool-timeout': 'پرنٹر نے دیر لگائی — دوبارہ پرنٹ نہیں بھیجا'
+  }
+  el.textContent = OVERLAY_REASONS[reason] ||
+    `پرنٹ نہیں ہو سکا${reason ? ` (${reason})` : ''} — پرنٹر آن اور کنیکٹڈ چیک کریں`
   document.body.appendChild(el)
   setTimeout(() => el.remove(), 5000)
+}
+
+// A BLOCKING modal (not a transient toast) for overlay failures that would
+// otherwise risk a pre-printed slip — the operator must acknowledge before doing
+// anything else, so they never keep pressing print into a broken engine. Used for
+// pdf-engine-unavailable and a missing/renamed Canon.
+const OVERLAY_BLOCKING = {
+  'pdf-engine-unavailable':
+    'PDF پرنٹ انجن دستیاب نہیں (سپولر غائب ہے)۔\nپرچی ضائع ہونے سے بچانے کے لیے پرنٹ روک دیا گیا ہے۔\nایپ دوبارہ انسٹال کریں یا سپورٹ سے رابطہ کریں — پرچی نہ ڈالیں۔',
+  'canon-printer-missing':
+    'منتخب کیا ہوا کینن پرنٹر ونڈوز میں نہیں مل رہا۔\nڈیفالٹ سیٹنگز میں کینن پرنٹر دوبارہ منتخب کریں۔',
+  'no-printers-installed':
+    'ونڈوز میں کوئی پرنٹر نصب نہیں ہے۔'
+}
+function showBlockingPrintError(reason) {
+  if (typeof document === 'undefined') return false
+  const text = OVERLAY_BLOCKING[reason]
+  if (!text) return false
+  const back = document.createElement('div')
+  back.className = 'no-print'
+  back.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center'
+  const box = document.createElement('div')
+  box.dir = 'rtl'
+  box.className = 'urdu'
+  box.style.cssText = 'background:#fff;border-radius:10px;max-width:26rem;padding:22px 24px;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.4)'
+  const msg = document.createElement('div')
+  msg.style.cssText = 'font-size:15px;font-weight:700;color:#b91c1c;line-height:1.9;white-space:pre-line'
+  msg.textContent = text
+  const btn = document.createElement('button')
+  btn.textContent = 'ٹھیک ہے'
+  btn.style.cssText = 'margin-top:16px;padding:6px 28px;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;font-size:14px;border:none;cursor:pointer'
+  const close = () => back.remove()
+  btn.onclick = close
+  back.onmousedown = (e) => { if (e.target === back) close() }
+  box.appendChild(msg); box.appendChild(btn); back.appendChild(box)
+  document.body.appendChild(back)
+  btn.focus()
+  return true
 }
 
 // Generic transient toast (green = success, red = problem) — same style as the
@@ -804,7 +849,10 @@ export function AppProvider({ children }) {
           // message as a normal print; only a genuine failure shows a red one.
           if (res && res.mayHavePrinted) { showToast(PRINT_SENT_MSG, true); return }
           if (overlay) {
-            showPrintError(res && res.reason)
+            // Serious overlay failures (PDF engine gone, Canon missing) get a
+            // BLOCKING dialog the operator must dismiss — so they stop feeding
+            // pre-printed slips into a broken pipeline. Everything else = toast.
+            if (!showBlockingPrintError(res && res.reason)) showPrintError(res && res.reason)
             return
           }
           console.warn('raster print unavailable, using driver path:', res && res.reason)
