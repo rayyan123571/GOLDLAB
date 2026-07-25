@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useApp } from './state/store.jsx'
+import { makeHotkeyHandler } from './logic/hotkeys.js'
 import MainScreen from './screens/MainScreen.jsx'
 import Daybook from './screens/Daybook.jsx'
 import Udhar from './screens/Udhar.jsx'
@@ -9,7 +10,24 @@ import HisabForm from './components/HisabForm.jsx'
 import { applyTheme, THEME_FIELDS } from './logic/theme.js'
 
 export default function App() {
-  const { screen, udharOpen, closeUdhar, akhrajatOpen, closeAkhrajat, hisabOpen, closeHisab, rates } = useApp()
+  const { screen, udharOpen, closeUdhar, akhrajatOpen, closeAkhrajat, hisabOpen, closeHisab, rates, toggleParchi } = useApp()
+
+  // Global keyboard shortcuts — ONE window-level listener; every key, target
+  // field and guard (modals, number-key trap) lives in src/logic/hotkeys.js.
+  // Installed once; refs feed it the CURRENT screen/toggleParchi so the listener
+  // never has to be torn down and re-added on state changes.
+  const screenRef = useRef(screen)
+  screenRef.current = screen
+  const toggleParchiRef = useRef(toggleParchi)
+  toggleParchiRef.current = toggleParchi
+  useEffect(() => {
+    const onKeyDown = makeHotkeyHandler({
+      getScreen: () => screenRef.current,
+      toggleParchi: (rowKey) => toggleParchiRef.current(rowKey)
+    })
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
   // Apply the SAVED theme whenever it loads/changes (app start after the DB read,
   // and again after a save). This is also what reverts a live Defaults preview if
   // the dialog is closed without saving — the saved rates re-apply here. Unset

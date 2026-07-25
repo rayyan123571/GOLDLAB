@@ -1,12 +1,15 @@
 import React, { useRef, useState } from 'react'
 import { useApp } from '../state/store.jsx'
 import { gramsToTMR, tmrToGrams, round, fmtNum } from '../logic/units.js'
+import { HK } from '../logic/hotkeys.js'
 
 // Top-left scale-entry box. Column order (left -> right):
 //   <row label> | (گرام) | تولہ | ماشہ | رتی
 // `inputRef` lets the parent target this row's input; `onEnter` (if given) runs
 // after the value is normalized when Enter is pressed (used to jump focus from
 // the gross row to the water row). Without onEnter, Enter just blurs.
+// `hotkey` tags the گرام input for the global shortcuts (src/logic/hotkeys.js):
+// Alt+I lands in the gross row, F2 in the water row.
 //
 // BOTH directions are editable: grams -> tola/masha/ratti recomputes live (that
 // is just gramsToTMR of the typed grams), and tola/masha/ratti -> grams runs
@@ -29,7 +32,7 @@ import { gramsToTMR, tmrToGrams, round, fmtNum } from '../logic/units.js'
 // (setTmrField). Never on focus, never on blur, never on Enter, never on a
 // re-render. Entering grams and then clicking around cannot move the weight,
 // because none of those paths can reach tmrToGrams.
-function WeightRow({ label, grams, onGrams, inputRef, onEnter }) {
+function WeightRow({ label, grams, onGrams, inputRef, onEnter, hotkey }) {
   const tmr = gramsToTMR(grams)
   // null = not editing (boxes are derived from grams). An object = the operator is
   // inside the TMR group and these strings are what the boxes show.
@@ -94,6 +97,7 @@ function WeightRow({ label, grams, onGrams, inputRef, onEnter }) {
       <input
         ref={inputRef}
         dir="ltr"
+        data-hotkey={hotkey}
         className="inp text-center w-24 bg-mint font-bold text-[15px]"
         value={grams ?? ''}
         onChange={(e) => onGrams(e.target.value)}
@@ -151,6 +155,7 @@ export default function WeightBox() {
         label="وزن کنڈے پر"
         grams={input.wazan}
         onGrams={(v) => setWeight('wazan', v)}
+        hotkey={HK.WAZAN_SCALE}
         onEnter={() => {
           const el = waterRef.current
           if (el) { el.focus(); el.select() }
@@ -161,6 +166,7 @@ export default function WeightBox() {
         grams={input.malawat}
         onGrams={(v) => setWeight('malawat', v)}
         inputRef={waterRef}
+        hotkey={HK.WAZAN_WATER}
       />
     </div>
   )
