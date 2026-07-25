@@ -616,11 +616,9 @@ const WORST_CASE_DATA = {
     [
       [L('کیرٹ'), V('21.16'), L('ریٹ فی تولہ'), V('434,500')],
       [L('ٹوٹل رقم'), V('9,151,688'), L('چارجز'), V('433,000')],
-      [L('بقایا رقم'), V('9,151,126', { box: true }), L('پوائنٹ'), V('0.8818')],
-      // «بقایا سونا» — mirrors the real لیب رسید row (Receipts.jsx), so the pixel
-      // regression covers it: label in the SECOND label column, first pair blank
-      // (see the note there — the first column is too narrow for this label).
-      [L(''), L(''), L('بقایا سونا'), V('9999.999')],
+      // «بقایا سونا» in the second pair, where «پوائنٹ» used to print — mirrors the
+      // real لیب رسید row (Receipts.jsx), so the pixel regression covers it.
+      [L('بقایا رقم'), V('9,151,126', { box: true }), L('بقایا سونا'), V('9999.999')],
       [L('نام'), V('محمد عبدالرحمٰن چوہدری اینڈ سنز', { wrap: true }), L('رتی'), V('11.35 رتی', { u: true })],
       [L('تاریخ'), V('05-07-26'), L('وقت'), V('12:58 PM')]
     ]

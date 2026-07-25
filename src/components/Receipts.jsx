@@ -405,10 +405,8 @@ export function LabReceipt({ row, lab, ctx, embed }) {
     selectiveBold: true,
     // Carried alongside `tables` because the Canon overlay reads it by name
     // (overlayForm.cjs prints it into the «پوائنٹ» cell of the pre-printed form —
-    // see the note on the `point` field key there), while the thermal slip renders
-    // it as its own «بقایا سونا» row below. ONE value, both papers.
-    // (It used to live here specifically to keep the thermal slip untouched; that
-    // is no longer true — the thermal لیب رسید now prints it too.)
+    // see the note on the `point` field key there), while the thermal slip prints
+    // it in the «بقایا رقم» row below. ONE value, both papers.
     sonaDena,
     tables: [
       [[L('رسید نمبر'), V(receiptNo), L('ریٹ فی گرام'), V(ratePerGram ? fmtMoney(ratePerGram) : '-', B)]],
@@ -422,16 +420,13 @@ export function LabReceipt({ row, lab, ctx, embed }) {
       [
         [L('کیرٹ'), V(fmtNum(lab?.keerat, 2)), L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola), B)],
         [L('ٹوٹل رقم'), V(fmtMoney(lab?.totalRaqam)), L('چارجز'), V(fmtMoney(lab?.charges))],
-        [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
-        // «بقایا سونا» — the SAME sonaDena the Canon overlay prints (خالص سونا −
-        // اجرت کا سونا). An ordinary 4-cell row: no span, no new style, no second
-        // calculation. The label sits in the SECOND label column (the one «ریٹ فی
-        // تولہ» / «پوائنٹ» use, 160.72px) and the FIRST pair is blank — because this
-        // table's cells are nowrap, so putting this label in the narrow first column
-        // (111.41px) would force that column to 120.77px and shift the whole money
-        // table ~9.4px left, off its already-tight left margin. Blanks are L(''),
-        // not V(''): V('') renders as '-'.
-        [L(''), L(''), L('بقایا سونا'), V(sonaDena)],
+        // «بقایا سونا» prints where «پوائنٹ» used to: the shop wants the net gold
+        // (سونا دینا ہے) on the thermal slip, and پوائنٹ deliberately no longer
+        // appears on paper at all (the on-screen panel still shows it). Same
+        // sonaDena the Canon overlay prints — one value, both papers. The label
+        // sits in the wide second label column (the «ریٹ فی تولہ» one, ~161px), so
+        // no column width changes.
+        [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('بقایا سونا'), V(sonaDena)],
         [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true }), L('رتی'), V(fmtNum(lab?.milawatTotalRatti, 2), { u: true })],
         [L('تاریخ'), V(showDate(rates, now)), L('وقت'), V(fmtTime(now))]
       ]

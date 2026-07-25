@@ -17,10 +17,11 @@
 //
 //   receipt cell (what the paper رسید shows)  |  overlay field (what the Canon prints)
 //
-// Every mismatch is a FAIL. `point` is the one field that is deliberately NOT the
-// رسید's «پوائنٹ» cell — the pre-printed slip wants «سونا دینا ہے» there — so it is
-// checked against slipData.sonaDena instead, and the رسید's own پوائنٹ is asserted
-// to be UNCHANGED.
+// Every mismatch is a FAIL. `point` is the one field that never comes from a
+// رسید cell: the pre-printed slip wants «سونا دینا ہے» there, so it is checked
+// against slipData.sonaDena. The thermal رسید itself deliberately prints NO
+// پوائنٹ any more — «بقایا سونا» (the same sonaDena) sits in its old spot, and
+// that is asserted below too.
 //
 // Run: npm run overlay:fields
 // Runs under Electron (overlayForm.cjs requires electron), like the other scripts.
@@ -70,8 +71,9 @@ function buildLabSlipData(logic, { row, lab, rates, customer, receiptNo, now, so
       [
         [L('کیرٹ'), V(fmtNum(lab?.keerat, 2)), L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola), B)],
         [L('ٹوٹل رقم'), V(fmtMoney(lab?.totalRaqam)), L('چارجز'), V(fmtMoney(lab?.charges))],
-        [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
-        [L(''), L(''), L('بقایا سونا'), V(sonaDena)],
+        // پوائنٹ no longer prints on the thermal لیب رسید — «بقایا سونا» (sonaDena)
+        // takes its place in the بقایا رقم row, mirroring Receipts.jsx.
+        [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('بقایا سونا'), V(sonaDena)],
         [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true }), L('رتی'), V(fmtNum(lab?.milawatTotalRatti, 2), { u: true })],
         [L('تاریخ'), V(now.date), L('وقت'), V(now.time)]
       ]
@@ -166,21 +168,20 @@ async function main() {
   }
 
   console.log('\nchecks:')
-  // 1. The رسید's own «پوائنٹ» must be untouched — the overlay change must not
-  //    have leaked into the thermal/on-screen receipt.
-  const receiptPoint = overlayForm.labVals(slipData.tables).kv['پوائنٹ']
-  const expPoint = units.fmtNum(lab.point, 4)
-  receiptPoint === expPoint
-    ? pass(`لیب رسید still prints the real پوائنٹ (${receiptPoint} = khalis fraction), unchanged`)
-    : fail(`لیب رسید's پوائنٹ is ${receiptPoint}, expected ${expPoint}`)
+  const kv = overlayForm.labVals(slipData.tables).kv
+  // 1. پوائنٹ is DELIBERATELY absent from the printed لیب رسید now — «بقایا سونا»
+  //    prints in its place. (The on-screen panel still shows پوائنٹ.)
+  kv['پوائنٹ'] === undefined
+    ? pass('printed لیب رسید carries NO پوائنٹ cell — replaced by بقایا سونا, as intended')
+    : fail(`printed رسید still carries a پوائنٹ cell (${kv['پوائنٹ']})`)
+  kv['بقایا سونا'] === sonaDena
+    ? pass(`its «بقایا سونا» cell = ${kv['بقایا سونا']} (the same sonaDena)`)
+    : fail(`رسید's بقایا سونا is ${kv['بقایا سونا']}, expected ${sonaDena}`)
 
-  // 2. The overlay's «پوائنٹ» CELL must now hold the net gold, not the fraction.
-  overlay.point !== receiptPoint
-    ? pass(`overlay's «پوائنٹ» cell holds سونا دینا ہے (${overlay.point}), not the fraction (${receiptPoint})`)
-    : fail('overlay is still printing the پوائنٹ fraction in that cell')
-
-  // 3. Pass-through, not recomputation: the overlay value must be byte-identical
+  // 2. Pass-through, not recomputation: the overlay value must be byte-identical
   //    to what the snapshot carried. Any arithmetic in overlayForm would show up.
+  //    (The overlay reads data.sonaDena by NAME — not the رسید's پوائنٹ cell — so
+  //    removing that cell from the thermal tables cannot disturb it.)
   overlay.point === slipData.sonaDena
     ? pass('overlay takes سونا دینا ہے verbatim from the snapshot (no second calculation)')
     : fail(`overlay recomputed something: snapshot=${slipData.sonaDena} overlay=${overlay.point}`)
