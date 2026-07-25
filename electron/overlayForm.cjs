@@ -146,6 +146,12 @@ function normalizeCfg(cfg) {
     // print. rotate180 is the escape hatch for a sheet fed the other way round.
     landscape: !!c.landscape,
     rotate180: !!c.rotate180,
+    // The SPOOL orientation token — DELIBERATELY separate from `landscape`.
+    // `landscape` rotates the page inside Chromium's printToPDF; if the spool
+    // token were also tied to it, the two rotations would cancel. 'auto' (default)
+    // instead reads the ACTUAL rendered page and matches it, so it is correct no
+    // matter what `landscape` did. 'portrait'/'landscape' force the token.
+    printOrientation: ['portrait', 'landscape'].includes(c.printOrientation) ? c.printOrientation : 'auto',
     // 'pdf' = render an exact-size PDF and spool it with scaling disabled
     // (deterministic). 'driver' = hand the page to webContents.print and hope the
     // driver behaves; kept only as a fallback / escape hatch.
@@ -391,6 +397,17 @@ function driverPrint(webContents, c, n) {
 // default Letter. That is what lets the spooler print at 1:1 with nothing to
 // "fit". pageSize is passed as well (inches) as a belt-and-braces fallback for
 // the case where the CSS rule is somehow not applied.
+// The spool orientation token from the setting + the rendered page. 'portrait'/
+// 'landscape' force it; 'auto' matches the page's real aspect (a wide MediaBox →
+// 'portrait' in Windows terms, so the driver images it un-rotated). Falls back to
+// 'portrait' when the page size can't be read (our default sheet is wide).
+function resolveSpoolOrientation(setting, pdfBuf) {
+  if (setting === 'portrait' || setting === 'landscape') return setting
+  const sz = pdfPrint.pageSize(pdfBuf)
+  if (!sz) return 'portrait'
+  return sz.wPt >= sz.hPt ? 'portrait' : 'landscape'
+}
+
 async function renderOverlayPdf(webContents, c) {
   return webContents.printToPDF({
     printBackground: true,
@@ -514,13 +531,14 @@ function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, 
           return { ok: false, engine: 'pdf', reason: 'pdf-engine-unavailable', pageCount }
         }
         if (pdfPrint.available()) {
-          // Send the orientation EXPLICITLY so we never inherit the driver's default
-          // (the Landscape default was the 90° bug). Our page + form are both
-          // 215.9×139.7 (wide), which is PORTRAIT in Windows terms — verified by an
-          // actual spool test (see scripts note): the 'landscape' token rotates the
-          // output 90°, 'portrait' prints it straight. c.landscape (settings) picks
-          // the token; it defaults false → 'portrait'.
-          const orientation = c.landscape ? 'landscape' : 'portrait'
+          // Send the orientation EXPLICITLY so we never inherit the driver's
+          // default (the Landscape default was the 90° bug). It is derived from the
+          // ACTUAL rendered page — NOT from `landscape` (which already rotated the
+          // page inside printToPDF; tying both to it would cancel out). 'auto': a
+          // wide page (wPt > hPt) is Windows-Portrait, a tall page is Landscape.
+          // The setting can force either token when a driver disagrees.
+          const orientation = resolveSpoolOrientation(c.printOrientation, pdf)
+          note('overlay-orientation', { setting: c.printOrientation, resolved: orientation })
           const spool = await pdfPrint.printPdfBuffer({ buf: pdf, deviceName: c.deviceName, copies: n, tag, orientation })
           if (spool.ok) {
             note('overlay-print-OK', { ...geom, via: 'pdf-spooler', exe: path.basename(spool.exe || ''), from: spool.source, pageCount })

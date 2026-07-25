@@ -40,7 +40,11 @@ const DEFAULT_COORDS = {
 const DEFAULT_OFFSETS = {
   overlay_offx: 0, overlay_offy: 0, overlay_scalex: 1, overlay_scaley: 1,
   overlay_right_dx: 108, overlay_right_dy: 0, overlay_font_pt: 11,
-  overlay_landscape: 0, overlay_rotate180: 0, overlay_engine: 'pdf'
+  overlay_landscape: 0, overlay_rotate180: 0, overlay_engine: 'pdf',
+  // Spool orientation token, SEPARATE from overlay_landscape (which only rotates
+  // the rendered page). 'auto' matches the printed page's real aspect; 'portrait'
+  // / 'landscape' force it when a driver disagrees.
+  overlay_print_orientation: 'auto'
 }
 
 // Urdu display label per field — used by the calibration tool chips.

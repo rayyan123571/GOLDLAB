@@ -316,7 +316,9 @@ function printSettings() {
       // Geometry/engine escape hatches (see overlayForm.normalizeCfg).
       landscape: !!Number(r.overlay_landscape || 0),
       rotate180: !!Number(r.overlay_rotate180 || 0),
-      engine: r.overlay_engine === 'driver' ? 'driver' : 'pdf'
+      engine: r.overlay_engine === 'driver' ? 'driver' : 'pdf',
+      // Spool orientation token — separate from landscape (see normalizeCfg).
+      printOrientation: ['auto', 'portrait', 'landscape'].includes(r.overlay_print_orientation) ? r.overlay_print_orientation : 'auto'
     }
     // Dual-printer device names (blank = Windows default).
     printerThermal = r.printer_thermal || ''
@@ -327,7 +329,7 @@ function printSettings() {
   return { rawMode, printScale, printMode, overlayCfg, printerThermal, printerCanon }
 }
 
-ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, forceMode } = {}) => {
+ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, forceMode, overrideBlock } = {}) => {
   if (!win) return { ok: false, reason: 'no-window' }
   const { rawMode, printScale, printMode, overlayCfg, printerThermal, printerCanon } = printSettings()
   // A per-print forceMode (the lab receipt's اوورلے button) overrides the settings
@@ -356,7 +358,11 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
       // the cached preflight) makes a REAL slip refuse when the printer's default
       // paper is not the parchi size — the print would centre-shift off the slip,
       // wasting it, exactly like a missing PDF engine does.
-      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies, log: printLog.log, paperMismatch: cachedPaperMismatch(), orientationLandscape: cachedOrientationLandscape() })
+      // overrideBlock = the operator pressed «پھر بھی چھاپیں» on the block modal:
+      // print THIS one slip anyway (the gate exists to save a slip, not to stop the
+      // shop). No setting changes — just this print skips the paper/orientation gate.
+      if (overrideBlock) printLog.log('overlay-override', { note: 'operator chose «پھر بھی چھاپیں» — bypassing paper/orientation block for this print' })
+      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies, log: printLog.log, paperMismatch: overrideBlock ? false : cachedPaperMismatch(), orientationLandscape: overrideBlock ? false : cachedOrientationLandscape() })
       printLog.log('overlay-result', { ok: !!(r && r.ok), printer: route.deviceName, engine: r && r.engine, pageCount: r && r.pageCount, reason: r && r.reason })
       return r
     } catch (e) {
@@ -435,6 +441,7 @@ function overlayCfgWith(override = {}) {
     landscape: pick('landscape'),
     rotate180: pick('rotate180'),
     engine: pick('engine'),
+    printOrientation: pick('printOrientation'),
     coords: override.coords != null ? override.coords : overlayCfg.coords,
     bg: override.bg != null ? override.bg : overlayCfg.bg
   }
@@ -653,6 +660,7 @@ ipcMain.handle('overlay-diagnostics', async () => {
     add('Engine (setting)', c.engine)
     add('DB landscape', c.landscape ? 1 : 0)
     add('DB rotate180', c.rotate180 ? 1 : 0)
+    add('Orientation setting', c.printOrientation)
     add('DB right_dx (دوسری پرچی)', c.rightDX + ' mm')
     add('Page / form', `${c.paperW} x ${c.paperH} mm`)
     lines.push('')
@@ -662,17 +670,23 @@ ipcMain.handle('overlay-diagnostics', async () => {
     add('PDF spooler', exe ? `${exe.exe}  [${exe.source}]` : 'غائب (missing)')
     const pinBad = pdfPrint.pinFailures()
     add('Spooler pin', pinBad.length ? ('FAILED: ' + pinBad.join(';')) : (exe ? 'pass' : '-'))
-    const orientation = c.landscape ? 'landscape' : 'portrait'
 
-    // Save the EXACT overlay PDF that would be spooled, then show the command.
+    // Save the EXACT overlay PDF that would be spooled, then resolve the spool
+    // orientation FROM that rendered page (the same logic the real print uses).
     let pdfPath = '(render failed)'
+    let orientation = c.printOrientation === 'auto' ? 'portrait' : c.printOrientation
     try {
       const buf = await overlayForm.renderSamplePdf(cfg)
       if (buf) {
         pdfPath = path.join(app.getPath('userData'), 'goldlab-print-diagnostic.pdf')
         fs.writeFileSync(pdfPath, buf)
+        if (c.printOrientation === 'auto') {
+          const sz = pdfPrint.pageSize(buf)
+          orientation = sz ? (sz.wPt >= sz.hPt ? 'portrait' : 'landscape') : 'portrait'
+        }
       }
     } catch (e) { pdfPath = 'render error: ' + (e && e.message || e) }
+    add('Resolved spool orientation', `${orientation}${c.printOrientation === 'auto' ? ' (auto)' : ''}`)
     add('Saved sample PDF', pdfPath)
 
     const preview = pdfPrint.commandPreview({ file: pdfPath, deviceName: printerCanon || '', copies: 1, mono: true, orientation })

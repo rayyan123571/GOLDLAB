@@ -167,6 +167,7 @@ export default function DefaultsForm({ open, onClose }) {
     // spooled with scaling disabled (the fix for the rotated/shrunken print);
     // 'driver' hands the page to Windows, which may rescale it.
     overlay_engine: 'pdf', overlay_landscape: false, overlay_rotate180: false,
+    overlay_print_orientation: 'auto',
     overlay_bg_path: '', overlay_coords: null,
     // Dual-printer device names.
     printer_thermal: '', printer_canon: '',
@@ -237,6 +238,7 @@ export default function DefaultsForm({ open, onClose }) {
         overlay_right_dy: src.overlay_right_dy != null ? String(src.overlay_right_dy) : '0',
         overlay_font_pt: src.overlay_font_pt != null ? String(src.overlay_font_pt) : '11',
         overlay_engine: src.overlay_engine === 'driver' ? 'driver' : 'pdf',
+        overlay_print_orientation: ['auto', 'portrait', 'landscape'].includes(src.overlay_print_orientation) ? src.overlay_print_orientation : 'auto',
         overlay_landscape: !!Number(src.overlay_landscape || 0),
         overlay_rotate180: !!Number(src.overlay_rotate180 || 0),
         overlay_bg_path: src.overlay_bg_path != null ? String(src.overlay_bg_path) : '',
@@ -410,6 +412,7 @@ export default function DefaultsForm({ open, onClose }) {
       // Reset also puts the pipeline back to the safe combination, so "ری سیٹ"
       // recovers from a bad engine/rotation choice as well as from a bad drag.
       overlay_engine: d.overlay_engine === 'driver' ? 'driver' : 'pdf',
+      overlay_print_orientation: ['auto', 'portrait', 'landscape'].includes(d.overlay_print_orientation) ? d.overlay_print_orientation : 'auto',
       overlay_landscape: !!Number(d.overlay_landscape || 0),
       overlay_rotate180: !!Number(d.overlay_rotate180 || 0)
     })
@@ -558,6 +561,7 @@ export default function DefaultsForm({ open, onClose }) {
       overlay_font_pt: Number(next.overlay_font_pt) || 11,
       // Pipeline + geometry escape hatches (stored 0/1; engine clamped in db.cjs).
       overlay_engine: next.overlay_engine === 'driver' ? 'driver' : 'pdf',
+      overlay_print_orientation: ['auto', 'portrait', 'landscape'].includes(next.overlay_print_orientation) ? next.overlay_print_orientation : 'auto',
       overlay_landscape: next.overlay_landscape ? 1 : 0,
       overlay_rotate180: next.overlay_rotate180 ? 1 : 0,
       overlay_bg_path: String(next.overlay_bg_path ?? ''),
@@ -1155,6 +1159,22 @@ export default function DefaultsForm({ open, onClose }) {
                         <option value="driver">ونڈوز ڈرائیور (متبادل)</option>
                       </select>
                     </label>
+                    {/* Spool orientation — SEPARATE from لینڈ اسکیپ below. 'auto'
+                        matches the printed page, so it is right by default; force
+                        portrait/landscape only if the Canon prints rotated. */}
+                    <label className="flex items-center justify-between gap-2">
+                      <span className="urdu text-[12px] text-gray-700">پرنٹ رُخ (Orientation)</span>
+                      <select dir="rtl" value={form.overlay_print_orientation}
+                        onChange={(e) => commit({ ...form, overlay_print_orientation: e.target.value })}
+                        className={`${INPUT} urdu w-56 py-1`}>
+                        <option value="auto">خودکار (تجویز کردہ)</option>
+                        <option value="portrait">Portrait</option>
+                        <option value="landscape">Landscape</option>
+                      </select>
+                    </label>
+                    <div className="urdu text-[10px] text-gray-500">
+                      اگر پرچی 90° گھوم کر چھپے تو یہاں Orientation بدل کر دیکھیں (پہلے «خودکار»، پھر Portrait/Landscape)۔
+                    </div>
                     <label className="flex items-center gap-2">
                       <input type="checkbox" checked={!!form.overlay_rotate180}
                         onChange={(e) => commit({ ...form, overlay_rotate180: e.target.checked })} />

@@ -336,7 +336,10 @@ function migrateSchema() {
     // for existing installs, so an upgraded DB behaves like a fresh one.
     ['overlay_landscape', 'INTEGER', '0'],
     ['overlay_rotate180', 'INTEGER', '0'],
-    ['overlay_engine', 'TEXT', "'pdf'"]
+    ['overlay_engine', 'TEXT', "'pdf'"],
+    // Spool orientation token (auto | portrait | landscape), separate from
+    // overlay_landscape. Default 'auto' → derived from the printed page aspect.
+    ['overlay_print_orientation', 'TEXT', "'auto'"]
   ]
   for (const [col, type, def] of overlayCols) {
     if (!sCols.includes(col)) {
@@ -675,6 +678,7 @@ const api = {
               form_style=COALESCE(?, form_style), form_theme=COALESCE(?, form_theme), form_footer=COALESCE(?, form_footer),
               overlay_paper=COALESCE(?, overlay_paper), overlay_coords=COALESCE(?, overlay_coords), overlay_bg_path=COALESCE(?, overlay_bg_path),
               overlay_landscape=COALESCE(?, overlay_landscape), overlay_rotate180=COALESCE(?, overlay_rotate180), overlay_engine=COALESCE(?, overlay_engine),
+              overlay_print_orientation=COALESCE(?, overlay_print_orientation),
               ui_panel=COALESCE(?, ui_panel), ui_header=COALESCE(?, ui_header), ui_header_dark=COALESCE(?, ui_header_dark), ui_line=COALESCE(?, ui_line), ui_surface=COALESCE(?, ui_surface),
               printer_thermal=COALESCE(?, printer_thermal), printer_canon=COALESCE(?, printer_canon),
               reports_dir=COALESCE(?, reports_dir),
@@ -716,6 +720,8 @@ const api = {
         rates.overlay_landscape != null ? (rates.overlay_landscape ? 1 : 0) : null,
         rates.overlay_rotate180 != null ? (rates.overlay_rotate180 ? 1 : 0) : null,
         rates.overlay_engine != null ? (rates.overlay_engine === 'driver' ? 'driver' : 'pdf') : null,
+        // Spool orientation token, clamped to the three known values.
+        rates.overlay_print_orientation != null ? (['auto', 'portrait', 'landscape'].includes(rates.overlay_print_orientation) ? rates.overlay_print_orientation : 'auto') : null,
         // Theme colours: a '#rrggbb' string is stored; '' clears back to the hex
         // default (the renderer treats '' like unset); undefined/null keeps stored.
         rates.ui_panel != null ? String(rates.ui_panel) : null,

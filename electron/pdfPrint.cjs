@@ -196,4 +196,18 @@ function countPages(buf) {
   } catch { return null }
 }
 
-module.exports = { resolveExe, available, printPdfBuffer, countPages, writeTempPdf, pinFailures, commandPreview, EXE_NAMES }
+// First /MediaBox of a PDF → { wPt, hPt } in points, or null. Used to pick the
+// spool orientation from the ACTUAL rendered page (wPt > hPt → the page is wide).
+function pageSize(buf) {
+  try {
+    const s = Buffer.isBuffer(buf) ? buf.toString('latin1') : String(buf)
+    const m = /\/MediaBox\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]/.exec(s)
+    if (!m) return null
+    const wPt = Math.abs(Number(m[3]) - Number(m[1]))
+    const hPt = Math.abs(Number(m[4]) - Number(m[2]))
+    if (!(wPt > 0 && hPt > 0)) return null
+    return { wPt, hPt }
+  } catch { return null }
+}
+
+module.exports = { resolveExe, available, printPdfBuffer, countPages, pageSize, writeTempPdf, pinFailures, commandPreview, EXE_NAMES }

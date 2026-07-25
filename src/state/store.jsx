@@ -155,7 +155,17 @@ const OVERLAY_BLOCKING = {
   'no-printers-installed':
     'ونڈوز میں کوئی پرنٹر نصب نہیں ہے۔'
 }
-function showBlockingPrintError(reason) {
+// These blocks are ADVISORY safety gates (paper size / orientation) — the print
+// would likely come out wrong and waste a pre-printed slip. But a driver can
+// mis-report, and the gate must never stop the shop cold, so for these the modal
+// offers «پھر بھی چھاپیں» (print anyway) which prints THIS one slip past the gate
+// without changing any setting. The others (engine missing, printer gone) have no
+// such override — retrying would only fail.
+const OVERRIDABLE_BLOCK = new Set(['orientation-landscape', 'default-paper-mismatch'])
+
+// reason → shows the modal. onOverride (optional): when the reason is overridable,
+// a «پھر بھی چھاپیں» button calls it. Returns true if a modal was shown.
+function showBlockingPrintError(reason, onOverride) {
   if (typeof document === 'undefined') return false
   const text = OVERLAY_BLOCKING[reason]
   if (!text) return false
@@ -169,15 +179,26 @@ function showBlockingPrintError(reason) {
   const msg = document.createElement('div')
   msg.style.cssText = 'font-size:15px;font-weight:700;color:#b91c1c;line-height:1.9;white-space:pre-line'
   msg.textContent = text
-  const btn = document.createElement('button')
-  btn.textContent = 'ٹھیک ہے'
-  btn.style.cssText = 'margin-top:16px;padding:6px 28px;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;font-size:14px;border:none;cursor:pointer'
+  const row = document.createElement('div')
+  row.style.cssText = 'margin-top:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap'
   const close = () => back.remove()
-  btn.onclick = close
+  const ok = document.createElement('button')
+  ok.textContent = 'ٹھیک ہے'
+  ok.style.cssText = 'padding:6px 24px;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;font-size:14px;border:none;cursor:pointer'
+  ok.onclick = close
+  row.appendChild(ok)
+  // «پھر بھی چھاپیں» — only for overridable gates, and only if a retry is wired.
+  if (onOverride && OVERRIDABLE_BLOCK.has(reason)) {
+    const anyway = document.createElement('button')
+    anyway.textContent = 'پھر بھی چھاپیں'
+    anyway.style.cssText = 'padding:6px 24px;border-radius:8px;background:#b45309;color:#fff;font-weight:700;font-size:14px;border:none;cursor:pointer'
+    anyway.onclick = () => { close(); try { onOverride() } catch {} }
+    row.appendChild(anyway)
+  }
+  box.appendChild(msg); box.appendChild(row); back.appendChild(box)
   back.onmousedown = (e) => { if (e.target === back) close() }
-  box.appendChild(msg); box.appendChild(btn); back.appendChild(box)
   document.body.appendChild(back)
-  btn.focus()
+  ok.focus()
   return true
 }
 
@@ -856,7 +877,17 @@ export function AppProvider({ children }) {
             // Serious overlay failures (PDF engine gone, Canon missing) get a
             // BLOCKING dialog the operator must dismiss — so they stop feeding
             // pre-printed slips into a broken pipeline. Everything else = toast.
-            if (!showBlockingPrintError(res && res.reason)) showPrintError(res && res.reason)
+            // For the advisory gates (paper/orientation) the modal offers «پھر بھی
+            // چھاپیں», which re-runs THIS print past the gate (overrideBlock) so a
+            // mis-reporting driver can never stop the shop.
+            const onOverride = async () => {
+              try {
+                const res2 = await window.api.rasterPrintSlip({ ...payload, overrideBlock: true })
+                if (res2 && (res2.ok || res2.mayHavePrinted)) { showToast(PRINT_SENT_MSG, true); return }
+                if (!showBlockingPrintError(res2 && res2.reason, onOverride)) showPrintError(res2 && res2.reason)
+              } catch (e) { showPrintError(e && e.message ? e.message : String(e)) }
+            }
+            if (!showBlockingPrintError(res && res.reason, onOverride)) showPrintError(res && res.reason)
             return
           }
           console.warn('raster print unavailable, using driver path:', res && res.reason)
