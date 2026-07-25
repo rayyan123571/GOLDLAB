@@ -424,10 +424,14 @@ export function LabReceipt({ row, lab, ctx, embed }) {
         [L('ٹوٹل رقم'), V(fmtMoney(lab?.totalRaqam)), L('چارجز'), V(fmtMoney(lab?.charges))],
         [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
         // «بقایا سونا» — the SAME sonaDena the Canon overlay prints (خالص سونا −
-        // اجرت کا سونا). The second label/value pair is left blank, like the weight
-        // table's empty corner cell: an ordinary 4-cell row in the shared template,
-        // no new styling and no second calculation.
-        [L('بقایا سونا'), V(sonaDena), L(''), L('')],
+        // اجرت کا سونا). An ordinary 4-cell row: no span, no new style, no second
+        // calculation. The label sits in the SECOND label column (the one «ریٹ فی
+        // تولہ» / «پوائنٹ» use, 160.72px) and the FIRST pair is blank — because this
+        // table's cells are nowrap, so putting this label in the narrow first column
+        // (111.41px) would force that column to 120.77px and shift the whole money
+        // table ~9.4px left, off its already-tight left margin. Blanks are L(''),
+        // not V(''): V('') renders as '-'.
+        [L(''), L(''), L('بقایا سونا'), V(sonaDena)],
         [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true }), L('رتی'), V(fmtNum(lab?.milawatTotalRatti, 2), { u: true })],
         [L('تاریخ'), V(showDate(rates, now)), L('وقت'), V(fmtTime(now))]
       ]

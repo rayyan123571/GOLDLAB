@@ -31,7 +31,7 @@
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { app, BrowserWindow, nativeImage } = require('electron')
+const { app, BrowserWindow, nativeImage, screen } = require('electron')
 
 const ROOT = path.join(__dirname, '..')
 const ART = path.join(ROOT, 'artifacts')
@@ -52,7 +52,8 @@ const pass = (m) => console.log('  ok    ' + m)
 function withoutNewRow(d) {
   return {
     ...d,
-    tables: (d.tables || []).map((t) => t.filter((r) => !(r && r[0] && r[0].l === NEW_ROW_LABEL)))
+    // Matched on ANY cell: the label sits in the second label column, not the first.
+    tables: (d.tables || []).map((t) => t.filter((r) => !(r || []).some((c) => c && c.l === NEW_ROW_LABEL)))
   }
 }
 
@@ -72,11 +73,25 @@ async function render(data, win, printScale, tag) {
 // Measure the rendered table layout: one entry per <tr> with its height and every
 // cell's x/width in CSS px, at the SAME 576px width the raster pipeline uses.
 // Layout numbers are exact — they carry no rasterization rounding at all.
-async function layout(data, win) {
-  const w = new BrowserWindow({ show: false, width: 700, height: 700, frame: false, webPreferences: { sandbox: false } })
+async function layout(data) {
+  // Measured under the EXACT conditions rasterPrint uses: an offscreen window
+  // ceil(576/scaleFactor) DIP wide with zoom 1/scaleFactor, so the effective scale
+  // is 1.0 and the CSS viewport is 576px — and sized tall enough that no scrollbar
+  // can appear. Measuring in an ordinary 700px window instead made every table
+  // wobble by fractions of a pixel between runs, which is noise, not layout.
+  const scale = (screen.getPrimaryDisplay() && screen.getPrimaryDisplay().scaleFactor) || 1
+  const dipW = Math.ceil(576 / scale)
+  const w = new BrowserWindow({
+    show: false, width: dipW, height: 600, frame: false,
+    webPreferences: { offscreen: { useSharedTexture: false }, backgroundThrottling: false, sandbox: false }
+  })
   try {
     await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(raster.buildReceiptHtml(data)))
-    try { await w.webContents.executeJavaScript('Promise.resolve(window.__ready)', true) } catch {}
+    w.webContents.setZoomFactor(1 / scale)
+    let h = 900
+    try { h = await w.webContents.executeJavaScript('Promise.resolve(window.__ready)', true) } catch {}
+    w.setContentSize(dipW, Math.ceil((Number(h) || 900) / scale) + 20) // no scrollbar
+    await new Promise((r) => setTimeout(r, 120))
     return await w.webContents.executeJavaScript(`(function(){
       var r = document.querySelector('[data-measure]').getBoundingClientRect()
       var R = Math.round, out = []
@@ -204,8 +219,8 @@ app.whenReady().then(async () => {
     }
 
     // ── B. DOM layout geometry (exact — no rasterization involved) ────────────
-    const layA = await layout(WITHOUT, win)
-    const layB = await layout(WITH, win)
+    const layA = await layout(WITHOUT)
+    const layB = await layout(WITH)
     console.log(`\nB. DOM layout at the pipeline's 576px width (${layA.length} rows -> ${layB.length} rows):`)
     const idx = layB.findIndex((r) => r.cells.some((c) => c.text === NEW_ROW_LABEL))
     const layBminus = layB.filter((_, i) => i !== idx)
@@ -264,12 +279,12 @@ app.whenReady().then(async () => {
       ...realistic,
       tables: realistic.tables.map((t, i) => (i !== 2 ? t : [
         ...t.slice(0, 3),
-        [{ l: NEW_ROW_LABEL }, { v: '10.599' }, { l: '' }, { l: '' }],
+        [{ l: '' }, { l: '' }, { l: NEW_ROW_LABEL }, { v: '10.599' }],
         ...t.slice(3)
       ]))
     }
     for (const [name, dNo, dYes] of [['worst-case', WITHOUT, WITH], ['realistic', realWithout, realWith]]) {
-      const lNo = await layout(dNo, win); const lYes = await layout(dYes, win)
+      const lNo = await layout(dNo); const lYes = await layout(dYes)
       const span = (rows) => {
         const c = (rows.filter((r) => r.table === 2).pop() || { cells: [] }).cells
         if (!c.length) return null
