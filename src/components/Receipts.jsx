@@ -390,10 +390,24 @@ export function LabReceipt({ row, lab, ctx, embed }) {
   // per-tola rate changes — so reading it printed 772 next to a correct 425,000.
   const perTola = Number(lab?.ratePerTola) || Number(rates.rate_tezabi_tola) || 0
   const ratePerGram = perTola ? round(perTola / GRAMS_PER_TOLA, 0) : 0
+  // «سونا دینا ہے» — خالص سونا minus the اجرت gold. NOT recomputed here: it is the
+  // store's sidebarGoldCtx(), the one place that arithmetic lives (it also feeds the
+  // main screen's left sidebar and the سونا دیا ↔ کیش دیا binding).
+  // goldOwedAlways, NOT goldOwed: the اجرت کا سونا checkbox is a display toggle for
+  // the shop, so the Canon slip must always carry the net gold — ticked or not. The
+  // on-screen sidebar keeps following the checkbox (goldOwed) and is unaffected.
+  // Same '-' guard the sidebar uses (no rate → no gold value to state).
+  const owed = typeof ctx.sidebarGoldCtx === 'function' ? ctx.sidebarGoldCtx() : null
+  const sonaDena = owed && owed.rpg > 0 ? fmtNum(owed.goldOwedAlways) : '-'
   const slipData = {
     title: 'لیب رسید',
     showFee: true,
     selectiveBold: true,
+    // OUTSIDE `tables` on purpose. The thermal slip renders `tables` only, so this
+    // extra key leaves the ESC/POS receipt byte-for-byte unchanged; only the Canon
+    // overlay reads it (overlayForm.cjs prints it into the «پوائنٹ» cell of the
+    // pre-printed form — see the note on the `point` field key there).
+    sonaDena,
     tables: [
       [[L('رسید نمبر'), V(receiptNo), L('ریٹ فی گرام'), V(ratePerGram ? fmtMoney(ratePerGram) : '-', B)]],
       [

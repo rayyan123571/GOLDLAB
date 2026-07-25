@@ -12,6 +12,7 @@
     "build": "vite build",
     "start": "cross-env NODE_ENV=production node scripts/run-electron.cjs .",
     "overlay:dryrun": "node scripts/run-electron.cjs scripts/overlay-dryrun.cjs",
+    "overlay:fields": "node scripts/run-electron.cjs scripts/overlay-vs-receipt.cjs",
     "thermal:regression": "node scripts/run-electron.cjs scripts/thermal-regression.cjs",
     "obfuscate": "node scripts/obfuscate-electron.cjs",
     "bytecode": "node scripts/bytecode-electron.cjs",

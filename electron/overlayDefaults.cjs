@@ -21,7 +21,10 @@ const DEFAULT_COORDS = {
   rate: { x: 20, y: 77.5 }, keerat: { x: 75.5, y: 76.5 },
   // totals row
   baqaya: { x: 21, y: 84 }, charges: { x: 52.5, y: 85.5 }, total: { x: 88, y: 86 },
-  // below totals + bottom row
+  // below totals + bottom row. `point` is a HISTORICAL key name: the cell now
+  // carries «سونا دینا ہے» (خالص سونا − اجرت کا سونا), not the پوائنٹ fraction —
+  // see overlayForm.cjs fieldValues. The key must NOT be renamed or every shop's
+  // calibrated settings.overlay_coords entry for this cell is orphaned.
   point: { x: 21.5, y: 90 },
   time: { x: 17.5, y: 104 }, date: { x: 44, y: 102.5 }, naam: { x: 79, y: 102.5 }
 }
@@ -55,7 +58,9 @@ const FIELD_LABELS = {
   mpt_dec: 'ملاوٹ/تولہ (فی گرام)', mpt_tola: 'م/تولہ تولہ', mpt_masha: 'م/تولہ ماشہ', mpt_ratti: 'م/تولہ رتی',
   rate: 'ریٹ فی تولہ', keerat: 'کیرٹ',
   baqaya: 'بقایا رقم', charges: 'چارجز', total: 'ٹوٹل رقم',
-  point: 'پوائنٹ', time: 'وقت', date: 'تاریخ', naam: 'نام'
+  // Label only — the drag chip must say what the operator now sees printed there.
+  // The key stays `point` (calibration compatibility); the cell holds net gold.
+  point: 'سونا دینا ہے', time: 'وقت', date: 'تاریخ', naam: 'نام'
 }
 
 module.exports = { DEFAULT_COORDS, DEFAULT_OFFSETS, FIELD_LABELS }

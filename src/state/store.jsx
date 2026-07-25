@@ -765,12 +765,18 @@ export function AppProvider({ children }) {
   // subtracts the labour's gold value (ujratGold) from the row's khalis.
   const sidebarGoldCtx = useCallback(() => {
     const sel = computedRows.find((r) => r.parchi) || computedRows[2]
-    if (!sel) return { rpg: 0, goldOwed: 0 }
+    if (!sel) return { rpg: 0, goldOwed: 0, goldOwedAlways: 0 }
     const rpg = (Number(sel.rate) || 0) / GRAMS_PER_TOLA
     const ujratGold = rpg > 0 ? (Number(sel.labCharges) || 0) / rpg : 0
     const goldOwed = ujratKaSona ? (Number(sel.khalisSona) || 0) - ujratGold
                                  : (Number(sel.khalisSona) || 0)
-    return { rpg, goldOwed }
+    // Same subtraction, WITHOUT the اجرت کا سونا condition. For the shop that
+    // checkbox is a display toggle only, so the Canon overlay's «سونا دینا ہے»
+    // must always be net of the labour gold. Kept here — same sel, same rpg, same
+    // ujratGold — so there is still exactly ONE place this arithmetic exists.
+    // The sidebar display and the سونا دیا ↔ کیش دیا binding keep using goldOwed.
+    const goldOwedAlways = (Number(sel.khalisSona) || 0) - ujratGold
+    return { rpg, goldOwed, goldOwedAlways }
   }, [computedRows, ujratKaSona])
 
   // These are called ONLY from the user's onChange on each input. They set the
@@ -2209,6 +2215,10 @@ export function AppProvider({ children }) {
     overrides, setCell, clearCell, toggleParchi, resetEntry,
     ujratKaSona, toggleUjratKaSona,
     parchunLiya, toggleParchunLiya,
+    // The ONE «سونا دینا ہے» calculation (see above). Exposed so consumers that
+    // need the owed gold — the لیب رسید's printed snapshot for the Canon overlay —
+    // read this instead of writing a second copy of the same subtraction.
+    sidebarGoldCtx,
     sonaDiya, setSonaDiya,
     cashDiya, setSonaDiyaLinked, setCashDiyaLinked,
     cashSell, setCashSell,

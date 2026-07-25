@@ -3,6 +3,11 @@ import { useApp, WA_REMINDER_DEFAULT } from '../state/store.jsx'
 import { fillReminder } from './UdharForm.jsx' // the report's own message builder — preview = the real thing
 import { buildSlipHeader, buildSlipTerms, SHOP_FIELDS, SLIP_DESIGN_W } from '../logic/slipHeader.js'
 import { THEME_FIELDS, THEME_PRESETS, applyTheme, presetSwatches, activePresetId } from '../logic/theme.js'
+// The blank 2-up Imtiaz parchi (the pre-printed slip the overlay is calibrated
+// against). Bundled as the DEFAULT calibration backdrop so the cells are visible
+// without the shop having to upload anything; a different shop can still upload
+// its own scan to override this.
+import DEFAULT_PARCHI_BG from '../assets/imtiaz-parchi.jpg'
 
 const INPUT =
   'w-full bg-white border border-slate-300 rounded-lg text-[14px] leading-relaxed ' +
@@ -384,15 +389,39 @@ export default function DefaultsForm({ open, onClose }) {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
   }
-  // Blank-form scan upload → base64 data URL in overlay_bg_path (calibration bg +
-  // WhatsApp composite). Capped so the DB stays small.
+  // Blank-parchi photo → the calibration background (so the operator can see the
+  // real cells while dragging) + the WhatsApp composite. ANY size is accepted: a
+  // phone photo is often several MB, so we DOWNSCALE it in the browser to a modest
+  // JPEG. That both makes every photo load (no more "too big" rejection — the old
+  // 4MB cap was exactly why the parchi didn't appear) AND keeps the settings row
+  // small (a huge base64 here slows every parchi navigation).
   const onOverlayBgUpload = (e) => {
     const file = e.target.files && e.target.files[0]
     e.target.value = ''
-    if (!file || !/^image\//.test(file.type)) return
-    if (file.size > 4 * 1024 * 1024) { setOvMsg('اسکین بہت بڑا ہے (4MB سے کم رکھیں)'); return }
+    if (!file || !/^image\//.test(file.type)) { setOvMsg('تصویر منتخب کریں'); return }
+    setOvMsg('تصویر لگ رہی ہے…')
     const reader = new FileReader()
-    reader.onload = () => commit({ ...form, overlay_bg_path: String(reader.result || '') })
+    reader.onload = () => {
+      const src = String(reader.result || '')
+      const img = new Image()
+      img.onload = () => {
+        try {
+          const maxW = 1600 // enough detail to see the cells; keeps the DB small
+          const scale = Math.min(1, maxW / (img.width || maxW))
+          const cw = Math.max(1, Math.round((img.width || maxW) * scale))
+          const ch = Math.max(1, Math.round((img.height || maxW) * scale))
+          const canvas = document.createElement('canvas')
+          canvas.width = cw; canvas.height = ch
+          canvas.getContext('2d').drawImage(img, 0, 0, cw, ch)
+          const out = canvas.toDataURL('image/jpeg', 0.82)
+          commit({ ...form, overlay_bg_path: out })
+          setOvMsg('پرچی کی تصویر لگ گئی ✓')
+        } catch { commit({ ...form, overlay_bg_path: src }); setOvMsg('تصویر لگ گئی ✓') }
+        setTimeout(() => setOvMsg(''), 3000)
+      }
+      img.onerror = () => { setOvMsg('تصویر پڑھی نہیں جا سکی'); setTimeout(() => setOvMsg(''), 3000) }
+      img.src = src
+    }
     reader.readAsDataURL(file)
   }
   // ری سیٹ — snap coords + offsets back to the hardcoded defaults (recovery). Only
@@ -1011,20 +1040,22 @@ export default function DefaultsForm({ open, onClose }) {
                     خالی پرچی کا اسکین لگا کر ہر ویلیو کو اس کے خانے پر گھسیٹیں، پھر ٹیسٹ پرنٹ نکال کر ملا لیں۔
                   </div>
 
-                  {/* Blank-form scan */}
-                  <Row label="خالی پرچی کا اسکین" alignTop>
+                  {/* Blank-parchi photo — OPTIONAL. The Imtiaz parchi is built in as
+                      the default calibration backdrop, so nothing needs uploading;
+                      this is only for a DIFFERENT shop's slip. */}
+                  <Row label="پرچی کی تصویر (اختیاری)" alignTop>
                     <div className="flex flex-col gap-2">
                       {form.overlay_bg_path
                         ? <img src={form.overlay_bg_path} alt="scan" className="max-h-20 w-auto object-contain border border-gray-200 rounded bg-white p-1" />
-                        : <span className="urdu text-[11px] text-gray-500">اسکین نہیں — کیلیبریشن کے لیے لگائیں</span>}
+                        : <span className="urdu text-[11px] text-gray-500">پہلے سے Imtiaz پرچی لگی ہوئی ہے — صرف مختلف پرچی کے لیے بدلیں</span>}
                       <div className="flex gap-2">
                         <label className="urdu text-[12px] font-bold text-white bg-slate-600 rounded-md px-3 py-1.5 cursor-pointer hover:bg-slate-700">
-                          اسکین منتخب کریں
+                          اپنی پرچی کی تصویر لگائیں
                           <input type="file" accept="image/*" className="hidden" onChange={onOverlayBgUpload} />
                         </label>
                         {form.overlay_bg_path && (
                           <button type="button" onClick={() => commit({ ...form, overlay_bg_path: '' })}
-                            className="urdu text-[12px] font-bold text-gray-700 bg-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-300">ہٹا دیں</button>
+                            className="urdu text-[12px] font-bold text-gray-700 bg-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-300">ڈیفالٹ Imtiaz پرچی پر واپس</button>
                         )}
                       </div>
                     </div>
@@ -1245,8 +1276,15 @@ export default function DefaultsForm({ open, onClose }) {
                       <div
                         ref={ovCanvasRef}
                         className="relative w-full border border-gray-400 overflow-hidden select-none"
-                        style={{ aspectRatio: `${SHEET_W_MM} / ${SHEET_H_MM}`, background: form.overlay_bg_path ? `#fff url('${form.overlay_bg_path}') center/100% 100% no-repeat` : '#fafafa', touchAction: 'none' }}
+                        style={{ aspectRatio: `${SHEET_W_MM} / ${SHEET_H_MM}`, minHeight: 260, background: `#fff url('${form.overlay_bg_path || DEFAULT_PARCHI_BG}') center/100% 100% no-repeat`, touchAction: 'none' }}
                       >
+                        {/* 10mm reference grid over the parchi — helps line values up.
+                            pointer-events off so it never blocks a chip drag. */}
+                        <div className="absolute inset-0 pointer-events-none" style={{
+                          backgroundImage:
+                            `repeating-linear-gradient(to right, rgba(0,0,0,.10) 0 1px, transparent 1px calc(100%/${SHEET_W_MM / 10})),` +
+                            `repeating-linear-gradient(to bottom, rgba(0,0,0,.10) 0 1px, transparent 1px calc(100%/${SHEET_H_MM / 10}))`
+                        }} />
                         {/* centre split guide */}
                         <div className="absolute top-0 bottom-0" style={{ left: '50%', borderLeft: '1px dashed #999' }} />
                         {keys.map((key) => {

@@ -32,6 +32,10 @@ function buildSampleData() {
     title: 'لیب رسید',
     showFee: true,
     selectiveBold: true,
+    // «سونا دینا ہے» rides OUTSIDE tables on the real slipData too (Receipts.jsx) —
+    // خالص 10.6265 minus the اجرت gold 0.028. It is what the overlay prints in the
+    // «پوائنٹ» cell; the thermal slip never sees it.
+    sonaDena: '10.599',
     tables: [
       [[L('رسید نمبر'), V('157'), L('ریٹ فی گرام'), V('37,244')]],
       [
@@ -98,8 +102,11 @@ const decOf = (w) => {
 }
 
 // field key → printed string, from the extracted lab values.
-function fieldValues(tables) {
-  const v = labVals(tables)
+// `data` is the WHOLE lab slipData ({ tables, sonaDena, … }), not just the tables:
+// one field (see `point` below) is carried alongside them rather than inside them.
+function fieldValues(data) {
+  const d = data || {}
+  const v = labVals(d.tables || [])
   const k = v.kv
   return {
     aamad_dec: decOf(v.aamad), aamad_tola: v.aamad.tola, aamad_masha: v.aamad.masha, aamad_ratti: v.aamad.ratti,
@@ -108,14 +115,23 @@ function fieldValues(tables) {
     mpt_dec: decOf(v.mpt), mpt_tola: v.mpt.tola, mpt_masha: v.mpt.masha, mpt_ratti: v.mpt.ratti,
     rate: k['ریٹ فی تولہ'], keerat: k['کیرٹ'],
     baqaya: k['بقایا رقم'], charges: k['چارجز'], total: k['ٹوٹل رقم'],
-    point: k['پوائنٹ'], time: k['وقت'], date: k['تاریخ'], naam: k['نام']
+    // NOTE — the key is still `point` ONLY so every calibrated coordinate in
+    // settings.overlay_coords keeps working; the VALUE is no longer the پوائنٹ
+    // (khalis fraction, 0.9111). The shop's pre-printed slip wants the net gold
+    // handed over in that cell: «سونا دینا ہے» = خالص سونا − اجرت کا سونا (10.599).
+    // It is NOT computed here and NOT derived from the tables — it is taken as-is
+    // from the slipData snapshot, where Receipts.jsx put the store's
+    // sidebarGoldCtx().goldOwed, the same value the main screen's sidebar shows.
+    // The لیب رسید itself still prints the real پوائنٹ in its own «پوائنٹ» cell.
+    point: d.sonaDena,
+    time: k['وقت'], date: k['تاریخ'], naam: k['نام']
   }
 }
 
 // A realistic filled sample (the settings calibration tool + test print) — reuses
 // the colour form's lab sample, whose table shape IS the real lab slipData.
 function sampleFieldValues() {
-  return fieldValues(buildSampleData().tables)
+  return fieldValues(buildSampleData())
 }
 
 // ── Settings → normalized config ─────────────────────────────────────────────
@@ -167,7 +183,7 @@ function normalizeCfg(cfg) {
 function buildOverlayHtml(data, cfg, opts = {}) {
   const c = normalizeCfg(cfg)
   const withBg = !!opts.withBg && !!c.bg
-  const vals = fieldValues((data && data.tables) || [])
+  const vals = fieldValues(data || {})
   const coords = { ...DEFAULT_COORDS, ...c.coords }
 
   const spanFor = (key, dx, dy) => {
@@ -652,5 +668,7 @@ function resolveEngine(cfg) {
 
 module.exports = {
   buildOverlayHtml, buildProofHtml, printOverlay, overlayImageToClipboard, validateDevice,
-  resolveEngine, renderSamplePdf, sampleFieldValues, buildSampleData, normalizeCfg, DEFAULT_COORDS, FIELD_LABELS, PAPERS
+  resolveEngine, renderSamplePdf, sampleFieldValues, buildSampleData, normalizeCfg, DEFAULT_COORDS, FIELD_LABELS, PAPERS,
+  // exported for scripts/overlay-vs-receipt.cjs (رسید ↔ overlay field comparison)
+  fieldValues, labVals
 }
