@@ -205,7 +205,10 @@ function showBlockingPrintError(reason, onOverride) {
 // Generic transient toast (green = success, red = problem) — same style as the
 // print-error toast; used by the WhatsApp share to tell the operator the image
 // is on the clipboard. Display-only; never throws.
-function showToast(text, ok) {
+// `file` (optional) is a saved copy of the picture: the toast then shows its path
+// and a «فولڈر کھولیں» button, so a paste that refuses to work on some machine
+// never blocks the operator — they attach the file instead.
+function showToast(text, ok, file) {
   if (typeof document === 'undefined') return
   try {
     const el = document.createElement('div')
@@ -216,8 +219,24 @@ function showToast(text, ok) {
       `background:${ok ? '#047857' : '#b91c1c'};color:#fff;padding:10px 18px;border-radius:8px;` +
       'font-size:14px;font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,.35);max-width:80vw;text-align:center'
     el.textContent = text
+    if (file) {
+      const p = document.createElement('div')
+      p.dir = 'ltr'
+      p.style.cssText = 'font:400 11px Arial;opacity:.85;margin-top:6px;word-break:break-all'
+      p.textContent = file
+      el.appendChild(p)
+      const btn = document.createElement('button')
+      btn.className = 'urdu'
+      btn.textContent = 'فولڈر کھولیں'
+      btn.style.cssText =
+        'margin-top:8px;background:#fff;color:#111;border:0;border-radius:6px;' +
+        'padding:5px 14px;font-size:13px;font-weight:700;cursor:pointer'
+      btn.onclick = () => { try { window.api && window.api.showInFolder && window.api.showInFolder(file) } catch {} }
+      el.appendChild(btn)
+    }
     document.body.appendChild(el)
-    setTimeout(() => { try { el.remove() } catch {} }, 6000)
+    // The file variant stays up longer — the operator may need to read the path.
+    setTimeout(() => { try { el.remove() } catch {} }, file ? 15000 : 6000)
   } catch {}
 }
 
@@ -1057,7 +1076,7 @@ export function AppProvider({ children }) {
       try {
         const r = await window.api.overlayShareImage({ ...slipData })
         if (r && r.ok) {
-          showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V)', true)
+          showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V یا نیچے والی فائل منسلک کریں)', true, r.file)
           openWa()
           return
         }
@@ -1119,11 +1138,15 @@ export function AppProvider({ children }) {
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
       await new Promise((r) => setTimeout(r, 80)) // let paint settle before capture
       const b = card.getBoundingClientRect()
-      const res = await window.api.captureToClipboard({ x: b.x, y: b.y, width: b.width, height: b.height })
+      // `name` only labels the PNG saved in Pictures/GoldLab (lab / naqad / …).
+      const res = await window.api.captureToClipboard({
+        x: b.x, y: b.y, width: b.width, height: b.height,
+        name: panelEl.getAttribute('data-receipt') || 'raseed'
+      })
       overlay.remove()
       overlay = null
       if (res && res.ok) {
-        showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V)', true)
+        showToast('رسید کی تصویر تیار ہے — چیٹ کھلتے ہی خود لگ جائے گی، صرف Send دبائیں (نہ لگے تو Ctrl+V یا نیچے والی فائل منسلک کریں)', true, res.file)
       } else {
         showToast('تصویر کاپی نہیں ہو سکی — صرف تحریری پیغام بھیجا جائے گا', false)
       }

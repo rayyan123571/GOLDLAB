@@ -367,6 +367,15 @@ function migrateSchema() {
   if (!sCols.includes('printer_thermal')) db.run('ALTER TABLE settings ADD COLUMN printer_thermal TEXT')
   if (!sCols.includes('printer_canon')) db.run('ALTER TABLE settings ADD COLUMN printer_canon TEXT')
 
+  // Which WhatsApp the share button opens: 'auto' (desktop app when Windows says
+  // it is installed, else the built-in web window), 'desktop' (always the app),
+  // 'web' (always the built-in window). Auto is what shipped, so an existing
+  // install keeps behaving exactly as before until the shopkeeper picks.
+  if (!sCols.includes('wa_mode')) {
+    db.run('ALTER TABLE settings ADD COLUMN wa_mode TEXT')
+    db.run("UPDATE settings SET wa_mode = 'auto' WHERE wa_mode IS NULL")
+  }
+
   // settings.reports_dir — the synced (Google Drive Desktop) folder where per-
   // report PDFs are auto-written after each transaction (see electron/reportPdf.cjs).
   // Blank = feature OFF. No backfill; the shopkeeper picks the folder once in
@@ -681,6 +690,7 @@ const api = {
               overlay_print_orientation=COALESCE(?, overlay_print_orientation),
               ui_panel=COALESCE(?, ui_panel), ui_header=COALESCE(?, ui_header), ui_header_dark=COALESCE(?, ui_header_dark), ui_line=COALESCE(?, ui_line), ui_surface=COALESCE(?, ui_surface),
               printer_thermal=COALESCE(?, printer_thermal), printer_canon=COALESCE(?, printer_canon),
+              wa_mode=COALESCE(?, wa_mode),
               reports_dir=COALESCE(?, reports_dir),
               ${OVERLAY_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
               ${FORM_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
@@ -732,6 +742,8 @@ const api = {
         // Chosen printer device names ('' clears → default). undefined/null keeps stored.
         rates.printer_thermal != null ? String(rates.printer_thermal) : null,
         rates.printer_canon != null ? String(rates.printer_canon) : null,
+        // WhatsApp route, clamped to a known value; anything unknown → 'auto'.
+        rates.wa_mode != null ? (['auto', 'desktop', 'web'].includes(rates.wa_mode) ? rates.wa_mode : 'auto') : null,
         // Synced reports folder ('' clears → feature off). undefined/null keeps stored.
         rates.reports_dir != null ? String(rates.reports_dir) : null,
         ...OVERLAY_NUM_FIELDS.map((f) => (rates[f] != null && Number.isFinite(Number(rates[f])) ? Number(rates[f]) : null)),

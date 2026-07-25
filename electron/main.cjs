@@ -12,6 +12,7 @@ const { routeFor } = require('./printRouting.cjs')
 const printLog = require('./printLog.cjs') // userData/print-log.txt — see printLog.cjs
 const pdfPrint = require('./pdfPrint.cjs')
 const printerForms = require('./printerForms.cjs')
+const shareImage = require('./shareImage.cjs') // WhatsApp share picture: opaque-flatten + size cap + Pictures/GoldLab copy
 const { DEFAULT_OFFSETS: OVERLAY_DEFAULT_OFFSETS } = require('./overlayDefaults.cjs')
 const { SHOP_FIELDS } = require('./shopDefaults.cjs')
 const liveGold = require('./liveGold.cjs')
@@ -839,23 +840,37 @@ ipcMain.handle('print-page', async (_evt, opts = {}) => {
 //   2. Otherwise the embedded WhatsApp Web window (direct chat URL, in-window
 //      auto-paste poller).
 // GOLDLAB_WA_FORCE_MODE ('web' | 'desktop-watch-only') is a TEST hook only.
+// The route is the shopkeeper's choice (settings.wa_mode), because auto-detection
+// can only ask Windows whether a `whatsapp://` handler is REGISTERED — it cannot
+// tell whether that app actually works on this machine, and a shop that has both
+// installed may still prefer one. 'auto' is the shipped behaviour and the default.
 ipcMain.handle('open-whatsapp', (_evt, { mobile, text } = {}) => {
   try {
     const num = waNumber(mobile)
     const msg = encodeURIComponent(text || '')
     const force = process.env.GOLDLAB_WA_FORCE_MODE || ''
-    const desktopApp = force === 'web' ? '' : app.getApplicationNameForProtocol('whatsapp://send')
-    if (force === 'desktop-watch-only') { startDesktopPasteWatcher(); return { ok: true, mode: 'desktop', num } }
-    if (desktopApp) {
+    let mode = 'auto'
+    try {
+      const m = (db.api.getRates() || {}).wa_mode
+      if (['auto', 'desktop', 'web'].includes(m)) mode = m
+    } catch {}
+    const openWeb = () => {
+      const url = num || msg
+        ? `https://web.whatsapp.com/send?phone=${num}&text=${msg}`
+        : 'https://web.whatsapp.com/'
+      openWhatsAppWindow(url)
+      return { ok: true, mode: 'web', num, url }
+    }
+    const openDesktop = () => {
       shell.openExternal(`whatsapp://send?phone=${num}&text=${msg}`)
       startDesktopPasteWatcher()
       return { ok: true, mode: 'desktop', num }
     }
-    const url = num || msg
-      ? `https://web.whatsapp.com/send?phone=${num}&text=${msg}`
-      : 'https://web.whatsapp.com/'
-    openWhatsAppWindow(url)
-    return { ok: true, mode: 'web', num, url }
+    if (force === 'desktop-watch-only') { startDesktopPasteWatcher(); return { ok: true, mode: 'desktop', num } }
+    if (force === 'web' || mode === 'web') return openWeb()
+    if (mode === 'desktop') return openDesktop()
+    // auto — desktop app when Windows reports a handler, otherwise the web window.
+    return app.getApplicationNameForProtocol('whatsapp://send') ? openDesktop() : openWeb()
   } catch (e) {
     return { ok: false, reason: String(e && e.message ? e.message : e) }
   }
@@ -865,6 +880,10 @@ ipcMain.handle('open-whatsapp', (_evt, { mobile, text } = {}) => {
 // clipboard as an IMAGE — used by the WhatsApp share: the renderer shows the
 // slip (same header/receipt/footer as printing), we snapshot it here, and the
 // user pastes it straight into the WhatsApp chat with Ctrl+V. Never throws.
+// The picture is prepared by electron/shareImage.cjs before it goes on the
+// clipboard (flattened onto white so it carries no alpha, longest edge capped) and
+// a PNG copy is written to Pictures/GoldLab, whose path comes back so the operator
+// can attach the file if a paste ever refuses to work.
 ipcMain.handle('capture-to-clipboard', async (_evt, rect) => {
   try {
     if (!win) return { ok: false, reason: 'no-window' }
@@ -876,7 +895,29 @@ ipcMain.handle('capture-to-clipboard', async (_evt, rect) => {
     }
     const img = await win.webContents.capturePage(r)
     if (!img || img.isEmpty()) return { ok: false, reason: 'empty-capture' }
-    clipboard.writeImage(img)
+    const { img: ready, info } = shareImage.prepareForClipboard(img)
+    // 1. plain image write first — even if the upgrade below fails, the clipboard
+    //    already holds a usable picture.
+    clipboard.writeImage(ready)
+    const file = shareImage.saveCopy(ready.toPNG(), (rect && rect.name) || 'raseed')
+    // 2. upgrade the clipboard to image + FILE together (CF_DIB + CF_HDROP): a
+    //    native app that refuses the raw bitmap (WhatsApp Desktop) then pastes the
+    //    FILE, exactly like a file copied from Explorer.
+    let plusFile = { ok: false, reason: 'no-file' }
+    if (file) plusFile = await shareImage.clipboardImagePlusFile(file)
+    printLog.log('share-image', { route: 'capture-to-clipboard', ...info, file: file || 'not-saved', fileOnClipboard: plusFile.ok || plusFile.reason })
+    return { ok: true, file }
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message ? e.message : e) }
+  }
+})
+
+// Reveal a saved share picture in Explorer — the «فولڈر کھولیں» button on the
+// share toast. Read-only: it only selects an existing file.
+ipcMain.handle('show-in-folder', (_evt, file) => {
+  try {
+    if (!file || !fs.existsSync(file)) return { ok: false, reason: 'missing' }
+    shell.showItemInFolder(file)
     return { ok: true }
   } catch (e) {
     return { ok: false, reason: String(e && e.message ? e.message : e) }

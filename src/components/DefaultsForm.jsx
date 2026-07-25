@@ -176,6 +176,8 @@ export default function DefaultsForm({ open, onClose }) {
     overlay_bg_path: '', overlay_coords: null,
     // Dual-printer device names.
     printer_thermal: '', printer_canon: '',
+    // Which WhatsApp the share button opens: auto | desktop | web.
+    wa_mode: 'auto',
     // Synced (Google Drive) reports folder — blank = feature off.
     reports_dir: ''
   })
@@ -250,6 +252,7 @@ export default function DefaultsForm({ open, onClose }) {
         overlay_coords: (() => { try { return src.overlay_coords ? JSON.parse(src.overlay_coords) : null } catch { return null } })(),
         printer_thermal: src.printer_thermal != null ? String(src.printer_thermal) : '',
         printer_canon: src.printer_canon != null ? String(src.printer_canon) : '',
+        wa_mode: ['auto', 'desktop', 'web'].includes(src.wa_mode) ? src.wa_mode : 'auto',
         reports_dir: src.reports_dir != null ? String(src.reports_dir) : '',
         // Theme colours: '' when unset (means "use the hex default"), else '#rrggbb'.
         ...Object.fromEntries(THEME_FIELDS.map((f) => [f.key, src[f.key] != null ? String(src[f.key]) : '']))
@@ -598,6 +601,8 @@ export default function DefaultsForm({ open, onClose }) {
       // Dual-printer device names ('' clears → Windows default).
       printer_thermal: String(next.printer_thermal ?? ''),
       printer_canon: String(next.printer_canon ?? ''),
+      // Which WhatsApp the share opens (auto | desktop | web).
+      wa_mode: ['auto', 'desktop', 'web'].includes(next.wa_mode) ? next.wa_mode : 'auto',
       // Synced reports folder ('' → feature off).
       reports_dir: String(next.reports_dir ?? '').trim(),
       // Theme colours: '#rrggbb' saves the colour, '' resets that tone to its hex
@@ -900,6 +905,28 @@ export default function DefaultsForm({ open, onClose }) {
               {form.print_mode === 'overlay_form' && !form.printer_canon && (
                 <div className="urdu text-[11px] text-red-600">اوورلے کے لیے «کینن پرنٹر» منتخب کرنا ضروری ہے۔</div>
               )}
+            </div>
+
+            {/* ── واٹس ایپ: کون سا کھلے. «خودکار» وہی پرانا رویہ ہے (ڈیسک ٹاپ ایپ
+                ملے تو وہ، ورنہ ویب). دکاندار چاہے تو ایک کو مقرر کر سکتا ہے. */}
+            <div className="flex flex-col gap-2">
+              <div className="urdu font-bold text-[13px] text-gray-700">واٹس ایپ (رسید بھیجنے کے لیے)</div>
+              <Row label="کون سا واٹس ایپ کھلے">
+                <select
+                  className={`${INPUT}`}
+                  value={form.wa_mode || 'auto'}
+                  onChange={(e) => commit({ ...form, wa_mode: e.target.value })}
+                >
+                  <option value="auto">خودکار — ڈیسک ٹاپ ایپ ملے تو وہ، ورنہ ویب</option>
+                  <option value="desktop">واٹس ایپ ڈیسک ٹاپ ایپ</option>
+                  <option value="web">واٹس ایپ ویب (ایپ کے اندر والی ونڈو)</option>
+                </select>
+              </Row>
+              <div className="urdu text-[11px] text-gray-500">
+                تصویر دونوں صورتوں میں کلپ بورڈ پر جاتی ہے اور
+                <span dir="ltr" className="mx-1">Pictures\GoldLab</span>
+                میں محفوظ بھی ہو جاتی ہے — پیسٹ نہ ہو تو وہی فائل منسلک کر دیں۔
+              </div>
             </div>
               </div>
 

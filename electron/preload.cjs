@@ -125,7 +125,10 @@ contextBridge.exposeInMainWorld('api', {
   manualBackupPickFolder: () => ipcRenderer.invoke('manual-backup-pick-folder'),
   manualBackupRun: () => ipcRenderer.invoke('manual-backup-run'),
   // Snapshot a window region to the system clipboard as an image (WhatsApp share).
+  // Also saves a PNG copy and returns its path, for the toast's «فولڈر کھولیں».
   captureToClipboard: (rect) => ipcRenderer.invoke('capture-to-clipboard', rect),
+  // Reveal a saved share picture in Explorer (the toast button).
+  showInFolder: (file) => ipcRenderer.invoke('show-in-folder', file),
   // Open WhatsApp (desktop app if installed, else embedded web) for a receipt.
   openWhatsApp: (opts) => ipcRenderer.invoke('open-whatsapp', opts),
   // Live gold spot ticker (display-only). Subscribe to main's poll pushes;

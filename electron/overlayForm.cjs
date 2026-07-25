@@ -21,6 +21,7 @@ const fs = require('fs')
 const os = require('os')
 const { DEFAULT_COORDS, FIELD_LABELS } = require('./overlayDefaults.cjs')
 const pdfPrint = require('./pdfPrint.cjs')
+const shareImage = require('./shareImage.cjs') // share picture prep (opaque + size cap + saved copy)
 
 // A realistic filled lab رسید (same slipData shape Receipts.jsx builds), for the
 // calibration chips + overlay test print. Self-contained here so nothing depends on
@@ -620,14 +621,28 @@ function overlayImageToClipboard({ data, cfg, toClipboard = true }) {
         bgra = Buffer.alloc(targetW * targetH * 4)
         for (let y = 0; y < targetH; y++) frame.buf.copy(bgra, y * targetW * 4, y * frame.width * 4, y * frame.width * 4 + targetW * 4)
       }
-      const png = nativeImage.createFromBitmap(bgra, { width: targetW, height: targetH }).toPNG()
-      if (toClipboard) clipboard.writeImage(nativeImage.createFromBuffer(png))
+      // Prepared by the SAME helper the capture route uses: flattened onto white so
+      // no alpha reaches the Windows clipboard (this crop pads with ZEROS — fully
+      // transparent black — whenever the captured frame is shorter than the sheet),
+      // and the longest edge capped. Then a PNG copy into Pictures/GoldLab.
+      const prepared = shareImage.prepareForClipboard(
+        nativeImage.createFromBitmap(bgra, { width: targetW, height: targetH }))
+      const png = prepared.img.toPNG()
+      if (toClipboard) clipboard.writeImage(prepared.img)
       if (process.env.GOLDLAB_PRINT_PDF_DIR) {
         const file = path.join(process.env.GOLDLAB_PRINT_PDF_DIR, `overlay-share-${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`)
         fs.writeFileSync(file, png)
         return { ok: true, reason: 'dry-run', file, dataUrl: 'data:image/png;base64,' + png.toString('base64') }
       }
-      return { ok: true, dataUrl: 'data:image/png;base64,' + png.toString('base64') }
+      const saved = toClipboard ? shareImage.saveCopy(png, 'lab-overlay') : null
+      // Upgrade to image + FILE on the clipboard (same reason as main.cjs's
+      // capture route: WhatsApp Desktop pastes a file where it may refuse a raw
+      // bitmap). Best-effort — the plain image write above already succeeded.
+      // The outcome rides back in the result so a failed upgrade is visible in
+      // the renderer console / any caller's log instead of vanishing silently.
+      let plusFile = { ok: false, reason: 'no-file' }
+      if (saved) { try { plusFile = await shareImage.clipboardImagePlusFile(saved) } catch (e) { plusFile = { ok: false, reason: String(e && e.message || e) } } }
+      return { ok: true, file: saved, share: { ...prepared.info, fileOnClipboard: plusFile.ok || plusFile.reason }, dataUrl: 'data:image/png;base64,' + png.toString('base64') }
     } catch (e) {
       return { ok: false, reason: String(e && e.message || e) }
     } finally {
