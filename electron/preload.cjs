@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('api', {
   // form present? overlayFormInstructions returns the plain-Urdu click-path text.
   overlayPreflight: () => ipcRenderer.invoke('overlay-preflight'),
   overlayFormInstructions: () => ipcRenderer.invoke('overlay-form-instructions'),
+  overlayDiagnostics: () => ipcRenderer.invoke('overlay-diagnostics'),
   overlayShareImage: (data) => ipcRenderer.invoke('overlay-share-image', { data }),
   // Installed-printer list for the dual-printer (thermal + Canon) device pickers.
   listPrinters: () => ipcRenderer.invoke('list-printers'),

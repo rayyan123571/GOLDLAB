@@ -37,6 +37,13 @@ function script(deviceName) {
     // module (absent on Windows 7).
     '$d = $ps.DefaultPageSettings.PaperSize',
     'Write-Output ("DEFAULT|" + $d.PaperName + "|" + $d.Width + "|" + $d.Height)',
+    // The default ORIENTATION — the second blind spot. It lives on the SAME
+    // DefaultPageSettings object, so this is one extra line in the SAME call (no
+    // new PowerShell). If the driver's Orientation is "Landscape" (a natural
+    // mistake, since the parchi LOOKS landscape), Windows rotates our content 90°
+    // and nothing else in the app can tell. A wide form (21.59×13.97) must be
+    // PORTRAIT. Landscape=True/False.
+    'Write-Output ("ORIENT|" + $ps.DefaultPageSettings.Landscape)',
     // name|width|height, one per line. Width/Height are hundredths of an inch.
     'foreach ($p in $ps.PaperSizes) { Write-Output ("SIZE|" + $p.PaperName + "|" + $p.Width + "|" + $p.Height) }'
   ].join('\n')
@@ -64,15 +71,18 @@ function listPaperSizes(deviceName, timeoutMs = 20000) {
       if (/INVALID/.test(out)) return done({ ok: false, reason: 'printer-not-valid' })
       const sizes = []
       let dflt = null
+      let orientationLandscape = null // null = couldn't read (never a false alarm)
       const toMm = (v) => Math.round(Number(v) * MM_PER_UNIT * 10) / 10
       for (const line of out.split(/\r?\n/)) {
         const s = /^SIZE\|(.*)\|(\d+)\|(\d+)$/.exec(line.trim())
         if (s) { sizes.push({ name: s[1], wMm: toMm(s[2]), hMm: toMm(s[3]) }); continue }
         const d = /^DEFAULT\|(.*)\|(\d+)\|(\d+)$/.exec(line.trim())
-        if (d) dflt = { name: d[1], wMm: toMm(d[2]), hMm: toMm(d[3]) }
+        if (d) { dflt = { name: d[1], wMm: toMm(d[2]), hMm: toMm(d[3]) }; continue }
+        const o = /^ORIENT\|(True|False)$/i.exec(line.trim())
+        if (o) orientationLandscape = /true/i.test(o[1])
       }
       if (!sizes.length) return done({ ok: false, reason: err.trim().slice(0, 200) || 'no-sizes-reported' })
-      done({ ok: true, sizes, default: dflt })
+      done({ ok: true, sizes, default: dflt, orientationLandscape })
     })
   })
 }

@@ -349,6 +349,14 @@ function migrateSchema() {
   if (!sCols.includes('overlay_coords')) db.run('ALTER TABLE settings ADD COLUMN overlay_coords TEXT')
   if (!sCols.includes('overlay_bg_path')) db.run('ALTER TABLE settings ADD COLUMN overlay_bg_path TEXT')
 
+  // ── Main-screen theme colours (Defaults → تھیم / رنگ) ───────────────────────
+  // Nullable '#rrggbb' text, NO backfill: NULL means "use the built-in hex", so
+  // existing installs look byte-identical until the shopkeeper picks a colour. The
+  // renderer maps each to a #root CSS variable (see src/logic/theme.js).
+  for (const col of ['ui_panel', 'ui_header', 'ui_header_dark', 'ui_line', 'ui_surface']) {
+    if (!sCols.includes(col)) db.run(`ALTER TABLE settings ADD COLUMN ${col} TEXT`)
+  }
+
   // Dual-printer routing (the machine has a thermal printer AND the Canon LBP6030
   // attached at once). printer_thermal = device name for ESC/POS receipts;
   // printer_canon = device name for the colour/overlay Canon jobs. Blank = use the
@@ -667,6 +675,7 @@ const api = {
               form_style=COALESCE(?, form_style), form_theme=COALESCE(?, form_theme), form_footer=COALESCE(?, form_footer),
               overlay_paper=COALESCE(?, overlay_paper), overlay_coords=COALESCE(?, overlay_coords), overlay_bg_path=COALESCE(?, overlay_bg_path),
               overlay_landscape=COALESCE(?, overlay_landscape), overlay_rotate180=COALESCE(?, overlay_rotate180), overlay_engine=COALESCE(?, overlay_engine),
+              ui_panel=COALESCE(?, ui_panel), ui_header=COALESCE(?, ui_header), ui_header_dark=COALESCE(?, ui_header_dark), ui_line=COALESCE(?, ui_line), ui_surface=COALESCE(?, ui_surface),
               printer_thermal=COALESCE(?, printer_thermal), printer_canon=COALESCE(?, printer_canon),
               reports_dir=COALESCE(?, reports_dir),
               ${OVERLAY_NUM_FIELDS.map((f) => `${f}=COALESCE(?, ${f})`).join(', ')},
@@ -707,6 +716,13 @@ const api = {
         rates.overlay_landscape != null ? (rates.overlay_landscape ? 1 : 0) : null,
         rates.overlay_rotate180 != null ? (rates.overlay_rotate180 ? 1 : 0) : null,
         rates.overlay_engine != null ? (rates.overlay_engine === 'driver' ? 'driver' : 'pdf') : null,
+        // Theme colours: a '#rrggbb' string is stored; '' clears back to the hex
+        // default (the renderer treats '' like unset); undefined/null keeps stored.
+        rates.ui_panel != null ? String(rates.ui_panel) : null,
+        rates.ui_header != null ? String(rates.ui_header) : null,
+        rates.ui_header_dark != null ? String(rates.ui_header_dark) : null,
+        rates.ui_line != null ? String(rates.ui_line) : null,
+        rates.ui_surface != null ? String(rates.ui_surface) : null,
         // Chosen printer device names ('' clears → default). undefined/null keeps stored.
         rates.printer_thermal != null ? String(rates.printer_thermal) : null,
         rates.printer_canon != null ? String(rates.printer_canon) : null,

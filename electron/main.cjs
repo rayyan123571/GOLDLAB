@@ -356,7 +356,7 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
       // the cached preflight) makes a REAL slip refuse when the printer's default
       // paper is not the parchi size — the print would centre-shift off the slip,
       // wasting it, exactly like a missing PDF engine does.
-      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies, log: printLog.log, paperMismatch: cachedPaperMismatch() })
+      const r = await overlayForm.printOverlay({ data, cfg: { ...overlayCfg, deviceName: route.deviceName }, win, copies, log: printLog.log, paperMismatch: cachedPaperMismatch(), orientationLandscape: cachedOrientationLandscape() })
       printLog.log('overlay-result', { ok: !!(r && r.ok), printer: route.deviceName, engine: r && r.engine, pageCount: r && r.pageCount, reason: r && r.reason })
       return r
     } catch (e) {
@@ -525,7 +525,11 @@ async function overlayPreflight() {
     // The centering risk: even with the form present, if it is not the printer's
     // DEFAULT paper, noscale centres our sheet on whatever the default is (often
     // Letter) and every value shifts down off the slip. null = couldn't check.
-    defaultPaperOk: null, defaultPaperName: ''
+    defaultPaperOk: null, defaultPaperName: '',
+    // The ROTATION risk: if the driver's default Orientation is Landscape, Windows
+    // turns our content 90° (the "ghooma hua" print). Our wide form must be
+    // Portrait. true = Landscape (BAD), false = Portrait (OK), null = couldn't read.
+    orientationLandscape: null
   }
   try {
     const { printMode, overlayCfg, printerCanon } = printSettings()
@@ -562,6 +566,8 @@ async function overlayPreflight() {
           out.defaultPaperName = forms.default.name
           out.defaultPaperOk = printerForms.sizeMatches(forms.default, out.paperW, out.paperH, 0.5)
         }
+        // Default orientation — the 90° rotation cause (null = couldn't read).
+        out.orientationLandscape = forms.orientationLandscape
       }
     }
     printLog.log('overlay-preflight', {
@@ -571,6 +577,7 @@ async function overlayPreflight() {
       form: out.formPresent == null ? 'unknown' : (out.formPresent ? out.formName : 'MISSING'),
       defaultPaper: out.defaultPaperName || 'unknown',
       defaultPaperOk: out.defaultPaperOk == null ? 'unknown' : out.defaultPaperOk,
+      orientation: out.orientationLandscape == null ? 'unknown' : (out.orientationLandscape ? 'LANDSCAPE(bad)' : 'portrait'),
       printMode
     })
   } catch (e) {
@@ -587,6 +594,12 @@ function cachedPaperMismatch() {
   return !!(overlayPreflightCache && overlayPreflightCache.defaultPaperOk === false)
 }
 
+// Definitive Landscape orientation from the cache. TRUE only when the probe read
+// it AND it is Landscape — null/unknown never blocks (no false alarm).
+function cachedOrientationLandscape() {
+  return !!(overlayPreflightCache && overlayPreflightCache.orientationLandscape === true)
+}
+
 ipcMain.handle('overlay-preflight', async () => {
   try { return { ok: true, ...(await overlayPreflight()) } }
   catch (e) { return { ok: false, reason: String(e && e.message || e) } }
@@ -600,6 +613,81 @@ ipcMain.handle('overlay-form-instructions', async () => {
     const { printerCanon } = printSettings()
     return { ok: true, text: printerForms.formInstructionsUrdu(215.9, 139.7, printerCanon || 'Canon LBP6030') }
   } catch (e) { return { ok: false, reason: String(e && e.message || e) } }
+})
+
+// ── Print diagnostics («پرنٹ تشخیص») ─────────────────────────────────────────
+// A plain-text report the shop copies and WhatsApps: chosen printer, its default
+// paper + size, its ORIENTATION (the 90° cause), the full forms list, the engine
+// setting, the DB landscape/rotate180/right_dx values, the spooler path + pin
+// pass/fail, and the EXACT command line that will be spooled. The real overlay
+// PDF is also saved to userData so it can be inspected/attached, and its path is
+// in the report. Read-only — nothing is printed.
+ipcMain.handle('overlay-diagnostics', async () => {
+  const lines = []
+  const add = (k, v) => lines.push(`${k}: ${v == null ? '-' : v}`)
+  try {
+    const { overlayCfg, printerCanon } = printSettings()
+    const cfg = { ...overlayCfg, deviceName: printerCanon }
+    const c = overlayForm.normalizeCfg(cfg)
+    lines.push('گولڈ لیب — پرنٹ تشخیص (Print Diagnostics)')
+    lines.push(new Date().toString())
+    lines.push('')
+    add('Printer (Canon)', printerCanon || '(منتخب نہیں)')
+
+    // Printer forms + default paper + ORIENTATION.
+    let forms = { ok: false }
+    if (printerCanon) forms = await printerForms.listPaperSizes(printerCanon)
+    if (forms.ok) {
+      add('Default paper', forms.default ? `${forms.default.name}  ${forms.default.wMm} x ${forms.default.hMm} mm` : 'unknown')
+      add('Orientation', forms.orientationLandscape == null ? 'unknown'
+        : (forms.orientationLandscape ? 'LANDSCAPE  ← غلط، پرچی 90° گھومے گی' : 'Portrait  (OK)'))
+      const hit = printerForms.findForm(forms.sizes, 215.9, 139.7, 0.5)
+      add('GOLDLAB PARCHI form', hit ? `موجود («${hit.name}» ${hit.wMm} x ${hit.hMm} mm)` : 'نہیں ملا')
+      add('All forms', (forms.sizes || []).map((s) => `${s.name}(${s.wMm}x${s.hMm})`).join(', '))
+    } else {
+      add('Printer forms', 'پڑھی نہیں جا سکیں (' + (forms.reason || 'no-device') + ')')
+    }
+    lines.push('')
+
+    // Engine + DB geometry.
+    add('Engine (setting)', c.engine)
+    add('DB landscape', c.landscape ? 1 : 0)
+    add('DB rotate180', c.rotate180 ? 1 : 0)
+    add('DB right_dx (دوسری پرچی)', c.rightDX + ' mm')
+    add('Page / form', `${c.paperW} x ${c.paperH} mm`)
+    lines.push('')
+
+    // Spooler + pin + exact command.
+    const exe = pdfPrint.resolveExe()
+    add('PDF spooler', exe ? `${exe.exe}  [${exe.source}]` : 'غائب (missing)')
+    const pinBad = pdfPrint.pinFailures()
+    add('Spooler pin', pinBad.length ? ('FAILED: ' + pinBad.join(';')) : (exe ? 'pass' : '-'))
+    const orientation = c.landscape ? 'landscape' : 'portrait'
+
+    // Save the EXACT overlay PDF that would be spooled, then show the command.
+    let pdfPath = '(render failed)'
+    try {
+      const buf = await overlayForm.renderSamplePdf(cfg)
+      if (buf) {
+        pdfPath = path.join(app.getPath('userData'), 'goldlab-print-diagnostic.pdf')
+        fs.writeFileSync(pdfPath, buf)
+      }
+    } catch (e) { pdfPath = 'render error: ' + (e && e.message || e) }
+    add('Saved sample PDF', pdfPath)
+
+    const preview = pdfPrint.commandPreview({ file: pdfPath, deviceName: printerCanon || '', copies: 1, mono: true, orientation })
+    if (preview) {
+      const quoted = preview.args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')
+      add('Spool command', `"${preview.exe}" ${quoted}`)
+    } else {
+      add('Spool command', '(no spooler — would fall back / block)')
+    }
+
+    printLog.log('overlay-diagnostics', { printer: printerCanon || '(unset)', orientation: forms.ok ? forms.orientationLandscape : 'unreadable', engine: c.engine })
+    return { ok: true, text: lines.join('\n') }
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message || e), text: lines.join('\n') }
+  }
 })
 
 // ── Auto report-PDF export (see electron/reportPdf.cjs) ─────────────────────
@@ -842,7 +930,32 @@ async function startApp(userDataDir, dbPath) {
   })
 }
 
+// ── Single instance ─────────────────────────────────────────────────────────
+// Only ONE copy of the app may run. Double-clicking the icon again (e.g. after
+// minimising) must NOT open a second window — that produced two windows the
+// shopkeeper confused for two separate sessions. The first copy holds the lock;
+// any later launch fails the lock, quits immediately, and its attempt fires
+// 'second-instance' in the running copy, which restores + focuses the one window.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    // Surface whatever window is up — the main window, or the trial gate before it.
+    const existing = win || BrowserWindow.getAllWindows()[0]
+    if (!existing) return
+    try {
+      if (existing.isMinimized()) existing.restore()
+      existing.setFullScreen(true) // this app runs frameless full-screen
+      existing.show()
+      existing.focus()
+    } catch {}
+  })
+}
+
 app.whenReady().then(async () => {
+  // A second copy that lost the lock is already quitting — do no startup work.
+  if (!gotSingleInstanceLock) return
   const userDataDir = app.getPath('userData')
   const dbPath = path.join(userDataDir, 'goldlab.sqlite')
   // Unlocked personal build: skip ALL trial + licence gating and launch directly.

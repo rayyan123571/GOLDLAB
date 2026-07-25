@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useApp, WA_REMINDER_DEFAULT } from '../state/store.jsx'
 import { fillReminder } from './UdharForm.jsx' // the report's own message builder — preview = the real thing
 import { buildSlipHeader, buildSlipTerms, SHOP_FIELDS, SLIP_DESIGN_W } from '../logic/slipHeader.js'
+import { THEME_FIELDS, THEME_PRESETS, applyTheme, presetSwatches, activePresetId } from '../logic/theme.js'
 
 const INPUT =
   'w-full bg-white border border-slate-300 rounded-lg text-[14px] leading-relaxed ' +
@@ -73,6 +74,9 @@ const ICONS = {
   parchi: () => (<Icon><path d="M6 3.5h12v17l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4z" /><path d="M9 8h6M9 12h6" /></Icon>),
   whatsapp: () => (<Icon><path d="M20.5 11.7a8.4 8.4 0 0 1-12.3 7.5L4 20.5l1.4-4.1a8.4 8.4 0 1 1 15.1-4.7z" /><path d="M9 9.5c0 3 2.5 5.5 5.5 5.5" /></Icon>),
   reports: () => (<Icon><path d="M4 20h16" /><rect x="6" y="11" width="3.2" height="6" rx="1" /><rect x="11" y="7" width="3.2" height="10" rx="1" /><rect x="16" y="13" width="3.2" height="4" rx="1" /></Icon>),
+  // Artist's palette — the تھیم / رنگ section. Without this entry ICONS['theme']
+  // is undefined and <Glyph /> throws React error #130, crashing the dialog.
+  theme: () => (<Icon><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.5 0 2-1 2-1.8 0-.6-.4-1-.4-1.6 0-.7.6-1.1 1.3-1.1H16a4.5 4.5 0 0 0 4.5-4.5C20.5 6.7 16.7 3.5 12 3.5z" /><circle cx="8" cy="10.5" r=".9" fill="currentColor" stroke="none" /><circle cx="12" cy="8" r=".9" fill="currentColor" stroke="none" /><circle cx="15.5" cy="10.5" r=".9" fill="currentColor" stroke="none" /></Icon>),
   backup: () => (<Icon><ellipse cx="12" cy="6.5" rx="7" ry="2.8" /><path d="M5 6.5v11c0 1.6 3.1 2.8 7 2.8s7-1.2 7-2.8v-11" /><path d="M5 12c0 1.6 3.1 2.8 7 2.8s7-1.2 7-2.8" /></Icon>),
   shop: () => (<Icon><path d="M4 9.5 5.5 5h13L20 9.5" /><path d="M4 9.5h16v10H4z" /><path d="M9.5 19.5v-5h5v5" /></Icon>),
   terms: () => (<Icon><rect x="5" y="3.5" width="14" height="17" rx="2" /><path d="M8.5 8h7M8.5 12h7M8.5 16h4" /></Icon>),
@@ -100,6 +104,7 @@ const SECTIONS = [
   { id: 'parchi', label: 'پرچی', hint: 'ہیڈر اور شرائط', tile: 'from-indigo-500 to-indigo-600 text-white shadow-indigo-500/30', soft: 'bg-indigo-50 text-indigo-600 border-indigo-200', text: 'text-indigo-700', ring: 'border-r-indigo-500' },
   { id: 'whatsapp', label: 'واٹس ایپ', hint: 'یاد دہانی کا پیغام', tile: 'from-emerald-500 to-emerald-600 text-white shadow-emerald-500/30', soft: 'bg-emerald-50 text-emerald-600 border-emerald-200', text: 'text-emerald-700', ring: 'border-r-emerald-500' },
   { id: 'reports', label: 'رپورٹس', hint: 'خودکار رپورٹ فولڈر', tile: 'from-violet-500 to-violet-600 text-white shadow-violet-500/30', soft: 'bg-violet-50 text-violet-600 border-violet-200', text: 'text-violet-700', ring: 'border-r-violet-500' },
+  { id: 'theme', label: 'تھیم / رنگ', hint: 'مین اسکرین کے سرمئی رنگ', tile: 'from-slate-500 to-slate-600 text-white shadow-slate-500/30', soft: 'bg-slate-50 text-slate-600 border-slate-200', text: 'text-slate-700', ring: 'border-r-slate-500' },
   { id: 'backup', label: 'بیک اپ', hint: 'ڈیٹا کی نقل', tile: 'from-rose-500 to-rose-600 text-white shadow-rose-500/30', soft: 'bg-rose-50 text-rose-600 border-rose-200', text: 'text-rose-700', ring: 'border-r-rose-500' }
 ]
 const SECTION_BY_ID = Object.fromEntries(SECTIONS.map((s) => [s.id, s]))
@@ -238,7 +243,9 @@ export default function DefaultsForm({ open, onClose }) {
         overlay_coords: (() => { try { return src.overlay_coords ? JSON.parse(src.overlay_coords) : null } catch { return null } })(),
         printer_thermal: src.printer_thermal != null ? String(src.printer_thermal) : '',
         printer_canon: src.printer_canon != null ? String(src.printer_canon) : '',
-        reports_dir: src.reports_dir != null ? String(src.reports_dir) : ''
+        reports_dir: src.reports_dir != null ? String(src.reports_dir) : '',
+        // Theme colours: '' when unset (means "use the hex default"), else '#rrggbb'.
+        ...Object.fromEntries(THEME_FIELDS.map((f) => [f.key, src[f.key] != null ? String(src[f.key]) : '']))
       })
     }
     if (hasApi) window.api.getRates().then(seed)
@@ -434,10 +441,25 @@ export default function DefaultsForm({ open, onClose }) {
     'no-printers-installed': 'ونڈوز میں کوئی پرنٹر نصب نہیں',
     'pdf-engine-unavailable': 'PDF انجن دستیاب نہیں (سپولر غائب) — پرچی ضائع ہونے سے بچانے کے لیے پرنٹ روک دیا گیا',
     'default-paper-mismatch': 'پرنٹر کا ڈیفالٹ کاغذ پرچی کے ناپ کا نہیں — GOLDLAB PARCHI کو ڈیفالٹ بنائیں',
+    'orientation-landscape': 'پرنٹر کی Orientation ‘Landscape’ پر ہے — Portrait کریں (پرچی 90° گھوم رہی ہے)',
     'pdf-spooler-missing': 'PDF سپولر موجود نہیں — ونڈوز ڈرائیور سے چھپا (سائز بدل سکتا ہے)',
     'pdf-spool-timeout': 'پرنٹر نے دیر لگائی — دوبارہ نہیں بھیجا گیا',
     timeout: 'پرنٹر نے جواب نہیں دیا'
   }[code] || code || 'نامعلوم مسئلہ')
+
+  // «پرنٹ تشخیص» — gather the full print report (printer, default paper +
+  // orientation, forms, engine, DB geometry, spooler + pin, exact command, saved
+  // PDF path) and copy it to the clipboard for WhatsApp.
+  const copyDiagnostics = async () => {
+    try {
+      const r = hasApi && window.api.overlayDiagnostics ? await window.api.overlayDiagnostics() : null
+      const text = r && r.text ? r.text : ''
+      if (!text) { setCopyMsg('تشخیص نہیں بن سکی'); return }
+      await navigator.clipboard.writeText(text)
+      setCopyMsg('تشخیص کاپی ہو گئی ✓ (واٹس ایپ کر دیں)')
+    } catch { setCopyMsg('کاپی نہیں ہو سکی') }
+    setTimeout(() => setCopyMsg(''), 5000)
+  }
 
   // Copy the Windows custom-form click-path (built in electron/printerForms.cjs so
   // it never drifts from the printed footer) to the clipboard for WhatsApp.
@@ -545,6 +567,9 @@ export default function DefaultsForm({ open, onClose }) {
       printer_canon: String(next.printer_canon ?? ''),
       // Synced reports folder ('' → feature off).
       reports_dir: String(next.reports_dir ?? '').trim(),
+      // Theme colours: '#rrggbb' saves the colour, '' resets that tone to its hex
+      // default (db.cjs stores it; the renderer treats '' like unset).
+      ...Object.fromEntries(THEME_FIELDS.map((f) => [f.key, String(next[f.key] ?? '')])),
       ...shop,
       slip_terms: String(next.slip_terms ?? '').trim(),
       whatsapp_reminder_text: String(next.whatsapp_reminder_text ?? '').trim()
@@ -557,9 +582,22 @@ export default function DefaultsForm({ open, onClose }) {
   // Auto-save: update the field, then debounce a write ~500ms after typing stops.
   const commit = (next) => {
     setForm(next)
+    // Live theme preview: paint the #root variables from the CURRENT (unsaved)
+    // form on every change, so the screen updates instantly (no restart, no wait
+    // for the debounced save). If the dialog is closed without saving, App's
+    // effect re-applies the saved theme, reverting any preview.
+    applyTheme(next)
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => persist(next), 500)
   }
+
+  // A theme colour picker changed. Empty/absent stays '' (= use hex default).
+  const setThemeColor = (key, value) => commit({ ...form, [key]: value })
+  // Apply a ready-made theme: set all five tones at once (commit → live + save).
+  const applyPreset = (preset) => commit({ ...form, ...preset.values })
+  // "ڈیفالٹ رنگوں پر واپس" — clear all five back to '' so every tone reverts to its
+  // built-in hex. commit() applies + saves it.
+  const resetTheme = () => commit({ ...form, ...Object.fromEntries(THEME_FIELDS.map((f) => [f.key, ''])) })
 
   // Accept digits and a single decimal point only.
   const numField = (field) => (e) => {
@@ -1046,6 +1084,17 @@ export default function DefaultsForm({ open, onClose }) {
                         {preflight.defaultPaperOk === true && (
                           <div className="urdu text-[11px]">ڈیفالٹ کاغذ درست ✓</div>
                         )}
+                        {/* Rotation risk: driver Orientation = Landscape turns the
+                            slip 90°. This is the real cause of the "ghooma hua" print. */}
+                        {preflight.orientationLandscape === true && (
+                          <div className="urdu text-[11px] text-red-800 font-bold">
+                            پرنٹر کی Orientation ‘Landscape’ پر ہے — پرچی 90° گھوم کر چھپے گی۔ Printing Preferences میں
+                            Orientation کو ‘Portrait’ کریں (کاغذ کا ناپ GOLDLAB PARCHI ہی رہنے دیں)، پھر «دوبارہ جانچیں» دبائیں۔
+                          </div>
+                        )}
+                        {preflight.orientationLandscape === false && (
+                          <div className="urdu text-[11px]">Orientation درست (Portrait) ✓</div>
+                        )}
                         {preflight.formPresent === false && (
                           <div className="urdu text-[11px] text-amber-900 font-bold">
                             پرنٹر میں 215.9×139.7mm کا فارم نہیں — نیچے دی گئی ہدایات سے بنائیں (ورنہ ڈرائیور صفحہ گھما/چھوٹا کر سکتا ہے)۔
@@ -1054,10 +1103,18 @@ export default function DefaultsForm({ open, onClose }) {
                         {preflight.canonFound && preflight.formPresent == null && preflight.canonSet && (
                           <div className="urdu text-[11px]">کاغذ کے ناپ کی جانچ نہیں ہو سکی — پروف شیٹ سے تصدیق کریں۔</div>
                         )}
-                        <button type="button" onClick={runPreflight}
-                          className="urdu text-[11px] font-bold text-gray-700 bg-white/70 border border-current/30 rounded px-2 py-0.5 self-start mt-1">
-                          دوبارہ جانچیں
-                        </button>
+                        <div className="flex items-center gap-2 mt-1">
+                          <button type="button" onClick={runPreflight}
+                            className="urdu text-[11px] font-bold text-gray-700 bg-white/70 border border-current/30 rounded px-2 py-0.5 self-start">
+                            دوبارہ جانچیں
+                          </button>
+                          {/* Full diagnostics report → clipboard for WhatsApp. */}
+                          <button type="button" onClick={copyDiagnostics}
+                            className="urdu text-[11px] font-bold text-white bg-slate-700 rounded px-2 py-0.5 self-start hover:bg-slate-800">
+                            پرنٹ تشخیص (کاپی)
+                          </button>
+                          {copyMsg && <span className="urdu text-[10px] text-slate-700">{copyMsg}</span>}
+                        </div>
                       </div>
                     )
                   })()}
@@ -1372,6 +1429,98 @@ export default function DefaultsForm({ open, onClose }) {
                 {reportMsg && <span className="urdu text-[12px] text-emerald-600 break-all">{reportMsg}</span>}
               </div>
             </div>
+            </div>
+          )}
+
+          {section === 'theme' && (
+            <div className="flex flex-col gap-4">
+              <div className="urdu text-[11px] text-gray-500 leading-relaxed">
+                مین اسکرین کے سرمئی رنگ یہاں سے بدلیں۔ رنگ منتخب کرتے ہی اسکرین پر
+                فوراً نظر آئے گا (ری اسٹارٹ کی ضرورت نہیں)۔ چھپنے والی پرچی پر اِن کا
+                کوئی اثر نہیں پڑتا۔ کچھ نہ بدلیں تو سب کچھ جوں کا توں رہے گا۔
+              </div>
+
+              {/* ── Ready-made themes: one click sets all five tones ─────────── */}
+              {(() => {
+                const activeId = activePresetId(form)
+                return (
+                  <div className="flex flex-col gap-2">
+                    <div className="urdu font-bold text-[13px] text-gray-700">تیار تھیم — ایک کلک میں</div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {THEME_PRESETS.map((p) => {
+                        const swatches = presetSwatches(p)
+                        const active = activeId === p.id
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => applyPreset(p)}
+                            className={`flex flex-col gap-1.5 rounded-lg border p-2 text-right transition-all ${
+                              active
+                                ? 'border-slate-500 ring-2 ring-slate-400 bg-slate-50'
+                                : 'border-gray-300 bg-white hover:border-slate-400 hover:shadow-sm'
+                            }`}
+                          >
+                            {/* multi-shade preview — the five themeable tones */}
+                            <span className="flex h-7 w-full overflow-hidden rounded-md border border-gray-300">
+                              {swatches.map((c, i) => (
+                                <span key={i} className="flex-1" style={{ backgroundColor: c }} />
+                              ))}
+                            </span>
+                            <span className="flex items-center justify-between">
+                              <span className="urdu text-[12px] font-bold text-gray-700">{p.label}</span>
+                              {active && <span className="urdu text-[10px] font-bold text-slate-600">منتخب ✓</span>}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              <div className="urdu font-bold text-[13px] text-gray-700 mt-1">اپنی مرضی کے رنگ (باریک ایڈجسٹمنٹ)</div>
+              <div className="flex flex-col gap-3">
+                {THEME_FIELDS.map((f) => {
+                  const val = form[f.key] || ''             // '' = using the hex default
+                  const shown = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(val) ? val : f.fallback
+                  const isDefault = !val
+                  return (
+                    <div key={f.key} className="flex items-center gap-3">
+                      {/* swatch = native colour picker */}
+                      <input
+                        type="color"
+                        value={shown}
+                        onChange={(e) => setThemeColor(f.key, e.target.value)}
+                        className="w-10 h-8 p-0 border border-gray-300 rounded cursor-pointer bg-white"
+                        title={f.label}
+                      />
+                      <span className="urdu text-[13px] text-gray-700 flex-1">{f.label}</span>
+                      <span dir="ltr" className="text-[11px] font-mono text-gray-500 w-20 text-center">
+                        {shown}
+                      </span>
+                      {/* per-colour reset to its own hex default */}
+                      <button
+                        type="button"
+                        disabled={isDefault}
+                        onClick={() => setThemeColor(f.key, '')}
+                        className="urdu text-[11px] font-bold text-gray-600 bg-gray-100 rounded px-2 py-1 hover:bg-gray-200 disabled:opacity-40"
+                      >
+                        ڈیفالٹ
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={resetTheme}
+                  className="urdu text-[13px] font-bold text-gray-700 bg-gray-200 rounded-md px-4 py-2 hover:bg-gray-300"
+                >
+                  ڈیفالٹ رنگوں پر واپس
+                </button>
+              </div>
             </div>
           )}
 

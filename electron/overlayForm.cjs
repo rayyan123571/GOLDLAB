@@ -425,7 +425,11 @@ async function renderOverlayPdf(webContents, c) {
 // default paper is NOT the parchi size. noscale centres our short sheet on that
 // larger default and every value shifts off the slip — same wasted-slip outcome
 // as a missing engine, so a real slip (allowFallback:false) refuses on it too.
-function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, allowFallback = false, paperMismatch = false }) {
+//
+// orientationLandscape: TRUE (from the cached preflight) when the printer's
+// default Orientation is Landscape. Windows then rotates our content 90° — the
+// "ghooma hua" print — so a real slip refuses on it too, with its own reason.
+function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, allowFallback = false, paperMismatch = false, orientationLandscape = false }) {
   const c = normalizeCfg(cfg)
   const pageHtml = html || (data ? buildOverlayHtml(data, cfg) : null) // print = values only (no bg)
   if (!pageHtml) return Promise.resolve({ ok: false, reason: 'no-data' })
@@ -464,9 +468,15 @@ function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, 
         geom.device = dev.name
         if (dev.unverified) note('overlay-device-unverified', { device: dev.name, note: 'printer list unreadable — proceeding with the configured name' })
 
+        // Wrong default ORIENTATION → refuse the REAL slip first (it is the 90°
+        // rotation cause). Checked before anything is rendered or spooled, so no
+        // pre-printed form is fed into a print that would come out sideways.
+        if (!allowFallback && orientationLandscape) {
+          note('overlay-print-FAILED', { ...geom, reason: 'orientation-landscape', note: 'printer default orientation is Landscape; would rotate the slip 90°' })
+          return { ok: false, engine: c.engine, reason: 'orientation-landscape' }
+        }
         // Wrong default paper → refuse the REAL slip before rendering anything, so
         // no pre-printed form is fed into a print that would land shifted off it.
-        // Checked here (not deep in stage 2) so nothing is rendered or spooled.
         if (!allowFallback && paperMismatch) {
           note('overlay-print-FAILED', { ...geom, reason: 'default-paper-mismatch', note: 'printer default paper is not the parchi size; refusing to risk a slip' })
           return { ok: false, engine: c.engine, reason: 'default-paper-mismatch' }
@@ -504,7 +514,14 @@ function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, 
           return { ok: false, engine: 'pdf', reason: 'pdf-engine-unavailable', pageCount }
         }
         if (pdfPrint.available()) {
-          const spool = await pdfPrint.printPdfBuffer({ buf: pdf, deviceName: c.deviceName, copies: n, tag })
+          // Send the orientation EXPLICITLY so we never inherit the driver's default
+          // (the Landscape default was the 90° bug). Our page + form are both
+          // 215.9×139.7 (wide), which is PORTRAIT in Windows terms — verified by an
+          // actual spool test (see scripts note): the 'landscape' token rotates the
+          // output 90°, 'portrait' prints it straight. c.landscape (settings) picks
+          // the token; it defaults false → 'portrait'.
+          const orientation = c.landscape ? 'landscape' : 'portrait'
+          const spool = await pdfPrint.printPdfBuffer({ buf: pdf, deviceName: c.deviceName, copies: n, tag, orientation })
           if (spool.ok) {
             note('overlay-print-OK', { ...geom, via: 'pdf-spooler', exe: path.basename(spool.exe || ''), from: spool.source, pageCount })
             return { ok: true, engine: 'pdf', pageCount, printer: c.deviceName }
@@ -585,6 +602,27 @@ function overlayImageToClipboard({ data, cfg, toClipboard = true }) {
   })()
 }
 
+// Render the EXACT-size overlay PDF for the sample slip and return the bytes —
+// for the «پرنٹ تشخیص» report, which saves this exact PDF to disk and prints the
+// command that would spool it. Same stage-1 render as a real print, so what is
+// saved is what would be sent. Never throws to the caller's flow — returns null.
+async function renderSamplePdf(cfg) {
+  const c = normalizeCfg(cfg)
+  const html = buildOverlayHtml(buildSampleData(), cfg)
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goldlab-diag-'))
+  const htmlFile = path.join(tmpDir, 'diag.html')
+  const w = new BrowserWindow({ show: false, width: 1000, height: 700, frame: false, webPreferences: { sandbox: false, backgroundThrottling: false } })
+  try {
+    fs.writeFileSync(htmlFile, html, 'utf8')
+    await w.loadFile(htmlFile)
+    try { await w.webContents.executeJavaScript('Promise.resolve(window.__ready)', true) } catch {}
+    return await renderOverlayPdf(w.webContents, c)
+  } catch { return null } finally {
+    try { w.destroy() } catch {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+  }
+}
+
 // Which engine a print with this cfg would ACTUALLY use, given the spooler's
 // presence. 'pdf' only when engine is pdf AND the binary exists; otherwise
 // 'driver'. Used to stamp the proof footer and to build the Defaults badge.
@@ -596,5 +634,5 @@ function resolveEngine(cfg) {
 
 module.exports = {
   buildOverlayHtml, buildProofHtml, printOverlay, overlayImageToClipboard, validateDevice,
-  resolveEngine, sampleFieldValues, buildSampleData, normalizeCfg, DEFAULT_COORDS, FIELD_LABELS, PAPERS
+  resolveEngine, renderSamplePdf, sampleFieldValues, buildSampleData, normalizeCfg, DEFAULT_COORDS, FIELD_LABELS, PAPERS
 }

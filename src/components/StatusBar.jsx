@@ -3,6 +3,7 @@ import { useApp } from '../state/store.jsx'
 import useLiveGold from '../logic/useLiveGold.js'
 import DefaultsForm from './DefaultsForm.jsx'
 import IndrajForm from './IndrajForm.jsx'
+import SodaBell from './SodaBell.jsx'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const BACKUP_STALE_DAYS = 7 // older than this → the "! بیک اپ کریں" nudge appears
@@ -183,6 +184,12 @@ export default function StatusBar() {
       </div>
 
       <div className="flex-1" />
+
+      {/* بقایا سودا notifications — FIRST item of the left cluster (right AFTER the
+          flex-1 spacer). In this dir="rtl" bar that lands it at the RIGHT edge of
+          the رسید نکالیں cluster, in the open space beside رسید نمبر — not cramped
+          between the buttons. Opens ONLY on click; the red badge hides at zero. */}
+      <SodaBell />
 
       {/* receipt search on the LEFT (replaces the old 1..U buttons) */}
       <div className="flex items-center gap-1.5">

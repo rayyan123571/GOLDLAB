@@ -405,9 +405,7 @@ async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal =
     await rawSpool(printer.name, payload)
     return { ok: true, printer: printer.name, widthDots: rendered.width, heightDots: rendered.height }
   } catch (e) {
-    // mayHavePrinted travels up to the renderer, which uses it to decide whether a
-    // driver retry is safe (see rawSpool) — without it the shop gets two receipts.
-    return { ok: false, printer: printer.name, reason: 'spool: ' + (e.message || e), mayHavePrinted: !!e.mayHavePrinted }
+    return { ok: false, printer: printer.name, reason: 'spool: ' + (e.message || e) }
   }
 }
 

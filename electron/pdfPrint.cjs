@@ -92,7 +92,12 @@ function available() { return !!resolveExe() }
 // this (the actually-used) engine. Copies are handled by the spooler so the PDF
 // is rendered once. `mono` defaults true (this path only ever feeds the Canon
 // LBP6030, a mono laser); pass false to leave colour to the printer's own setting.
-function argsFor(exe, { file, deviceName, copies, mono = true }) {
+// orientation ('portrait' | 'landscape'): sent EXPLICITLY so the driver's default
+// orientation is never inherited. A Landscape driver default rotated the overlay
+// 90° (the "ghooma hua" print); noscale only stops scaling, not rotation. Both
+// tokens are documented SumatraPDF switches (confirmed present in the binary).
+// Omitted → the old behaviour (driver default).
+function argsFor(exe, { file, deviceName, copies, mono = true, orientation }) {
   const n = Math.max(1, Math.min(5, parseInt(copies, 10) || 1))
   if (/pdftoprinter/i.test(path.basename(exe))) {
     // PDFtoPrinter.exe <file> "<printer>" [copies]  (no per-setting switches)
@@ -100,12 +105,22 @@ function argsFor(exe, { file, deviceName, copies, mono = true }) {
   }
   const settings = ['noscale', `copies=${n}`]
   if (mono) settings.push('monochrome')
+  if (orientation === 'portrait' || orientation === 'landscape') settings.push(orientation)
   return [
     '-print-to', deviceName,
     '-print-settings', settings.join(','),
     '-silent', '-exit-when-done',
     file
   ]
+}
+
+// Preview the exact command line WITHOUT spooling — for the «پرنٹ تشخیص» report,
+// so the shop can see (and WhatsApp) precisely what will be sent. Returns
+// { exe, args } or null when no spooler resolves.
+function commandPreview({ file = '<sheet>.pdf', deviceName = '', copies = 1, mono = true, orientation } = {}) {
+  const found = resolveExe()
+  if (!found) return null
+  return { exe: found.exe, args: argsFor(found.exe, { file, deviceName, copies, mono, orientation }) }
 }
 
 // Write a PDF buffer to a temp file the spooler can read. Returns { file, cleanup }.
@@ -119,7 +134,7 @@ function writeTempPdf(buf, tag = 'overlay') {
 // Spool `buf` to `deviceName`. Resolves { ok, engine:'pdf', exe, source } or
 // { ok:false, reason } — the caller decides whether to fall back. Deliberately
 // never throws: a failure here must be a normal, logged, recoverable outcome.
-function printPdfBuffer({ buf, deviceName, copies = 1, tag = 'overlay', mono = true, timeoutMs = 60000 }) {
+function printPdfBuffer({ buf, deviceName, copies = 1, tag = 'overlay', mono = true, orientation, timeoutMs = 60000 }) {
   return new Promise((resolve) => {
     const found = resolveExe()
     if (!found) return resolve({ ok: false, reason: 'pdf-spooler-missing' })
@@ -127,7 +142,7 @@ function printPdfBuffer({ buf, deviceName, copies = 1, tag = 'overlay', mono = t
     let tmp = null
     try {
       tmp = writeTempPdf(buf, tag)
-      const args = argsFor(found.exe, { file: tmp.file, deviceName, copies, mono })
+      const args = argsFor(found.exe, { file: tmp.file, deviceName, copies, mono, orientation })
       const p = spawn(found.exe, args, { windowsHide: true })
       let err = ''
       let settled = false
@@ -181,4 +196,4 @@ function countPages(buf) {
   } catch { return null }
 }
 
-module.exports = { resolveExe, available, printPdfBuffer, countPages, writeTempPdf, pinFailures, EXE_NAMES }
+module.exports = { resolveExe, available, printPdfBuffer, countPages, writeTempPdf, pinFailures, commandPreview, EXE_NAMES }

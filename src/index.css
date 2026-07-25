@@ -4,6 +4,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Themeable main-screen greys (Defaults → تھیم / رنگ) ─────────────────────
+   Each rule re-points ONE Tailwind utility at a #root CSS variable, with the
+   class's EXACT current hex as the fallback. Placed AFTER @tailwind utilities so
+   it wins on equal specificity (source order). See src/logic/theme.js:
+     • Variables are set ONLY on #root. The print clone is built at <body> level,
+       outside #root, so it never sees them → var() falls back to the hex →
+       printed slips stay pixel-identical.
+     • No variable set (default) → hex fallback → an untouched install does not
+       change by one pixel.
+   NOTHING here renames a class; component markup is untouched. */
+.bg-panel      { background-color: var(--ui-panel, #d2d2d2); }
+.bg-header     { background-color: var(--ui-header, #bfbfbf); }
+.bg-headerDark { background-color: var(--ui-header-dark, #a4a4a4); }
+.border-line   { border-color: var(--ui-line, #9a9a9a); }
+.bg-gray-100   { background-color: var(--ui-surface, #f3f4f6); }
+
 :root {
   --line: #9a9a9a;
 }
