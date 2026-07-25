@@ -403,10 +403,12 @@ export function LabReceipt({ row, lab, ctx, embed }) {
     title: 'لیب رسید',
     showFee: true,
     selectiveBold: true,
-    // OUTSIDE `tables` on purpose. The thermal slip renders `tables` only, so this
-    // extra key leaves the ESC/POS receipt byte-for-byte unchanged; only the Canon
-    // overlay reads it (overlayForm.cjs prints it into the «پوائنٹ» cell of the
-    // pre-printed form — see the note on the `point` field key there).
+    // Carried alongside `tables` because the Canon overlay reads it by name
+    // (overlayForm.cjs prints it into the «پوائنٹ» cell of the pre-printed form —
+    // see the note on the `point` field key there), while the thermal slip renders
+    // it as its own «بقایا سونا» row below. ONE value, both papers.
+    // (It used to live here specifically to keep the thermal slip untouched; that
+    // is no longer true — the thermal لیب رسید now prints it too.)
     sonaDena,
     tables: [
       [[L('رسید نمبر'), V(receiptNo), L('ریٹ فی گرام'), V(ratePerGram ? fmtMoney(ratePerGram) : '-', B)]],
@@ -421,6 +423,11 @@ export function LabReceipt({ row, lab, ctx, embed }) {
         [L('کیرٹ'), V(fmtNum(lab?.keerat, 2)), L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola), B)],
         [L('ٹوٹل رقم'), V(fmtMoney(lab?.totalRaqam)), L('چارجز'), V(fmtMoney(lab?.charges))],
         [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
+        // «بقایا سونا» — the SAME sonaDena the Canon overlay prints (خالص سونا −
+        // اجرت کا سونا). The second label/value pair is left blank, like the weight
+        // table's empty corner cell: an ordinary 4-cell row in the shared template,
+        // no new styling and no second calculation.
+        [L('بقایا سونا'), V(sonaDena), L(''), L('')],
         [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true }), L('رتی'), V(fmtNum(lab?.milawatTotalRatti, 2), { u: true })],
         [L('تاریخ'), V(showDate(rates, now)), L('وقت'), V(fmtTime(now))]
       ]

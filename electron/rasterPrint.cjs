@@ -617,6 +617,9 @@ const WORST_CASE_DATA = {
       [L('کیرٹ'), V('21.16'), L('ریٹ فی تولہ'), V('434,500')],
       [L('ٹوٹل رقم'), V('9,151,688'), L('چارجز'), V('433,000')],
       [L('بقایا رقم'), V('9,151,126', { box: true }), L('پوائنٹ'), V('0.8818')],
+      // «بقایا سونا» — mirrors the real لیب رسید row (Receipts.jsx), so the pixel
+      // regression covers it. Worst-case value + the blank second pair it ships with.
+      [L('بقایا سونا'), V('9999.999'), L(''), L('')],
       [L('نام'), V('محمد عبدالرحمٰن چوہدری اینڈ سنز', { wrap: true }), L('رتی'), V('11.35 رتی', { u: true })],
       [L('تاریخ'), V('05-07-26'), L('وقت'), V('12:58 PM')]
     ]
@@ -636,4 +639,6 @@ async function testPrint({ kind, win, printScale, deviceName = '' }) {
   return printHtml({ html, copies: 1, win, tag: kind || 'calibration', requireThermal: false, printScale, deviceName })
 }
 
-module.exports = { printHtml, testPrint, DOTS, clampScale, buildReceiptHtml }
+// WORST_CASE_DATA is exported for scripts/thermal-row-proof.cjs, which renders it
+// BOTH as-is and with a row filtered out to prove a template change in isolation.
+module.exports = { printHtml, testPrint, DOTS, clampScale, buildReceiptHtml, WORST_CASE_DATA }

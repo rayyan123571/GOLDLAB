@@ -71,6 +71,7 @@ function buildLabSlipData(logic, { row, lab, rates, customer, receiptNo, now, so
         [L('کیرٹ'), V(fmtNum(lab?.keerat, 2)), L('ریٹ فی تولہ'), V(fmtMoney(lab?.ratePerTola), B)],
         [L('ٹوٹل رقم'), V(fmtMoney(lab?.totalRaqam)), L('چارجز'), V(fmtMoney(lab?.charges))],
         [L('بقایا رقم', B), V(fmtMoney(lab?.baqi), { box: true, b: true }), L('پوائنٹ'), V(fmtNum(lab?.point, 4))],
+        [L('بقایا سونا'), V(sonaDena), L(''), L('')],
         [L('نام'), V(customer.id ? (customer.name || '-') : '-', { wrap: true }), L('رتی'), V(fmtNum(lab?.milawatTotalRatti, 2), { u: true })],
         [L('تاریخ'), V(now.date), L('وقت'), V(now.time)]
       ]

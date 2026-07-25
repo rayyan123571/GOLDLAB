@@ -14,6 +14,7 @@
     "overlay:dryrun": "node scripts/run-electron.cjs scripts/overlay-dryrun.cjs",
     "overlay:fields": "node scripts/run-electron.cjs scripts/overlay-vs-receipt.cjs",
     "thermal:regression": "node scripts/run-electron.cjs scripts/thermal-regression.cjs",
+    "thermal:rowproof": "node scripts/run-electron.cjs scripts/thermal-row-proof.cjs",
     "obfuscate": "node scripts/obfuscate-electron.cjs",
     "bytecode": "node scripts/bytecode-electron.cjs",
     "dist:win": "npm run build && npm run obfuscate && npm run bytecode && electron-builder --win",
