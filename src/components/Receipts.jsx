@@ -196,7 +196,9 @@ function SavedChk({ on }) {
 
 // onOverlay (optional) → a second print button that forces the OVERLAY path
 // (values-only onto the pre-printed slip, to the Canon). Only the lab رسید passes
-// it, so it appears there only; the plain 🖨 keeps the print_mode behaviour.
+// it, so it appears there only — and there the plain 🖨 forces THERMAL, so the
+// two buttons are deterministic regardless of the settings print_mode. On the
+// other receipts 🖨 passes no forceMode (they always route thermal anyway).
 function ActionBar({ children, onWa, onPrint, onOverlay }) {
   return (
     <div className="no-print flex flex-wrap items-center gap-1 mt-1 px-1 pb-1">
@@ -514,10 +516,14 @@ export function LabReceipt({ row, lab, ctx, embed }) {
           <span className="num">{fmtNum(lab?.milawatTotalRatti, 2)}</span>
         </div>
       </div>
+      {/* DETERMINISTIC print buttons (the shop's rule): 🖨 is ALWAYS the thermal
+          slip and اوورلے is ALWAYS the Canon overlay — neither follows the
+          settings print_mode. Without the forced 'thermal', a shop whose
+          print_mode is overlay_form got the Canon from BOTH buttons. */}
       {!embed && (
         <ActionBar
           onWa={(e) => waSlip(ctx, e, customer.mobile, `لیب رسید ${receiptNo}\nخالص وزن: ${fmtNum(lab?.khalisWazan)}\nٹوٹل رقم: ${fmtMoney(lab?.totalRaqam)}`, slipData)}
-          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData)}
+          onPrint={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData, 'thermal')}
           onOverlay={(e) => ctx.printSlips(e.currentTarget.closest('.receipt-panel'), slipData, 'overlay_form')}
         >
           <SavedChk on={ctx.savedFlags?.lab} />
