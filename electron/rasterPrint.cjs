@@ -301,6 +301,57 @@ function rawSpool(printerName, bytes) {
   })
 }
 
+// ── Post-spool queue probe — the honest "did it really go?" check ───────────
+// WritePrinter succeeding only means Windows ACCEPTED the job. On customers'
+// machines the classic silent failure is a queue set to "Use Printer Offline"
+// (or the device off / unplugged / out of paper / jammed): every job is accepted,
+// sits in the queue forever, and the operator only ever saw our success toast.
+// This asks WMI about the target queue right after spooling, so the caller can
+// warn truthfully instead. Win32_Printer works from Windows 7's PowerShell 2.0
+// up. Best-effort by design: any failure/timeout = NO warning — the bytes are
+// already spooled, and a probe hiccup must never turn a good print into an error.
+const QUEUE_PS =
+  'param([string]$PrinterName)\n' +
+  "$ErrorActionPreference = 'SilentlyContinue'\n" +
+  '$p = Get-WmiObject Win32_Printer | Where-Object { $_.Name -eq $PrinterName }\n' +
+  "if ($p) { Write-Output ('QSTAT offline=' + $p.WorkOffline + ' status=' + $p.PrinterStatus + ' err=' + $p.DetectedErrorState) }\n" +
+  "else { Write-Output 'QSTAT none' }\n"
+
+function probeQueueStatus(printerName, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (v) => { if (!done) { done = true; resolve(v) } }
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goldlab-qstat-'))
+      const ps1 = path.join(dir, 'qstat.ps1')
+      fs.writeFileSync(ps1, QUEUE_PS)
+      const p = spawn('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-PrinterName', printerName],
+        { windowsHide: true })
+      let out = ''
+      const cleanup = () => { try { fs.rmSync(dir, { recursive: true, force: true }) } catch {} }
+      const timer = setTimeout(() => { try { p.kill() } catch {} cleanup(); finish({ checked: false }) }, timeoutMs)
+      p.stdout.on('data', (d) => { out += d })
+      p.on('error', () => { clearTimeout(timer); cleanup(); finish({ checked: false }) })
+      p.on('close', () => {
+        clearTimeout(timer); cleanup()
+        const m = /QSTAT offline=(\w+) status=(\d+) err=(\d+)/.exec(out)
+        if (!m) { finish({ checked: false }); return }
+        const offline = m[1].toLowerCase() === 'true'
+        const status = Number(m[2]) // 7 = Offline
+        const errState = Number(m[3]) // 4 no paper · 8 jammed · 9 offline · 7 door open
+        // Only states that mean "this job will NOT come out right now".
+        let reason = ''
+        if (offline || status === 7 || errState === 9) reason = 'offline'
+        else if (errState === 4) reason = 'no-paper'
+        else if (errState === 8) reason = 'jammed'
+        else if (errState === 7) reason = 'door-open'
+        finish({ checked: true, offline: !!reason, reason, status, errState })
+      })
+    } catch { finish({ checked: false }) }
+  })
+}
+
 // Default system printer. RAW ESC/POS on a non-thermal printer (office laser as
 // default) would print pages of garbage — only auto-use the raw path when the
 // default printer LOOKS like a thermal/receipt printer. Test prints (explicit
@@ -403,7 +454,17 @@ async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal =
   }
   try {
     await rawSpool(printer.name, payload)
-    return { ok: true, printer: printer.name, widthDots: rendered.width, heightDots: rendered.height }
+    // Spooled ≠ printed: ask the queue whether it can actually put this on paper
+    // right now (Use-Printer-Offline / powered off / no paper / jammed all accept
+    // jobs silently). `warn` rides back so the renderer can tell the operator the
+    // truth instead of a success toast; the job itself stays queued and will
+    // print by itself once the printer is fixed. Probe failure = no warning.
+    const q = await probeQueueStatus(printer.name)
+    return {
+      ok: true, printer: printer.name, widthDots: rendered.width, heightDots: rendered.height,
+      ...(q.checked && q.offline ? { warn: 'printer-not-ready', warnReason: q.reason } : {}),
+      queue: q.checked ? { status: q.status, errState: q.errState } : 'unchecked'
+    }
   } catch (e) {
     return { ok: false, printer: printer.name, reason: 'spool: ' + (e.message || e) }
   }
@@ -640,4 +701,4 @@ async function testPrint({ kind, win, printScale, deviceName = '' }) {
 
 // WORST_CASE_DATA is exported for scripts/thermal-row-proof.cjs, which renders it
 // BOTH as-is and with a row filtered out to prove a template change in isolation.
-module.exports = { printHtml, testPrint, DOTS, clampScale, buildReceiptHtml, WORST_CASE_DATA }
+module.exports = { printHtml, testPrint, DOTS, clampScale, buildReceiptHtml, WORST_CASE_DATA, probeQueueStatus }

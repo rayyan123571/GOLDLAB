@@ -384,6 +384,11 @@ ipcMain.handle('raster-print-slip', async (_evt, { html, data, copies, receipt, 
     printLog.log('thermal-result', {
       ok: !!(res && res.ok), printer: (res && res.printer) || route.deviceName,
       reason: res && res.reason, mayHavePrinted: res && res.mayHavePrinted,
+      // Post-spool queue probe: warn=printer-not-ready means Windows took the job
+      // but the queue is offline/out-of-paper/jammed — the classic "message aya,
+      // print nahi nikla" case on customer machines. Logged for remote diagnosis.
+      warn: res && res.warn, warnReason: res && res.warnReason,
+      queue: res && res.queue ? JSON.stringify(res.queue) : undefined,
       next: res && res.ok === false
         ? (res.mayHavePrinted ? 'NO driver retry (would double-print)' : 'renderer falls back to Windows driver')
         : ''

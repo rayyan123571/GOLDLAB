@@ -892,7 +892,22 @@ export function AppProvider({ children }) {
       if (payload) {
         try {
           const res = await window.api.rasterPrintSlip(payload)
-          if (res && res.ok) { showToast(PRINT_SENT_MSG, true); return }
+          if (res && res.ok) {
+            // Spooled, but the queue said it can't put it on paper RIGHT NOW
+            // (printer offline / powered off / no paper / jammed). Tell the truth
+            // instead of the success toast — the job stays queued and prints by
+            // itself once the printer is fixed, so no re-click is needed.
+            if (res.warn === 'printer-not-ready') {
+              const why = res.warnReason === 'no-paper' ? 'کاغذ ختم ہے'
+                : res.warnReason === 'jammed' ? 'کاغذ پھنسا ہوا ہے'
+                : res.warnReason === 'door-open' ? 'ڈھکن کھلا ہے'
+                : 'پرنٹر آف لائن یا بند ہے'
+              showToast(`پرنٹ ونڈوز کو چلا گیا مگر ${why} — پرنٹر ٹھیک کریں، رسید خود چھپ جائے گی (دوبارہ پرنٹ نہ دبائیں)`, false)
+              return
+            }
+            showToast(PRINT_SENT_MSG, true)
+            return
+          }
           // The thermal path failed BUT the bytes may already be in the spooler (a
           // slow printer that tripped the watchdog). Retrying on the driver here is
           // what printed a SECOND receipt a few seconds after a good one — so stop.
