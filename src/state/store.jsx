@@ -146,8 +146,10 @@ function showPrintError(reason) {
 const OVERLAY_BLOCKING = {
   'pdf-engine-unavailable':
     'PDF پرنٹ انجن دستیاب نہیں (سپولر غائب ہے)۔\nپرچی ضائع ہونے سے بچانے کے لیے پرنٹ روک دیا گیا ہے۔\nایپ دوبارہ انسٹال کریں یا سپورٹ سے رابطہ کریں — پرچی نہ ڈالیں۔',
-  'default-paper-mismatch':
-    'پرنٹر کا ڈیفالٹ کاغذ پرچی کے ناپ کا نہیں ہے۔\nپرچی ضائع ہونے سے بچانے کے لیے پرنٹ روک دیا گیا ہے۔\nPrinting Preferences میں GOLDLAB PARCHI کو ڈیفالٹ کاغذ بنائیں، پھر ڈیفالٹ سیٹنگز میں «دوبارہ جانچیں» دبا کر دوبارہ کوشش کریں۔',
+  // NOTE: 'default-paper-mismatch' used to live here. It no longer blocks — the
+  // shop's Canon prints the slip correctly regardless of its default paper (the
+  // PDF engine spools at the exact sheet size), so the gate only added a dialog
+  // before every print. overlayForm.cjs now just records it in the print log.
   'orientation-landscape':
     'پرنٹر کی Orientation ‘Landscape’ پر ہے، جس سے پرچی 90 ڈگری گھوم کر چھپتی ہے۔\nPrinting Preferences میں Orientation کو ‘Portrait’ کریں (کاغذ کا ناپ GOLDLAB PARCHI 21.59 × 13.97 ہی رہنے دیں)، پھر «دوبارہ جانچیں» دبائیں۔',
   'canon-printer-missing':
@@ -155,13 +157,12 @@ const OVERLAY_BLOCKING = {
   'no-printers-installed':
     'ونڈوز میں کوئی پرنٹر نصب نہیں ہے۔'
 }
-// These blocks are ADVISORY safety gates (paper size / orientation) — the print
-// would likely come out wrong and waste a pre-printed slip. But a driver can
-// mis-report, and the gate must never stop the shop cold, so for these the modal
-// offers «پھر بھی چھاپیں» (print anyway) which prints THIS one slip past the gate
-// without changing any setting. The others (engine missing, printer gone) have no
-// such override — retrying would only fail.
-const OVERRIDABLE_BLOCK = new Set(['orientation-landscape', 'default-paper-mismatch'])
+// Orientation is an ADVISORY safety gate — a Landscape default really does turn
+// the slip 90° and waste it. But a driver can mis-report, and the gate must never
+// stop the shop cold, so its modal offers «پھر بھی چھاپیں» (print anyway), which
+// prints THIS one slip past the gate without changing any setting. The others
+// (engine missing, printer gone) have no such override — retrying would only fail.
+const OVERRIDABLE_BLOCK = new Set(['orientation-landscape'])
 
 // reason → shows the modal. onOverride (optional): when the reason is overridable,
 // a «پھر بھی چھاپیں» button calls it. Returns true if a modal was shown.

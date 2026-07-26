@@ -509,11 +509,16 @@ function printOverlay({ data, cfg, win, copies = 1, html, tag = 'overlay', log, 
           note('overlay-print-FAILED', { ...geom, reason: 'orientation-landscape', note: 'printer default orientation is Landscape; would rotate the slip 90°' })
           return { ok: false, engine: c.engine, reason: 'orientation-landscape' }
         }
-        // Wrong default paper → refuse the REAL slip before rendering anything, so
-        // no pre-printed form is fed into a print that would land shifted off it.
+        // Default paper is not the parchi size — LOGGED, NOT BLOCKED.
+        // This used to stop the print, on the theory that noscale would centre our
+        // short sheet on the printer's larger default and shift every value off the
+        // slip. On the shop's own Canon that theory is simply wrong: the PDF engine
+        // spools the sheet at its exact MediaBox and the slip comes out correct
+        // every time, so the gate only produced a dialog the operator had to click
+        // «پھر بھی چھاپیں» on before every single print. The condition is still
+        // recorded here so a genuinely mis-placed print stays diagnosable.
         if (!allowFallback && paperMismatch) {
-          note('overlay-print-FAILED', { ...geom, reason: 'default-paper-mismatch', note: 'printer default paper is not the parchi size; refusing to risk a slip' })
-          return { ok: false, engine: c.engine, reason: 'default-paper-mismatch' }
+          note('overlay-paper-note', { ...geom, note: 'printer default paper is not the parchi size — printing anyway (advisory only; the PDF engine spools at the exact sheet size)' })
         }
       }
 
