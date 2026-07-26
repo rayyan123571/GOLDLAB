@@ -310,12 +310,22 @@ function rawSpool(printerName, bytes) {
 // warn truthfully instead. Win32_Printer works from Windows 7's PowerShell 2.0
 // up. Best-effort by design: any failure/timeout = NO warning — the bytes are
 // already spooled, and a probe hiccup must never turn a good print into an error.
+// Three extra signals beyond the queue flags, because a powered-off/unplugged
+// USB thermal printer usually STILL reads Idle/Ready (WorkOffline false):
+//   port     — the queue's port (USBxxx / COM / network)
+//   usbprint — how many usbprint-class USB printing devices Windows can see NOW
+//   jobs/jerr— jobs sitting in THIS queue and whether one is in an Error state
 const QUEUE_PS =
   'param([string]$PrinterName)\n' +
   "$ErrorActionPreference = 'SilentlyContinue'\n" +
   '$p = Get-WmiObject Win32_Printer | Where-Object { $_.Name -eq $PrinterName }\n' +
-  "if ($p) { Write-Output ('QSTAT offline=' + $p.WorkOffline + ' status=' + $p.PrinterStatus + ' err=' + $p.DetectedErrorState) }\n" +
-  "else { Write-Output 'QSTAT none' }\n"
+  "$u = @(Get-WmiObject Win32_PnPEntity | Where-Object { $_.PNPDeviceID -like 'USBPRINT*' }).Count\n" +
+  "$j = @(Get-WmiObject Win32_PrintJob | Where-Object { $_.Name -like ($PrinterName + ',*') })\n" +
+  "$je = 0; foreach ($x in $j) { if (($x.JobStatus -like '*error*') -or ($x.Status -like '*error*')) { $je = 1 } }\n" +
+  'if ($p) { Write-Output (' +
+  "'QSTAT offline=' + $p.WorkOffline + ' status=' + $p.PrinterStatus + ' err=' + $p.DetectedErrorState + " +
+  "' port=' + $p.PortName + ' usbprint=' + $u + ' jobs=' + $j.Count + ' jerr=' + $je) }\n" +
+  "else { Write-Output ('QSTAT none usbprint=' + $u) }\n"
 
 function probeQueueStatus(printerName, timeoutMs = 5000) {
   return new Promise((resolve) => {
@@ -335,18 +345,27 @@ function probeQueueStatus(printerName, timeoutMs = 5000) {
       p.on('error', () => { clearTimeout(timer); cleanup(); finish({ checked: false }) })
       p.on('close', () => {
         clearTimeout(timer); cleanup()
-        const m = /QSTAT offline=(\w+) status=(\d+) err=(\d+)/.exec(out)
+        const m = /QSTAT offline=(\w+) status=(\d+) err=(\d+) port=(\S*) usbprint=(\d+) jobs=(\d+) jerr=(\d+)/.exec(out)
         if (!m) { finish({ checked: false }); return }
         const offline = m[1].toLowerCase() === 'true'
         const status = Number(m[2]) // 7 = Offline
-        const errState = Number(m[3]) // 4 no paper · 8 jammed · 9 offline · 7 door open
-        // Only states that mean "this job will NOT come out right now".
+        const errState = Number(m[3]) // 4 no paper · 7 door open · 8 jammed · 9 offline
+        const port = m[4]
+        const usbprint = Number(m[5])
+        const jobs = Number(m[6])
+        const jerr = Number(m[7]) === 1
+        // Ordered from authoritative to inferred. The USB rule needs THREE signals
+        // together (USB port + zero usbprint devices + a job actually sitting in
+        // the queue) so a vendor driver that skips the usbprint class can never
+        // produce a false alarm on a healthy printer.
         let reason = ''
         if (offline || status === 7 || errState === 9) reason = 'offline'
         else if (errState === 4) reason = 'no-paper'
         else if (errState === 8) reason = 'jammed'
         else if (errState === 7) reason = 'door-open'
-        finish({ checked: true, offline: !!reason, reason, status, errState })
+        else if (jerr) reason = 'stuck-error'
+        else if (/^USB/i.test(port) && usbprint === 0 && jobs > 0) reason = 'not-connected'
+        finish({ checked: true, offline: !!reason, reason, status, errState, port, usbprint, jobs })
       })
     } catch { finish({ checked: false }) }
   })
@@ -459,6 +478,9 @@ async function printHtml({ html, copies = 1, win, tag = 'slip', requireThermal =
     // jobs silently). `warn` rides back so the renderer can tell the operator the
     // truth instead of a success toast; the job itself stays queued and will
     // print by itself once the printer is fixed. Probe failure = no warning.
+    // The short settle delay lets a job that CAN print leave the queue first, so
+    // the jobs/jerr signals reflect a genuinely stuck job, not a passing one.
+    await new Promise((r) => setTimeout(r, 1200))
     const q = await probeQueueStatus(printer.name)
     return {
       ok: true, printer: printer.name, widthDots: rendered.width, heightDots: rendered.height,

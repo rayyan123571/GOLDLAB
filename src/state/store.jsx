@@ -901,6 +901,8 @@ export function AppProvider({ children }) {
               const why = res.warnReason === 'no-paper' ? 'کاغذ ختم ہے'
                 : res.warnReason === 'jammed' ? 'کاغذ پھنسا ہوا ہے'
                 : res.warnReason === 'door-open' ? 'ڈھکن کھلا ہے'
+                : res.warnReason === 'not-connected' ? 'پرنٹر کمپیوٹر سے جڑا نظر نہیں آتا — USB کیبل اور پاور دیکھیں'
+                : res.warnReason === 'stuck-error' ? 'جاب قطار میں Error پر اٹکی ہے — پرنٹر کی کیبل/پورٹ دیکھیں'
                 : 'پرنٹر آف لائن یا بند ہے'
               showToast(`پرنٹ ونڈوز کو چلا گیا مگر ${why} — پرنٹر ٹھیک کریں، رسید خود چھپ جائے گی (دوبارہ پرنٹ نہ دبائیں)`, false)
               return
