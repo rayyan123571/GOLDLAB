@@ -468,9 +468,46 @@ input[type='number'] {
     background: transparent !important;
     box-shadow: none !important;
   }
-  body.thermal-print .print-area table { width: 100% !important; border-collapse: collapse !important; }
+  /* THE CLIP. .print-area already parks the content at the 6mm safe edge, but the
+     on-screen preview nests the receipt inside three more wrappers — a p-4 grey
+     backdrop, the 80mm "paper" strip, and a 64mm box carrying its own print:ml-[6mm].
+     Those offsets ADD UP on paper: measured, the 64mm table started at 16.4mm and
+     ran to 80.4mm — 10.4mm past the 70mm safe edge, which is the تاریخ / رقم column
+     falling off the right of the roll. They are preview chrome and nothing else, so
+     print flattens every wrapper that CONTAINS the receipt (:has) — .print-area
+     itself is untouched and keeps the one correct 6mm offset. */
+  body.thermal-print .print-area div:has(.thermal-receipt) {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+  /* table-layout: fixed is the actual clip fix. TableReport is laid out for the
+     screen (auto layout, 12.5px), so on paper the columns kept their natural
+     minimum width, and once those totalled more than 64mm the table simply grew
+     past the strip instead of compressing — نام ran off one edge and تاریخ off
+     the other. Fixed layout divides the 64mm between the columns and NOTHING can
+     push past it. (The ایکشن / یاد دہانی columns are .no-print → display:none, so
+     they claim none of that width.) */
+  body.thermal-print .print-area table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: fixed !important;
+  }
+  /* With the width now capped, a long value must WRAP rather than overflow: a
+     name like "New Mumtaz" and a full 27/07/2026 date break onto a second line
+     instead of being cut off. 9px suits the 64mm strip (the 12.5px is a screen
+     size), and the tighter 2px side padding buys back room for the text. */
   body.thermal-print .print-area th,
-  body.thermal-print .print-area td { border: 1px solid #000 !important; padding: 1px 3px !important; }
+  body.thermal-print .print-area td {
+    border: 1px solid #000 !important;
+    padding: 1px 2px !important;
+    font-size: 9px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+  }
 }
 
 /* ── Main-screen receipt slip printing (printSlips). The clicked receipt panel is
