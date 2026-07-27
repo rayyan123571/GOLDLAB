@@ -9,6 +9,15 @@
 //   Alt+U        → تیزابی دیا row's سونا وزن box  (Down/Up cycles the 4 ادھار rows)
 //   Alt+1/2/3/4/6, or a BARE 1/2/3/4/6 outside any field
 //                → پرچی tick: 1 Standard · 2 Silver · 3 Copper · 4 PureSilver · 6 Local
+//   Ctrl+S       → Save   (the «Save» button's own handler)
+//   Ctrl+N       → New    (the «New» button's own handler — fresh parchi)
+//
+// TWO KINDS OF SHORTCUT. Everything above Ctrl+S moves the CURSOR to a tagged
+// field; Ctrl+S / Ctrl+N RUN AN ACTION instead. That difference decides one rule:
+// the action pair fires even while focus is INSIDE an input, because the
+// shopkeeper presses Ctrl+S right after filling a box. The "only outside a field"
+// rule below belongs to the bare digits alone — it exists because typing 11.6640
+// must not tick a purity row, and an Alt/Ctrl combo types nothing into a field.
 //
 // THE NUMBER-KEY TRAP: the app is full of numeric inputs, so a bare digit is a
 // shortcut ONLY when focus is not in an input/textarea/select/contenteditable —
@@ -29,6 +38,10 @@
 // Menu-accelerator note: main.cjs never calls Menu.setApplicationMenu, so the
 // default Electron menu is in effect and all its accelerators are Ctrl-based
 // (Ctrl+R, Ctrl+Shift+I, …) — Alt+I/R/U, F2 and Alt+digits collide with nothing.
+// The default menu has no Ctrl+N and no Ctrl+S either (checked: nothing in
+// electron/ registers a Menu, an accelerator, or a globalShortcut), so those two
+// only have to beat CHROMIUM's built-ins — "save page" on Ctrl+S, "new window"
+// on Ctrl+N. preventDefault() + stopPropagation() on both is what stops them.
 
 // Field ids — the value of the data-hotkey attribute on the target <input>.
 export const HK = {
@@ -66,9 +79,13 @@ const focusHotkey = (id) => {
   if (typeof el.select === 'function') el.select()
 }
 
-// makeHotkeyHandler({ getScreen, toggleParchi }) → the keydown listener.
-// Injected getters keep this file free of React/store imports.
-export function makeHotkeyHandler({ getScreen, toggleParchi }) {
+// makeHotkeyHandler({ getScreen, toggleParchi, saveParchi, newParchi }) → the
+// keydown listener. Injected getters keep this file free of React/store imports.
+// saveParchi/newParchi are the store's triggers, which run the Save/New BUTTONS'
+// own handlers — so a shortcut can never behave differently from its button, and
+// a button that refuses to act (nothing to save, save already running) refuses
+// for the shortcut too. No extra condition is applied here.
+export function makeHotkeyHandler({ getScreen, toggleParchi, saveParchi, newParchi }) {
   return (e) => {
     // Main screen only, and never while any modal overlay is up.
     if (getScreen() !== 'main') return
@@ -86,6 +103,21 @@ export function makeHotkeyHandler({ getScreen, toggleParchi }) {
       e.preventDefault()
       const i = group.indexOf(id)
       focusHotkey(group[(i + (key === 'arrowdown' ? 1 : group.length - 1)) % group.length])
+      return
+    }
+
+    // ── Ctrl+S / Ctrl+N — the two ACTION keys ────────────────────────────────
+    // Deliberately BEFORE the blanket Ctrl bail-out below, and deliberately
+    // without the `inField` test: these must work mid-typing. Plain Ctrl only —
+    // Ctrl+Shift+S / Ctrl+Alt+N stay untouched. stopPropagation joins
+    // preventDefault so neither Chromium's save-page nor its new-window fires.
+    // e.repeat is dropped: holding the keys down must save/open exactly once.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (key === 's' || key === 'n')) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.repeat) return
+      if (key === 's') saveParchi()
+      else newParchi()
       return
     }
 

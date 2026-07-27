@@ -62,7 +62,7 @@ export default function CustomerEntry() {
   const {
     customer, setCustomer, newCustomer, saveCustomer, saveParchi, newParchi, receiptNo, hasApi, bump,
     gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt,
-    hasPrevReceipt, hasNextReceipt
+    hasPrevReceipt, hasNextReceipt, registerMainActions
   } = useApp()
   const [matches, setMatches] = useState([])
   const [open, setOpen] = useState(false)
@@ -103,7 +103,33 @@ export default function CustomerEntry() {
 
   // Stage 2 — Save the current parchi (نقد + ادھار entries) to the DB. Name is
   // mandatory for a ledger save; with no entries at all, just save the customer.
+  //
+  // savingRef makes the whole thing re-entrant-safe: saveParchi() is async, so a
+  // fast double-press (Ctrl+S twice, or a double-click on the button) would
+  // otherwise start a second save before the first finished and write the parchi
+  // twice. The second press is simply dropped. This is a duplicate guard only —
+  // WHETHER a save is allowed at all is still decided exactly where it was, inside
+  // saveParchi(), which returns its own Urdu message for every refusal.
+  //
+  // The ref is the guard, `saving` is only its VISIBLE half: it greys the Save
+  // button out for the length of the write, so a press that lands mid-save is not
+  // silently swallowed with the button still looking ready. State alone could not
+  // do the guarding — a second press in the same tick would read the stale value,
+  // which is exactly the double-save this prevents.
+  const savingRef = useRef(false)
+  const [saving, setSaving] = useState(false)
   const onSave = async () => {
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    try {
+      await runSave()
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+  const runSave = async () => {
     const res = await saveParchi()
     if (res.ok && res.freed) {
       // STEP 2: the receipt number was freed and is now reusable for a new customer.
@@ -136,6 +162,12 @@ export default function CustomerEntry() {
     newParchi()
     setSaveMsg(null)
   }
+
+  // Ctrl+S / Ctrl+N run THESE handlers — the very ones the Save / New buttons
+  // below are wired to, toast and all. Re-registered on every render so the
+  // shortcut always calls the current closure; cleared on unmount, so leaving the
+  // main screen leaves nothing for the hotkey to fire.
+  useEffect(() => registerMainActions({ save: onSave, new: onNew }))
 
   // Parchi navigation (⏮ First · ◀ Previous · ▶ Next · ⏭ Last). Each runs the
   // shared loadReceipt flow, so the full parchi (header + entries) is restored.
@@ -289,9 +321,13 @@ export default function CustomerEntry() {
       <div className="flex items-stretch gap-1">
         <div className="hdr urdu w-16">رسید نمبر</div>
         <input dir="ltr" className="inp w-16 text-center font-bold" value={receiptNo} readOnly />
+        {/* Greyed for the length of a save (see `saving` above) — the write is
+            brief, but a press that lands mid-save has to look ignored rather than
+            unnoticed. This is a busy indicator only: nothing else disables Save. */}
         <button
-          className="flex-1 flex items-center justify-center font-bold text-[14px] px-2 py-1.5 rounded-md border border-blue-300 bg-blue-100 text-blue-800 shadow-sm hover:bg-blue-200 hover:border-blue-400 active:bg-blue-300 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors"
+          className="flex-1 flex items-center justify-center font-bold text-[14px] px-2 py-1.5 rounded-md border border-blue-300 bg-blue-100 text-blue-800 shadow-sm hover:bg-blue-200 hover:border-blue-400 active:bg-blue-300 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-blue-100 disabled:hover:border-blue-300 disabled:active:translate-y-0"
           onClick={onSave}
+          disabled={saving}
         >
           Save
         </button>

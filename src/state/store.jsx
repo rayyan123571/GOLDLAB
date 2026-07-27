@@ -2083,6 +2083,27 @@ export function AppProvider({ children }) {
     // fully detached from whatever row the parchi we just left ended up with.
   }, [openReceiptNo, flushDraft, blankWorkbench])
 
+  // ── Main-screen action registry — what Ctrl+S / Ctrl+N run ──────────────────
+  // The New/Save BUTTONS live in CustomerEntry, and their click handlers do more
+  // than call newParchi()/saveParchi(): they also own the little Urdu result
+  // toast. So the component registers those EXACT handlers here, and the global
+  // hotkey (src/logic/hotkeys.js) fires them — shortcut and button are literally
+  // one code path, never two that can drift. Nothing registered (CustomerEntry
+  // unmounted, i.e. off the main screen) → the trigger is a silent no-op.
+  const mainActionsRef = useRef({})
+  const registerMainActions = useCallback((actions) => {
+    mainActionsRef.current = actions || {}
+    return () => { mainActionsRef.current = {} }
+  }, [])
+  const triggerSaveParchi = useCallback(() => {
+    const fn = mainActionsRef.current.save
+    if (fn) fn()
+  }, [])
+  const triggerNewParchi = useCallback(() => {
+    const fn = mainActionsRef.current.new
+    if (fn) fn()
+  }, [])
+
   // Stage 1 — one-time fresh start: clear all transactions/receipts, numbering → 1.
   const resetData = useCallback(async () => {
     if (hasApi) await window.api.resetTransactions()
@@ -2276,7 +2297,10 @@ export function AppProvider({ children }) {
     hasNextReceipt: receiptBounds.hasNext,
     gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt,
     addTransaction,
-    saveParchi, saveUdharTxn, newParchi, resetData, resetKachaData, resetKachaCounter, getReport, getReportGroup1, getKachaReport, getAdjustmentsReport,
+    saveParchi, saveUdharTxn, newParchi,
+    // Ctrl+S / Ctrl+N plumbing — CustomerEntry registers, hotkeys.js triggers.
+    registerMainActions, triggerSaveParchi, triggerNewParchi,
+    resetData, resetKachaData, resetKachaCounter, getReport, getReportGroup1, getKachaReport, getAdjustmentsReport,
     editTransaction, removeTransaction, recordSettle,
     savedFlags, setSavedFlags,
     udharOpen, openUdhar, closeUdhar,

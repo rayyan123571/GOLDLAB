@@ -10,7 +10,10 @@ import HisabForm from './components/HisabForm.jsx'
 import { applyTheme, THEME_FIELDS } from './logic/theme.js'
 
 export default function App() {
-  const { screen, udharOpen, closeUdhar, akhrajatOpen, closeAkhrajat, hisabOpen, closeHisab, rates, toggleParchi } = useApp()
+  const {
+    screen, udharOpen, closeUdhar, akhrajatOpen, closeAkhrajat, hisabOpen, closeHisab, rates, toggleParchi,
+    triggerSaveParchi, triggerNewParchi
+  } = useApp()
 
   // Global keyboard shortcuts — ONE window-level listener; every key, target
   // field and guard (modals, number-key trap) lives in src/logic/hotkeys.js.
@@ -20,10 +23,19 @@ export default function App() {
   screenRef.current = screen
   const toggleParchiRef = useRef(toggleParchi)
   toggleParchiRef.current = toggleParchi
+  // Ctrl+S / Ctrl+N. Both triggers run the Save / New buttons' own handlers
+  // (CustomerEntry registers them with the store), so shortcut and button are the
+  // same action; with CustomerEntry unmounted they are no-ops.
+  const saveParchiRef = useRef(triggerSaveParchi)
+  saveParchiRef.current = triggerSaveParchi
+  const newParchiRef = useRef(triggerNewParchi)
+  newParchiRef.current = triggerNewParchi
   useEffect(() => {
     const onKeyDown = makeHotkeyHandler({
       getScreen: () => screenRef.current,
-      toggleParchi: (rowKey) => toggleParchiRef.current(rowKey)
+      toggleParchi: (rowKey) => toggleParchiRef.current(rowKey),
+      saveParchi: () => saveParchiRef.current(),
+      newParchi: () => newParchiRef.current()
     })
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
