@@ -1,10 +1,16 @@
-// Build a PERSONAL, UNLOCKED Windows exe — no trial, no licence gate, no security.
+// Build a PERSONAL, UNLOCKED Windows exe — no trial, no licence gate. Code
+// protection (obfuscation + bytecode) still applies; only the licensing is gone.
 // For the owner's own use ONLY (do NOT ship this to paying customers).
 //
 // It flips the UNLICENSED_BUILD flag in electron/main.cjs to true, runs the normal
 // packaging pipeline (vite build -> obfuscate -> electron-builder --win), then
 // ALWAYS restores the flag to false in a finally block — so the customer build can
 // never accidentally go out unlocked. Output lands in release/ like a normal build.
+//
+//   node scripts/build-unlocked.cjs            -> modern-Windows build (release/)
+//   node scripts/build-unlocked.cjs --allwin   -> Electron 22 ia32 build that runs
+//                                                 on Win7→Win11 (release-allwin/,
+//                                                 installer name marked UNLOCKED)
 const fs = require('fs')
 const path = require('path')
 const { execSync } = require('child_process')
@@ -20,11 +26,24 @@ if (!original.includes(LOCKED)) {
   process.exit(1)
 }
 
+const allwin = process.argv.includes('--allwin')
+
 try {
   fs.writeFileSync(MAIN, original.replace(LOCKED, UNLOCKED), 'utf8')
   console.log('[unlocked] UNLICENSED_BUILD = true — building unlocked exe (this can take a few minutes)...')
-  execSync('npm run dist:win', { stdio: 'inherit', cwd: ROOT })
-  console.log('[unlocked] Build done — see the release/ folder for the exe.')
+  if (allwin) {
+    // GOLDLAB_UNLOCKED makes build-allwin stamp UNLOCKED into the installer name
+    // so it can never be mistaken for the customer (gated) All-Windows installer.
+    execSync('node scripts/build-allwin.cjs', {
+      stdio: 'inherit',
+      cwd: ROOT,
+      env: { ...process.env, GOLDLAB_UNLOCKED: '1' }
+    })
+    console.log('[unlocked] Build done — see the release-allwin/ folder for the exe.')
+  } else {
+    execSync('npm run dist:win', { stdio: 'inherit', cwd: ROOT })
+    console.log('[unlocked] Build done — see the release/ folder for the exe.')
+  }
 } finally {
   fs.writeFileSync(MAIN, original, 'utf8')
   console.log('[unlocked] Restored UNLICENSED_BUILD = false (customer build stays gated).')

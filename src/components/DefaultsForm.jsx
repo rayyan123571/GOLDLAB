@@ -1383,7 +1383,6 @@ export default function DefaultsForm({ open, onClose }) {
 
           {section === 'whatsapp' && (
             <div className="flex flex-col gap-4">
-              {form.print_mode !== 'overlay_form' && (<>
           {/* ── واٹس ایپ یاد دہانی کا پیغام — the text the "تیزابی لینا ہے" / "رقم لینی
               ہے" reports pre-fill into a WhatsApp chat. Nothing is ever sent from
               here or from the report: the button only OPENS the chat, and the
@@ -1455,7 +1454,6 @@ export default function DefaultsForm({ open, onClose }) {
               </button>
             </div>
           </div>
-              </>)}
             </div>
           )}
 

@@ -100,7 +100,9 @@ function writeConfig(arch) {
     nsis: {
       ...base.nsis,
       // Distinct name so it is never confused with the modern-Windows installer.
-      artifactName: `Chaudhry Gold Lab Setup \${version} ${ARCH_LABEL[arch]}.\${ext}`
+      // build-unlocked.cjs --allwin sets GOLDLAB_UNLOCKED so the no-trial personal
+      // build is also unmistakable next to the customer (gated) installer.
+      artifactName: `Chaudhry Gold Lab Setup \${version} ${ARCH_LABEL[arch]}${process.env.GOLDLAB_UNLOCKED ? ' UNLOCKED' : ''}.\${ext}`
     }
   }
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8')
