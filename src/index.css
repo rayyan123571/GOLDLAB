@@ -483,22 +483,23 @@ input[type='number'] {
     padding: 0 !important;
     border: 0 !important;
   }
-  /* table-layout: fixed is the actual clip fix. TableReport is laid out for the
-     screen (auto layout, 12.5px), so on paper the columns kept their natural
-     minimum width, and once those totalled more than 64mm the table simply grew
-     past the strip instead of compressing — نام ran off one edge and تاریخ off
-     the other. Fixed layout divides the 64mm between the columns and NOTHING can
-     push past it. (The ایکشن / یاد دہانی columns are .no-print → display:none, so
-     they claim none of that width.) */
+  /* NOT the clip fix — that is the wrapper flattening above. The table printed
+     here is ThermalTable (UdharForm.jsx, 10px), and it was already exactly 64mm
+     wide: `width: 100%` capped it, auto layout just shared that 64mm out by
+     natural column width. What fixed layout changes is the SHARE: equal columns
+     instead of نام taking ~33mm, so a long name wraps onto a second line rather
+     than squeezing the numeric columns. Widths are still capped either way.
+     (The ایکشن / یاد دہانی columns are .no-print → display:none, so they claim
+     none of that width.) */
   body.thermal-print .print-area table {
     width: 100% !important;
     border-collapse: collapse !important;
     table-layout: fixed !important;
   }
-  /* With the width now capped, a long value must WRAP rather than overflow: a
-     name like "New Mumtaz" and a full 27/07/2026 date break onto a second line
-     instead of being cut off. 9px suits the 64mm strip (the 12.5px is a screen
-     size), and the tighter 2px side padding buys back room for the text. */
+  /* Wrapping is what keeps a long value inside its narrower column: a name like
+     "Muhammad Ashraf Goldsmith" breaks onto a second line instead of forcing the
+     cell wider. 9px (down from ThermalTable's 10px) and the tighter 2px side
+     padding buy back room, so a full 27/07/2026 date still fits on one line. */
   body.thermal-print .print-area th,
   body.thermal-print .print-area td {
     border: 1px solid #000 !important;

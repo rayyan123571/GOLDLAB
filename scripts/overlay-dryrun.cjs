@@ -31,6 +31,7 @@ const { DEFAULT_COORDS, DEFAULT_OFFSETS } = require(path.join(ROOT, 'electron', 
 app.on('window-all-closed', () => {})
 
 const PAPER = overlayForm.PAPERS.halfletter_landscape
+const round2 = (n) => (n == null ? n : Math.round(n * 100) / 100)
 let failures = 0
 const fail = (msg) => { failures++; console.error('  FAIL  ' + msg) }
 const pass = (msg) => console.log('  ok    ' + msg)
@@ -85,6 +86,33 @@ async function render(html, c, tag) {
     }
     return { pdf, pageCount: pdfPrint.countPages(pdf) }
   } finally { try { w.destroy() } catch {} }
+}
+
+// Read the REAL laid-out geometry of the «بقایا رقم» box and of the three values
+// that share its column, in mm. Computing this from the settings would only prove
+// the arithmetic; what can actually collide is the painted line box of the value
+// above/below, whose height only the browser knows.
+async function measureBox(html) {
+  const w = new BrowserWindow({ show: false, width: 1200, height: 800, frame: false, webPreferences: { sandbox: false, backgroundThrottling: false } })
+  const htmlFile = path.join(OUT, 'overlay-box-measure.html')
+  try {
+    fs.writeFileSync(htmlFile, html, 'utf8')
+    await w.loadFile(htmlFile)
+    try { await w.webContents.executeJavaScript('Promise.resolve(window.__ready)', true) } catch {}
+    return await w.webContents.executeJavaScript(`(() => {
+      const MM = 96 / 25.4
+      const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect()
+        return { left: r.left / MM, right: r.right / MM, top: r.top / MM, bottom: r.bottom / MM } }
+      const byText = (t) => [...document.querySelectorAll('span.f')].find((s) => s.textContent.trim() === t) || null
+      const boxes = [...document.querySelectorAll('.bx')]
+      return {
+        box: box(boxes[0]), boxR: box(boxes[1]),
+        rate: box(byText('434,500')),      // ریٹ  — the row ABOVE (y 77.5)
+        baqaya: box(byText('4,150,588')),  // بقایا — the boxed value itself (y 84)
+        point: box(byText('10.599'))       // سونا دینا ہے — the row BELOW (y 90)
+      }
+    })()`)
+  } catch { return null } finally { try { w.destroy() } catch {} }
 }
 
 // Where each value ends up on the physical sheet, in mm, AFTER the global
@@ -151,8 +179,76 @@ async function main() {
     console.log(r.key.padEnd(18) + r.side.padEnd(9) + String(r.x).padStart(6) + String(r.y).padStart(8) + '   ' + r.text)
   }
 
+  // 5. «بقایا رقم» outline box — off by default, so first prove OFF is a no-op,
+  //    then measure where ON actually puts it. The box is square-cornered and its
+  //    neighbours are close (rate y=77.5 above, point y=90 below), so the numbers
+  //    that matter are its top and bottom edges against those two values.
+  console.log('\nباقیہ box:')
+  const boxOffHtml = overlayForm.buildOverlayHtml(overlayForm.buildSampleData(), cfgFromDefaults())
+  !boxOffHtml.includes('bx') ? pass('box OFF (default): the sheet carries no box element and no box CSS — nothing to render')
+    : fail('box OFF still emitted box markup/CSS — the default sheet is not unchanged')
+
+  const boxCfg = cfgFromDefaults({ boxOn: true })
+  const bc = overlayForm.normalizeCfg(boxCfg)
+  const boxHtml = overlayForm.buildOverlayHtml(overlayForm.buildSampleData(), boxCfg)
+  const boxCount = (boxHtml.match(/class="bx"/g) || []).length
+  boxCount === 2 ? pass('box ON: drawn on BOTH slips (left + right)')
+    : fail(`box ON produced ${boxCount} rectangle(s), expected 2 (left + right)`)
+
+  // An empty بقایا must not get an empty frame — the same rule every value obeys.
+  // fieldValues() reads it out of the lab table's «بقایا رقم» label/value pair, so
+  // blanking that pair is what an empty cell really looks like to the renderer.
+  const emptyData = JSON.parse(JSON.stringify(overlayForm.buildSampleData()))
+  // A table is an array of rows; a row is an array of {l:label} / {v:value} cells,
+  // and labVals pairs each label with the cell that follows it.
+  for (const table of (emptyData.tables || [])) {
+    for (const row of (table || [])) {
+      for (let i = 0; i < (row || []).length - 1; i++) {
+        if (row[i] && row[i].l === 'بقایا رقم' && row[i + 1] && row[i + 1].v !== undefined) row[i + 1].v = ''
+      }
+    }
+  }
+  const emptyVals = overlayForm.fieldValues(emptyData)
+  if (emptyVals.baqaya == null || String(emptyVals.baqaya) === '' || String(emptyVals.baqaya) === '-') {
+    const emptyHtml = overlayForm.buildOverlayHtml(emptyData, boxCfg)
+    !emptyHtml.includes('class="bx"') ? pass('box ON but بقایا empty: no rectangle drawn')
+      : fail('an EMPTY بقایا cell still got a rectangle around it')
+  } else {
+    fail(`could not blank بقایا in the sample (still "${emptyVals.baqaya}") — the empty-cell rule is UNVERIFIED`)
+  }
+
+  // Where it actually LANDS. Not arithmetic on the settings — the real laid-out
+  // rectangles read back out of the rendered page, because the thing that can
+  // collide is the painted line box of the neighbouring value, and only the
+  // browser knows how tall that is at this font size.
+  const m = await measureBox(boxHtml)
+  if (!m || !m.box) {
+    fail('could not measure the rendered box')
+  } else {
+    console.log(`  box    centre ${bc.boxX},${bc.boxY} mm   size ${bc.boxW}x${bc.boxH} mm   line ${bc.boxPt} mm`)
+    console.log(`  left   x ${round2(m.box.left)} → ${round2(m.box.right)} mm     y ${round2(m.box.top)} → ${round2(m.box.bottom)} mm`)
+    console.log(`  right  x ${round2(m.boxR.left)} → ${round2(m.boxR.right)} mm   y ${round2(m.boxR.top)} → ${round2(m.boxR.bottom)} mm`)
+    for (const [name, r] of [['ریٹ (y 77.5)', m.rate], ['بقایا (y 84)', m.baqaya], ['سونا دینا ہے (y 90)', m.point]]) {
+      if (r) console.log(`  value  ${name.padEnd(22)} y ${round2(r.top)} → ${round2(r.bottom)} mm`)
+    }
+    const gapTop = m.rate ? m.box.top - m.rate.bottom : null
+    const gapBot = m.point ? m.point.top - m.box.bottom : null
+    console.log(`  gap    above (box top − ریٹ bottom)          ${round2(gapTop)} mm`)
+    console.log(`  gap    below (سونا دینا ہے top − box bottom)  ${round2(gapBot)} mm`)
+    ;(gapTop == null || gapTop > 0)
+      ? pass(`top edge clears the «ریٹ» value by ${round2(gapTop)} mm`)
+      : fail(`top edge overlaps the «ریٹ» value by ${round2(-gapTop)} mm`)
+    ;(gapBot == null || gapBot > 0)
+      ? pass(`bottom edge clears the «سونا دینا ہے» value by ${round2(gapBot)} mm`)
+      : fail(`bottom edge overlaps the «سونا دینا ہے» value by ${round2(-gapBot)} mm`)
+  }
+
+  const boxRender = await render(boxHtml, bc, 'box')
+  boxRender.pageCount === 1 ? pass('box ON still renders exactly one page')
+    : fail(`box ON produced ${boxRender.pageCount} pages`)
+
   console.log(`\nartifacts -> ${OUT}`)
-  console.log('  overlay-slip.pdf / .png     overlay-proof.pdf / .png')
+  console.log('  overlay-slip.pdf / .png     overlay-proof.pdf / .png     overlay-box.pdf / .png')
   console.log('\n*** DRY-RUN ONLY: this does not exercise the Windows driver. Run the proof')
   console.log('*** sheet (پروف شیٹ) on the target Canon before shipping.\n')
   if (!pdfPrint.available()) {

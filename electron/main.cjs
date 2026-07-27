@@ -319,7 +319,12 @@ function printSettings() {
       rotate180: !!Number(r.overlay_rotate180 || 0),
       engine: r.overlay_engine === 'driver' ? 'driver' : 'pdf',
       // Spool orientation token — separate from landscape (see normalizeCfg).
-      printOrientation: ['auto', 'portrait', 'landscape'].includes(r.overlay_print_orientation) ? r.overlay_print_orientation : 'auto'
+      printOrientation: ['auto', 'portrait', 'landscape'].includes(r.overlay_print_orientation) ? r.overlay_print_orientation : 'auto',
+      // «بقایا رقم» outline box. Off unless the shop enabled it — nothing about
+      // the printed sheet changes until then.
+      boxOn: !!Number(r.overlay_box_on || 0),
+      boxX: r.overlay_box_x, boxY: r.overlay_box_y,
+      boxW: r.overlay_box_w, boxH: r.overlay_box_h, boxPt: r.overlay_box_pt
     }
     // Dual-printer device names (blank = Windows default).
     printerThermal = r.printer_thermal || ''
@@ -448,6 +453,10 @@ function overlayCfgWith(override = {}) {
     rotate180: pick('rotate180'),
     engine: pick('engine'),
     printOrientation: pick('printOrientation'),
+    // The «بقایا رقم» box merges like the rest, so a test print shows exactly
+    // what the real slip would print — including an unsaved box edit.
+    boxOn: pick('boxOn'), boxX: pick('boxX'), boxY: pick('boxY'),
+    boxW: pick('boxW'), boxH: pick('boxH'), boxPt: pick('boxPt'),
     coords: override.coords != null ? override.coords : overlayCfg.coords,
     bg: override.bg != null ? override.bg : overlayCfg.bg
   }

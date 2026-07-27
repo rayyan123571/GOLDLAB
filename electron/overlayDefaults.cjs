@@ -40,9 +40,22 @@ const DEFAULT_COORDS = {
 // other way round. engine 'pdf' = exact-size PDF spooled with scaling disabled
 // (deterministic); 'driver' hands the page to the Windows driver, which is free
 // to rescale it, and exists only as a fallback.
+// The «بقایا رقم» outline box (overlay_box_*) is OFF by default: until a shop
+// turns it on, the printed sheet is byte-for-byte what it was.
+//
+// overlay_box_y is the box's CENTRE, and that is NOT the same number as the
+// field's y. A field's y is its BASELINE (the values hang from it, translate
+// -100%), so باقیہ at y=84 actually paints 79.34 → 84; a box centred on 84 hangs
+// ~2.3mm below the digits and crosses into «سونا دینا ہے». Measured on the real
+// rendered sheet (npm run overlay:dryrun), the clear band between «ریٹ» (ends
+// 77.5) and «سونا دینا ہے» (starts 85.34) is 7.84mm, so a 7mm square-cornered box
+// centred at 81.4 sits in the middle of it with ~0.4mm to spare each side. That
+// is also why 7mm is the ceiling: any taller and one edge touches a neighbour.
 const DEFAULT_OFFSETS = {
   overlay_offx: 0, overlay_offy: 0, overlay_scalex: 1, overlay_scaley: 1,
   overlay_right_dx: 108, overlay_right_dy: 0, overlay_font_pt: 11,
+  overlay_box_on: 0, overlay_box_x: 21, overlay_box_y: 81.4,
+  overlay_box_w: 26, overlay_box_h: 7, overlay_box_pt: 0.3,
   overlay_landscape: 0, overlay_rotate180: 0, overlay_engine: 'pdf',
   // Spool orientation token, SEPARATE from overlay_landscape (which only rotates
   // the rendered page). 'auto' matches the printed page's real aspect; 'portrait'

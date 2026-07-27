@@ -339,7 +339,19 @@ function migrateSchema() {
     ['overlay_engine', 'TEXT', "'pdf'"],
     // Spool orientation token (auto | portrait | landscape), separate from
     // overlay_landscape. Default 'auto' → derived from the printed page aspect.
-    ['overlay_print_orientation', 'TEXT', "'auto'"]
+    ['overlay_print_orientation', 'TEXT', "'auto'"],
+    // Thin outline box around the «بقایا رقم» value (overlayForm.buildOverlayHtml).
+    // overlay_box_on defaults to 0, so an upgraded DB keeps printing exactly what
+    // it printed before — the box costs nothing until a shop switches it on. The
+    // rest are its centre/size/line-weight in mm (see overlayDefaults.cjs).
+    ['overlay_box_on', 'INTEGER', '0'],
+    ['overlay_box_x', 'REAL', '21'],
+    // 81.4, not باقیہ's own 84: a field's y is its BASELINE, so a box centred on
+    // 84 hangs below the digits and hits the next row (see overlayDefaults.cjs).
+    ['overlay_box_y', 'REAL', '81.4'],
+    ['overlay_box_w', 'REAL', '26'],
+    ['overlay_box_h', 'REAL', '7'],
+    ['overlay_box_pt', 'REAL', '0.3']
   ]
   for (const [col, type, def] of overlayCols) {
     if (!sCols.includes(col)) {
@@ -678,7 +690,10 @@ const api = {
     // column; print_mode / form_paper are clamped to their known values.
     const FORM_NUM_FIELDS = ['form_paper_w_mm', 'form_paper_h_mm', 'form_offset_x_mm', 'form_offset_y_mm', 'form_scale_x', 'form_scale_y', 'form_font_pt']
     // Overlay-mode numeric columns follow the same COALESCE + Number() rule.
-    const OVERLAY_NUM_FIELDS = ['overlay_offx', 'overlay_offy', 'overlay_scalex', 'overlay_scaley', 'overlay_right_dx', 'overlay_right_dy', 'overlay_font_pt']
+    const OVERLAY_NUM_FIELDS = ['overlay_offx', 'overlay_offy', 'overlay_scalex', 'overlay_scaley', 'overlay_right_dx', 'overlay_right_dy', 'overlay_font_pt',
+      // «بقایا رقم» box geometry — same COALESCE rule, so a caller that omits them
+      // (any older renderer) leaves the stored values alone.
+      'overlay_box_x', 'overlay_box_y', 'overlay_box_w', 'overlay_box_h', 'overlay_box_pt']
     run(
       `UPDATE settings SET date=?, rate_tezabi_tola=?, parchi_charges=?, fc_per_gram=?, rate_tezabi_gram=?, point=?, slip_count=?,
               raw_print_mode=COALESCE(?, raw_print_mode), print_scale=COALESCE(?, print_scale),
@@ -688,6 +703,7 @@ const api = {
               overlay_paper=COALESCE(?, overlay_paper), overlay_coords=COALESCE(?, overlay_coords), overlay_bg_path=COALESCE(?, overlay_bg_path),
               overlay_landscape=COALESCE(?, overlay_landscape), overlay_rotate180=COALESCE(?, overlay_rotate180), overlay_engine=COALESCE(?, overlay_engine),
               overlay_print_orientation=COALESCE(?, overlay_print_orientation),
+              overlay_box_on=COALESCE(?, overlay_box_on),
               ui_panel=COALESCE(?, ui_panel), ui_header=COALESCE(?, ui_header), ui_header_dark=COALESCE(?, ui_header_dark), ui_line=COALESCE(?, ui_line), ui_surface=COALESCE(?, ui_surface),
               printer_thermal=COALESCE(?, printer_thermal), printer_canon=COALESCE(?, printer_canon),
               wa_mode=COALESCE(?, wa_mode),
@@ -732,6 +748,8 @@ const api = {
         rates.overlay_engine != null ? (rates.overlay_engine === 'driver' ? 'driver' : 'pdf') : null,
         // Spool orientation token, clamped to the three known values.
         rates.overlay_print_orientation != null ? (['auto', 'portrait', 'landscape'].includes(rates.overlay_print_orientation) ? rates.overlay_print_orientation : 'auto') : null,
+        // «بقایا رقم» box on/off, stored 0/1 like the two flags above.
+        rates.overlay_box_on != null ? (rates.overlay_box_on ? 1 : 0) : null,
         // Theme colours: a '#rrggbb' string is stored; '' clears back to the hex
         // default (the renderer treats '' like unset); undefined/null keeps stored.
         rates.ui_panel != null ? String(rates.ui_panel) : null,

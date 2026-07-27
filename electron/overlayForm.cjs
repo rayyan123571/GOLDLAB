@@ -153,6 +153,16 @@ function normalizeCfg(cfg) {
     rightDX: num(c.rightDX, 108),
     rightDY: num(c.rightDY, 0),
     fontPt: num(c.fontPt, 11) || 11,
+    // ── «بقایا رقم» outline box ────────────────────────────────────────────
+    // OFF unless a shop explicitly enables it, so every existing install keeps
+    // printing exactly what it printed before. x/y are the box's CENTRE in mm
+    // (like a field coordinate), w/h its size, pt its line weight — all in mm.
+    boxOn: !!c.boxOn,
+    boxX: num(c.boxX, 21),
+    boxY: num(c.boxY, 81.4),
+    boxW: num(c.boxW, 26),
+    boxH: num(c.boxH, 7),
+    boxPt: num(c.boxPt, 0.3),
     coords,
     bg: c.bg || '',
     deviceName: c.deviceName || '',
@@ -198,11 +208,32 @@ function buildOverlayHtml(data, cfg, opts = {}) {
     return `<span class="f${u}" style="left:${x}mm;top:${y}mm">${escHtml(text)}</span>`
   }
 
+  // Thin rectangle around the «بقایا رقم» value. Two rules keep it honest:
+  // it draws ONLY when the shop enabled it, and only when that cell actually
+  // carries a value — the SAME emptiness test spanFor() applies, so an empty
+  // cell never gets an empty frame drawn around it.
+  //
+  // Its centre/size are its own settings rather than the baqaya coordinate: the
+  // box frames the pre-printed CELL, which is not the same rectangle as the
+  // value's text. Corners are square (no border-radius). Like every value it
+  // lives inside .cal, so offx/offy/scale move it with the rest of the sheet —
+  // adding the offsets here as well would shift it twice.
+  const boxFor = (dx, dy) => {
+    if (!c.boxOn) return ''
+    const text = vals.baqaya
+    if (text == null || String(text) === '' || String(text) === '-') return ''
+    const left = c.boxX - c.boxW / 2 + dx
+    const top = c.boxY - c.boxH / 2 + dy
+    return `<div class="bx" style="left:${left}mm;top:${top}mm;width:${c.boxW}mm;height:${c.boxH}mm"></div>`
+  }
+
   let cells = ''
   for (const key of Object.keys(coords)) {
     cells += spanFor(key, 0, 0)               // LEFT (customer) slip
     cells += spanFor(key, c.rightDX, c.rightDY) // RIGHT (shop) slip — same values
   }
+  cells += boxFor(0, 0)                       // LEFT slip
+  cells += boxFor(c.rightDX, c.rightDY)       // RIGHT slip — same right-copy shift
 
   const css =
     '*{box-sizing:border-box;margin:0;padding:0}' +
@@ -230,7 +261,16 @@ function buildOverlayHtml(data, cfg, opts = {}) {
     // noticeably heavier than plain bold; on a 600dpi mono laser 0.3px of stroke
     // is what closes that gap without smearing the digits together.
     `.f{position:absolute;font:700 ${c.fontPt}pt Arial;color:#000;white-space:nowrap;transform:translate(-50%,-100%);-webkit-text-stroke:0.3px #000}` +
-    `.f.u{font-family:${FONT_STACK};font-weight:700;-webkit-text-stroke:0.3px #000}`
+    `.f.u{font-family:${FONT_STACK};font-weight:700;-webkit-text-stroke:0.3px #000}` +
+    // The box is anchored by its top-left corner (computed from the centre above),
+    // so it takes NO translate — unlike .f, which hangs from its bottom-centre.
+    // The global box-sizing:border-box means the border is drawn INSIDE w/h, so
+    // the box's outer size is exactly what the shop typed.
+    //
+    // Emitted ONLY when the box is on. An unused rule could not paint anything,
+    // but leaving it out means a box-off sheet is byte-identical to what this
+    // function produced before the feature existed — "off" is provably a no-op.
+    (c.boxOn ? `.bx{position:absolute;border:${c.boxPt}mm solid #000;background:transparent}` : '')
 
   return '<!doctype html><html><head><meta charset="utf-8"><style>' + css + '</style></head><body>' +
     `<div class="sheet"><div class="cal">${cells}</div></div>` +

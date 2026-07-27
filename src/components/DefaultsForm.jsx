@@ -173,6 +173,9 @@ export default function DefaultsForm({ open, onClose }) {
     // 'driver' hands the page to Windows, which may rescale it.
     overlay_engine: 'pdf', overlay_landscape: false, overlay_rotate180: false,
     overlay_print_orientation: 'auto',
+    // «بقایا رقم» outline box — off until switched on; x/y are its CENTRE in mm.
+    overlay_box_on: false, overlay_box_x: '21', overlay_box_y: '81.4',
+    overlay_box_w: '26', overlay_box_h: '7', overlay_box_pt: '0.3',
     overlay_bg_path: '', overlay_coords: null,
     // Dual-printer device names.
     printer_thermal: '', printer_canon: '',
@@ -248,6 +251,12 @@ export default function DefaultsForm({ open, onClose }) {
         overlay_print_orientation: ['auto', 'portrait', 'landscape'].includes(src.overlay_print_orientation) ? src.overlay_print_orientation : 'auto',
         overlay_landscape: !!Number(src.overlay_landscape || 0),
         overlay_rotate180: !!Number(src.overlay_rotate180 || 0),
+        overlay_box_on: !!Number(src.overlay_box_on || 0),
+        overlay_box_x: src.overlay_box_x != null ? String(src.overlay_box_x) : '21',
+        overlay_box_y: src.overlay_box_y != null ? String(src.overlay_box_y) : '81.4',
+        overlay_box_w: src.overlay_box_w != null ? String(src.overlay_box_w) : '26',
+        overlay_box_h: src.overlay_box_h != null ? String(src.overlay_box_h) : '7',
+        overlay_box_pt: src.overlay_box_pt != null ? String(src.overlay_box_pt) : '0.3',
         overlay_bg_path: src.overlay_bg_path != null ? String(src.overlay_bg_path) : '',
         overlay_coords: (() => { try { return src.overlay_coords ? JSON.parse(src.overlay_coords) : null } catch { return null } })(),
         printer_thermal: src.printer_thermal != null ? String(src.printer_thermal) : '',
@@ -441,6 +450,12 @@ export default function DefaultsForm({ open, onClose }) {
       overlay_scalex: s(d.overlay_scalex, '1'), overlay_scaley: s(d.overlay_scaley, '1'),
       overlay_right_dx: s(d.overlay_right_dx, '108'), overlay_right_dy: s(d.overlay_right_dy, '0'),
       overlay_font_pt: s(d.overlay_font_pt, '11'),
+      // The «بقایا رقم» box returns to its defaults too — including OFF, so ری سیٹ
+      // also undoes "I turned the box on and moved it somewhere wrong".
+      overlay_box_on: !!Number(d.overlay_box_on || 0),
+      overlay_box_x: s(d.overlay_box_x, '21'), overlay_box_y: s(d.overlay_box_y, '81.4'),
+      overlay_box_w: s(d.overlay_box_w, '26'), overlay_box_h: s(d.overlay_box_h, '7'),
+      overlay_box_pt: s(d.overlay_box_pt, '0.3'),
       // Reset also puts the pipeline back to the safe combination, so "ری سیٹ"
       // recovers from a bad engine/rotation choice as well as from a bad drag.
       overlay_engine: d.overlay_engine === 'driver' ? 'driver' : 'pdf',
@@ -465,6 +480,12 @@ export default function DefaultsForm({ open, onClose }) {
     engine: form.overlay_engine === 'driver' ? 'driver' : 'pdf',
     landscape: !!form.overlay_landscape,
     rotate180: !!form.overlay_rotate180,
+    // The box goes through the test print exactly as configured here, so its
+    // position can be checked on paper before a real slip is spent.
+    boxOn: !!form.overlay_box_on,
+    boxX: Number(form.overlay_box_x) || 0, boxY: Number(form.overlay_box_y) || 0,
+    boxW: Number(form.overlay_box_w) || 0, boxH: Number(form.overlay_box_h) || 0,
+    boxPt: Number(form.overlay_box_pt) || 0,
     coords: ovCoords(), bg: form.overlay_bg_path
   })
 
@@ -596,6 +617,13 @@ export default function DefaultsForm({ open, onClose }) {
       overlay_print_orientation: ['auto', 'portrait', 'landscape'].includes(next.overlay_print_orientation) ? next.overlay_print_orientation : 'auto',
       overlay_landscape: next.overlay_landscape ? 1 : 0,
       overlay_rotate180: next.overlay_rotate180 ? 1 : 0,
+      // «بقایا رقم» box — on/off plus its centre/size/line weight in mm.
+      overlay_box_on: next.overlay_box_on ? 1 : 0,
+      overlay_box_x: Number(next.overlay_box_x) || 0,
+      overlay_box_y: Number(next.overlay_box_y) || 0,
+      overlay_box_w: Number(next.overlay_box_w) || 0,
+      overlay_box_h: Number(next.overlay_box_h) || 0,
+      overlay_box_pt: Number(next.overlay_box_pt) || 0,
       overlay_bg_path: String(next.overlay_bg_path ?? ''),
       overlay_coords: next.overlay_coords ? JSON.stringify(next.overlay_coords) : undefined,
       // Dual-printer device names ('' clears → Windows default).
@@ -1104,6 +1132,41 @@ export default function DefaultsForm({ open, onClose }) {
                     ))}
                   </div>
 
+                  {/* ── «بقایا رقم» کے گرد چوکھٹا ─────────────────────────────
+                      A thin outline printed around the بقایا value only. OFF by
+                      default; the numbers are the box's CENTRE and size in mm, so
+                      it frames the pre-printed cell rather than the digits. The
+                      height warning is not decoration: the rows above (ریٹ) and
+                      below (سونا دینا ہے) are only ~6mm away, and a square corner
+                      has no give — too tall and it touches a neighbouring value. */}
+                  <div className="flex flex-col gap-2 border border-gray-300 rounded-md p-3">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={!!form.overlay_box_on}
+                        onChange={(e) => commit({ ...form, overlay_box_on: e.target.checked })} />
+                      <span className="urdu text-[12.5px] font-bold text-gray-800">
+                        «بقایا رقم» کے گرد چوکھٹا چھاپیں
+                      </span>
+                    </label>
+                    <div className="urdu text-[10px] text-gray-500">
+                      خانہ خالی ہو تو چوکھٹا بھی نہیں چھپتا۔ X/Y چوکھٹے کا <b>مرکز</b> ہے (ملی میٹر)۔
+                      اونچائی <b>7mm سے زیادہ نہ رکھیں</b> — اوپر «ریٹ» اور نیچے «سونا دینا ہے» صرف ~6mm دور ہیں۔
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      {[
+                        ['overlay_box_x', 'چوکھٹا X (mm)'], ['overlay_box_y', 'چوکھٹا Y (mm)'],
+                        ['overlay_box_w', 'چوڑائی (mm)'], ['overlay_box_h', 'اونچائی (mm)'],
+                        ['overlay_box_pt', 'لکیر کی موٹائی (mm)']
+                      ].map(([f, label]) => (
+                        <label key={f} className="flex items-center justify-between gap-2">
+                          <span className="urdu text-[12px] text-gray-700 truncate">{label}</span>
+                          <input dir="ltr" inputMode="decimal" value={form[f]} onChange={ovNum(f)}
+                            disabled={!form.overlay_box_on}
+                            className={`${INPUT} w-20 py-1 disabled:opacity-40 disabled:cursor-not-allowed`} />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Preflight badge — the persistent readiness indicator. Green
                       only when a real slip WILL print at exact size; amber warns
                       that a slip could be wasted before the operator finds out. */}
@@ -1314,6 +1377,27 @@ export default function DefaultsForm({ open, onClose }) {
                         }} />
                         {/* centre split guide */}
                         <div className="absolute top-0 bottom-0" style={{ left: '50%', borderLeft: '1px dashed #999' }} />
+                        {/* «بقایا رقم» box preview — both slips, drawn from the
+                            SAME centre-minus-half-size maths the printed page uses
+                            (electron/overlayForm.cjs boxFor), so what is seen here
+                            is where it lands on paper. Only when switched on. */}
+                        {form.overlay_box_on && [['L', 0, 0], ['R', ovRightDX, ovRightDY]].map(([slip, dx, dy]) => {
+                          const bw = Number(form.overlay_box_w) || 0
+                          const bh = Number(form.overlay_box_h) || 0
+                          const bx = (Number(form.overlay_box_x) || 0) - bw / 2 + dx
+                          const by = (Number(form.overlay_box_y) || 0) - bh / 2 + dy
+                          return (
+                            <div
+                              key={`box${slip}`}
+                              className="absolute pointer-events-none"
+                              style={{
+                                left: `${(bx / SHEET_W_MM) * 100}%`, top: `${(by / SHEET_H_MM) * 100}%`,
+                                width: `${(bw / SHEET_W_MM) * 100}%`, height: `${(bh / SHEET_H_MM) * 100}%`,
+                                border: '1px solid #dc2626', opacity: slip === 'L' ? 1 : 0.55
+                              }}
+                            />
+                          )
+                        })}
                         {keys.map((key) => {
                           const co = coords[key]; const val = sample[key]
                           if (co == null || val == null || val === '' || val === '-') return null
