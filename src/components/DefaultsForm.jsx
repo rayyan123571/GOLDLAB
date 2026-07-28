@@ -3,6 +3,8 @@ import { useApp, WA_REMINDER_DEFAULT } from '../state/store.jsx'
 import { fillReminder } from './UdharForm.jsx' // the report's own message builder — preview = the real thing
 import { buildSlipHeader, buildSlipTerms, SHOP_FIELDS, SLIP_DESIGN_W } from '../logic/slipHeader.js'
 import { THEME_FIELDS, THEME_PRESETS, applyTheme, presetSwatches, activePresetId } from '../logic/theme.js'
+// The ٹوٹل pin gate, reused as-is to guard the پرچی ہیڈر section (see headerUnlocked).
+import PinGate from './PinGate.jsx'
 // The blank 2-up Imtiaz parchi (the pre-printed slip the overlay is calibrated
 // against). Bundled as the DEFAULT calibration backdrop so the cells are visible
 // without the shop having to upload anything; a different shop can still upload
@@ -205,6 +207,18 @@ export default function DefaultsForm({ open, onClose }) {
   // Preflight result (PDF spooler present? Canon resolves? custom form present?).
   const [preflight, setPreflight] = useState(null)
   const [copyMsg, setCopyMsg] = useState('')
+  // ── پرچی ہیڈر lock ──────────────────────────────────────────────────────────
+  // The shop identity printed on every slip. A shopkeeper who can edit it can
+  // print slips in someone ELSE'S name, so it takes the same pin as ٹوٹل — same
+  // hash, same verify, same recovery code (electron/pinGate.cjs), through the
+  // same PinGate UI.
+  //
+  // Deliberately plain React state, and deliberately NOT PinGate's own session
+  // flag: this must re-lock the moment the dialog closes, and it must not open
+  // ٹوٹل as a side effect. It is never written to the DB, the settings, or
+  // localStorage — closing the dialog re-locks, and so does restarting the app.
+  const [headerUnlocked, setHeaderUnlocked] = useState(false)
+  const [headerGate, setHeaderGate] = useState(false) // pin dialog open?
   const ovCanvasRef = useRef(null)                           // calibration canvas element (px↔mm)
   const ovDrag = useRef(null)                                // active drag {key,startX,startY,ox,oy}
   const savedTimer = useRef(null)
@@ -218,6 +232,11 @@ export default function DefaultsForm({ open, onClose }) {
     if (!open) return
     setSaved(false)
     setSection(SECTIONS[0].id) // every open starts on the first section
+    // AUTO-LOCK. Every open starts locked, whatever happened last time. This —
+    // not the تالا لگائیں button — is what the protection rests on: a remote
+    // session can drop and a person can simply forget to press the button.
+    setHeaderUnlocked(false)
+    setHeaderGate(false)
     let cancelled = false
     const seed = (r) => {
       const src = r || rates || {}
@@ -401,6 +420,48 @@ export default function DefaultsForm({ open, onClose }) {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
   }
+  // ── «بقایا رقم» box — the same pointer pattern the value chips use ──────────
+  // Only the LEFT rectangle is interactive; the right one is a mirror driven by
+  // right DX/DY, exactly like the faded chips (see onChipDown above).
+  const BOX_MIN_MM = 2
+  // 0.1mm, not the chips' 0.5mm: the box's own numbers are decimals (its default
+  // y is 81.4, measured), and a 0.5 snap would shift it off that on first touch.
+  const snapBox = (n) => Math.round(n * 10) / 10
+  const setBoxCentre = (x, y) => commit({
+    ...form,
+    overlay_box_x: String(Math.max(0, Math.min(SHEET_W_MM, snapBox(x)))),
+    overlay_box_y: String(Math.max(0, Math.min(SHEET_H_MM, snapBox(y))))
+  })
+  const setBoxSize = (w, h) => commit({
+    ...form,
+    overlay_box_w: String(Math.max(BOX_MIN_MM, snapBox(w))),
+    overlay_box_h: String(Math.max(BOX_MIN_MM, snapBox(h)))
+  })
+  // Shared plumbing: canvas px → sheet mm, tracked until pointerup. stopPropagation
+  // keeps a handle drag from also moving the box underneath it.
+  const onBoxDrag = (onMm) => (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const box = ovCanvasRef.current
+    if (!box) return
+    const rect = box.getBoundingClientRect()
+    const pxPerMmX = rect.width / SHEET_W_MM
+    const pxPerMmY = rect.height / SHEET_H_MM
+    const move = (ev) => onMm((ev.clientX - rect.left) / pxPerMmX, (ev.clientY - rect.top) / pxPerMmY)
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  // Move: the centre follows the pointer — the chips snap to the pointer the same way.
+  const onBoxDown = onBoxDrag(setBoxCentre)
+  // Resize: every corner works symmetrically about the CENTRE, so the box grows and
+  // shrinks in place and x/y never drift while sizing. That also means one handler
+  // serves all four corners — the distance from the centre IS the half-size.
+  const onBoxResize = onBoxDrag((mx, my) => setBoxSize(
+    Math.abs(mx - (Number(form.overlay_box_x) || 0)) * 2,
+    Math.abs(my - (Number(form.overlay_box_y) || 0)) * 2
+  ))
+
   // Blank-parchi photo → the calibration background (so the operator can see the
   // real cells while dragging) + the WhatsApp composite. ANY size is accepted: a
   // phone photo is often several MB, so we DOWNSCALE it in the browser to a modest
@@ -1004,13 +1065,45 @@ export default function DefaultsForm({ open, onClose }) {
           <div className={CARD}>
             <CardHead icon={<ShopIcon />} tone="bg-indigo-50 text-indigo-600 border-indigo-200">پرچی ہیڈر (دکان کی معلومات)</CardHead>
 
+            {/* PIN LOCK. Locked is the default and the resting state — see
+                headerUnlocked. Viewing stays open (the fields and the preview are
+                still readable); only EDITING is gated, because the risk is a slip
+                printed under someone else's shop name. */}
+            <div className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2 ${
+              headerUnlocked ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'
+            }`}>
+              <span className="flex items-center gap-2">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"
+                  stroke={headerUnlocked ? '#047857' : '#b45309'}>
+                  <rect x="4" y="10" width="16" height="10" rx="2.5" />
+                  {/* Locked = a closed shackle; unlocked = the same shackle swung open. */}
+                  {headerUnlocked ? <path d="M8 10V7a4 4 0 0 1 7.5-2" /> : <path d="M8 10V7a4 4 0 0 1 8 0v3" />}
+                </svg>
+                <span className={`urdu text-[12px] font-bold ${headerUnlocked ? 'text-emerald-800' : 'text-amber-800'}`}>
+                  {headerUnlocked ? 'کھلا ہے — ڈبی بند کرتے ہی دوبارہ تالا لگ جائے گا' : 'یہ حصہ پن سے محفوظ ہے'}
+                </span>
+              </span>
+              {headerUnlocked ? (
+                <button type="button" onClick={() => setHeaderUnlocked(false)}
+                  className="urdu shrink-0 text-[12px] font-bold text-gray-700 bg-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-300 transition-colors">
+                  تالا لگائیں
+                </button>
+              ) : (
+                <button type="button" onClick={() => setHeaderGate(true)}
+                  className="urdu shrink-0 text-[12px] font-bold text-white bg-slate-800 rounded-md px-3 py-1.5 hover:bg-slate-900 active:bg-black transition-colors">
+                  کھولیں
+                </button>
+              )}
+            </div>
+
             {SHOP_FIELDS.map((f) => (
               <Row key={f} label={SHOP_LABEL[f]}>
                 <input
                   dir={IS_PHONE(f) ? 'ltr' : 'rtl'}
-                  className={`${INPUT} ${IS_PHONE(f) ? '' : 'urdu'}`}
+                  className={`${INPUT} ${IS_PHONE(f) ? '' : 'urdu'} disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed`}
                   value={form[f]}
                   onChange={shopField(f)}
+                  disabled={!headerUnlocked}
                   maxLength={SHOP_MAX[f]}
                   inputMode={IS_PHONE(f) ? 'tel' : 'text'}
                   placeholder={IS_PHONE(f) ? '0300-0000000' : ''}
@@ -1377,25 +1470,50 @@ export default function DefaultsForm({ open, onClose }) {
                         }} />
                         {/* centre split guide */}
                         <div className="absolute top-0 bottom-0" style={{ left: '50%', borderLeft: '1px dashed #999' }} />
-                        {/* «بقایا رقم» box preview — both slips, drawn from the
-                            SAME centre-minus-half-size maths the printed page uses
+                        {/* «بقایا رقم» box — both slips, drawn from the SAME
+                            centre-minus-half-size maths the printed page uses
                             (electron/overlayForm.cjs boxFor), so what is seen here
-                            is where it lands on paper. Only when switched on. */}
+                            is where it lands on paper. Only when switched on.
+                            The LEFT one is draggable (and resizable by its corner
+                            handles); the RIGHT one is a mirror moved by «دائیں کاپی
+                            X/Y», exactly like the faded value chips. Rendered BEFORE
+                            the chips so a chip on top of it still drags normally. */}
                         {form.overlay_box_on && [['L', 0, 0], ['R', ovRightDX, ovRightDY]].map(([slip, dx, dy]) => {
                           const bw = Number(form.overlay_box_w) || 0
                           const bh = Number(form.overlay_box_h) || 0
                           const bx = (Number(form.overlay_box_x) || 0) - bw / 2 + dx
                           const by = (Number(form.overlay_box_y) || 0) - bh / 2 + dy
+                          const live = slip === 'L'
                           return (
                             <div
                               key={`box${slip}`}
-                              className="absolute pointer-events-none"
+                              onPointerDown={live ? onBoxDown : undefined}
+                              title={live ? '«بقایا رقم» کا چوکھٹا — گھسیٹیں؛ کونوں سے ناپ بدلیں' : undefined}
+                              className={`absolute ${live ? 'cursor-move' : 'pointer-events-none'}`}
                               style={{
                                 left: `${(bx / SHEET_W_MM) * 100}%`, top: `${(by / SHEET_H_MM) * 100}%`,
                                 width: `${(bw / SHEET_W_MM) * 100}%`, height: `${(bh / SHEET_H_MM) * 100}%`,
-                                border: '1px solid #dc2626', opacity: slip === 'L' ? 1 : 0.55
+                                border: '1px solid #dc2626', opacity: live ? 1 : 0.55,
+                                // A faint fill on the live one so the whole rectangle
+                                // is a grab target, not just its 1px outline.
+                                background: live ? 'rgba(220,38,38,.06)' : 'transparent'
                               }}
-                            />
+                            >
+                              {live && [['nw', 0, 0, 'nwse-resize'], ['ne', 1, 0, 'nesw-resize'],
+                                        ['sw', 0, 1, 'nesw-resize'], ['se', 1, 1, 'nwse-resize']].map(([id, fx, fy, cur]) => (
+                                <span
+                                  key={id}
+                                  onPointerDown={onBoxResize}
+                                  title="ناپ بدلیں"
+                                  className="absolute bg-white"
+                                  style={{
+                                    left: `${fx * 100}%`, top: `${fy * 100}%`,
+                                    width: 8, height: 8, marginLeft: -4, marginTop: -4,
+                                    border: '1px solid #dc2626', cursor: cur
+                                  }}
+                                />
+                              ))}
+                            </div>
                           )
                         })}
                         {keys.map((key) => {
@@ -1441,6 +1559,11 @@ export default function DefaultsForm({ open, onClose }) {
                         </div>
                       </div>
                       <div className="urdu text-[10px] text-gray-400">پیلے چپس بائیں (گاہک) کاپی — انہیں گھسیٹیں۔ دھندلے چپس دائیں کاپی — وہ «دائیں کاپی X/Y» سے حرکت کرتے ہیں۔</div>
+                      {form.overlay_box_on && (
+                        <div className="urdu text-[10px] text-red-500">
+                          سرخ چوکھٹا «بقایا رقم» کا ہے — بائیں والے کو گھسیٹیں، اور اس کے چار کونوں کے چھوٹے نشانوں سے اس کا ناپ بدلیں۔ نمبر خود بخود بدلتے رہیں گے۔
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="urdu text-[12px] text-gray-500">کیلیبریشن لوڈ ہو رہی ہے…</div>
@@ -1738,6 +1861,24 @@ export default function DefaultsForm({ open, onClose }) {
           </div>
         </div>
 
+        {/* پرچی ہیڈر's pin dialog — the same gate UI as ٹوٹل, but asking for a
+            DIFFERENT secret. scope="dev" verifies the developer pin held as a
+            digest in electron/pinGate.cjs, NOT settings.pin_hash: the shopkeeper
+            owns the ٹوٹل pin and may change it whenever he likes, and none of
+            that touches this lock — which is the point, since he is the one this
+            section is locked against.
+            grantSession={false}: unlocking here must not also open ٹوٹل, and
+            re-locking here must not close it.
+            Rendered INSIDE this card (which stops click propagation) so a click
+            in the pin dialog cannot reach the backdrop behind and shut Defaults. */}
+        <PinGate
+          open={headerGate}
+          scope="dev"
+          grantSession={false}
+          enterSubtitle="دکان کی معلومات بدلنے کے لیے پن درج کریں"
+          onUnlocked={() => { setHeaderUnlocked(true); setHeaderGate(false) }}
+          onClose={() => setHeaderGate(false)}
+        />
       </div>
     </div>
   )

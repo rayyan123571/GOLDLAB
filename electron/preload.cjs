@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('api', {
   pinStatus: () => call('pinStatus'),
   pinCheck: (code) => call('pinCheck', code),
   pinSet: (newPin, auth) => call('pinSet', newPin, auth),
+  // The DEVELOPER pin for ڈیفالٹ سیٹنگز → پرچی ہیڈر. Verify only — there is no
+  // set/change call on purpose, so the shopkeeper cannot take this lock over.
+  // The digest it is compared against lives in the main process (pinGate.cjs),
+  // never in the renderer bundle.
+  pinCheckDev: (code) => call('pinCheckDev', code),
   receiptNoExists: (n) => call('receiptNoExists', n),
   listDrafts: () => call('listDrafts'),
   upsertDraft: (seq, d) => call('upsertDraft', seq, d),

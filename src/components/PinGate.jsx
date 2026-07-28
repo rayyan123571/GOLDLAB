@@ -13,6 +13,12 @@ import React, { useEffect, useRef, useState } from 'react'
 // SESSION UNLOCK. Module-level (not React state) so it survives every remount for
 // the life of the window, and dies with it: unlock once, open ٹوٹل freely all
 // session; on the next app start the gate is back. Nothing is persisted.
+//
+// This flag belongs to ٹوٹل ALONE. Other screens can reuse this gate (same hash,
+// same verify, same recovery code) without joining that session — they pass
+// grantSession={false} and keep their own shorter-lived flag. Sharing it would
+// mean unlocking one place silently unlocks ٹوٹل, and re-locking one place locks
+// ٹوٹل too; see DefaultsForm's پرچی ہیڈر lock, which re-locks on every close.
 let sessionUnlocked = false
 export const isUnlocked = () => sessionUnlocked
 export const lockSession = () => { sessionUnlocked = false }
@@ -130,7 +136,28 @@ function PinCells({ value, onChange, onComplete, error, autoFocus, label }) {
 //       'new'    — set a new pin, twice (after create/recovery/current passes)
 //
 // mode 'unlock' starts at enter/create; mode 'change' starts at 'current'.
-export default function PinGate({ open, mode = 'unlock', onUnlocked, onClose }) {
+//
+// grantSession: does a successful unlock also open ٹوٹل for the rest of the
+// session? True (the default) is ٹوٹل's own gate. A caller that guards something
+// else passes false — it still gets onUnlocked(), but keeps its own flag, so its
+// lock and ٹوٹل's stay independent in both directions.
+// enterSubtitle: the one line that names WHAT is being unlocked. Defaults to
+// ٹوٹل's wording, so that screen is unchanged; another caller says its own thing
+// rather than telling the shopkeeper he is opening ٹوٹل.
+// scope: WHICH pin this gate is asking for.
+//   'client' (default) — the shopkeeper's own pin (settings.pin_hash). He creates
+//                        it, he may change it; recovery resets it. ٹوٹل uses this.
+//   'dev'              — the DEVELOPER pin (a fixed digest in electron/pinGate.cjs).
+//                        Verify only: no create screen, and the recovery code
+//                        unlocks straight away instead of offering a reset —
+//                        otherwise the shopkeeper could take the lock over, which
+//                        is exactly what the شاپ ہیڈر lock exists to prevent.
+export default function PinGate({
+  open, mode = 'unlock', grantSession = true, scope = 'client',
+  enterSubtitle = 'ٹوٹل دیکھنے کے لیے اپنا 4 ہندسوں کا پن درج کریں',
+  onUnlocked, onClose
+}) {
+  const devScope = scope === 'dev'
   const [view, setView] = useState('enter')
   const [pin, setPin] = useState('')
   const [pin2, setPin2] = useState('')
@@ -154,12 +181,14 @@ export default function PinGate({ open, mode = 'unlock', onUnlocked, onClose }) 
     authRef.current = ''
     if (mode === 'change') { setView('current'); return }
     setView('enter')
-    if (hasApi()) {
+    // The developer pin always exists and is never created here, so the
+    // create-vs-enter probe is skipped: this gate only ever asks for it.
+    if (!devScope && hasApi()) {
       window.api.pinStatus()
         .then((s) => setView(s && s.hasPin ? 'enter' : 'create'))
         .catch(() => setView('enter'))
     }
-  }, [open, mode])
+  }, [open, mode, devScope])
 
   if (!open) return null
 
@@ -186,7 +215,10 @@ export default function PinGate({ open, mode = 'unlock', onUnlocked, onClose }) 
     if (next !== 'recovery' && !isFourDigits(raw)) { rejectPin('پن 4 ہندسوں کا ہونا چاہیے'); return }
     setBusy(true); setErr('')
     try {
-      const res = await window.api.pinCheck(raw)
+      // Two different verifiers, two different secrets. pinCheckDev never reads
+      // settings.pin_hash, so the shopkeeper's pin cannot open a 'dev' gate and
+      // changing his pin cannot close one.
+      const res = devScope ? await window.api.pinCheckDev(raw) : await window.api.pinCheck(raw)
       if (res && res.recovery) {
         // Recovery code: never opens the panel by itself — it opens the reset.
         authRef.current = raw
@@ -196,7 +228,10 @@ export default function PinGate({ open, mode = 'unlock', onUnlocked, onClose }) 
       }
       if (res && res.ok) {
         authRef.current = raw
-        if (next === 'unlock') { sessionUnlocked = true; setPin(''); onUnlocked && onUnlocked() }
+        // A 'dev' gate can ONLY unlock — never fall through to "set a new pin".
+        // That is what keeps the developer pin out of the shopkeeper's hands,
+        // including when he gets in with the recovery code.
+        if (next === 'unlock' || devScope) { if (grantSession) sessionUnlocked = true; setPin(''); onUnlocked && onUnlocked() }
         else { setPin(''); setPin2(''); setRow(1); setMsg(''); setView('new') }
         return
       }
@@ -220,7 +255,7 @@ export default function PinGate({ open, mode = 'unlock', onUnlocked, onClose }) 
       // change/recovery flows it is the code that was already accepted above.
       const res = await window.api.pinSet(pin, authRef.current)
       if (res && res.ok) {
-        sessionUnlocked = true
+        if (grantSession) sessionUnlocked = true
         authRef.current = ''
         setPin(''); setPin2('')
         onUnlocked && onUnlocked()
@@ -248,7 +283,7 @@ export default function PinGate({ open, mode = 'unlock', onUnlocked, onClose }) 
   const subtitle = view === 'create' ? 'پہلی بار — 4 ہندسوں کا پن بنائیں'
     : view === 'new' ? '4 ہندسوں کا نیا پن، تصدیق کے لیے دو بار'
       : view === 'current' ? 'جاری رکھنے کے لیے موجودہ پن درج کریں'
-        : 'ٹوٹل دیکھنے کے لیے اپنا 4 ہندسوں کا پن درج کریں'
+        : enterSubtitle
 
   const canSave = isFourDigits(pin) && pin === pin2
 

@@ -2083,7 +2083,7 @@ export function AppProvider({ children }) {
     // fully detached from whatever row the parchi we just left ended up with.
   }, [openReceiptNo, flushDraft, blankWorkbench])
 
-  // ── Main-screen action registry — what Ctrl+S / Ctrl+N run ──────────────────
+  // ── Main-screen action registry — what Alt+S / Alt+N run ────────────────────
   // The New/Save BUTTONS live in CustomerEntry, and their click handlers do more
   // than call newParchi()/saveParchi(): they also own the little Urdu result
   // toast. So the component registers those EXACT handlers here, and the global
@@ -2298,7 +2298,7 @@ export function AppProvider({ children }) {
     gotoFirstReceipt, gotoLastReceipt, gotoNextReceipt, gotoPrevReceipt,
     addTransaction,
     saveParchi, saveUdharTxn, newParchi,
-    // Ctrl+S / Ctrl+N plumbing — CustomerEntry registers, hotkeys.js triggers.
+    // Alt+S / Alt+N plumbing — CustomerEntry registers, hotkeys.js triggers.
     registerMainActions, triggerSaveParchi, triggerNewParchi,
     resetData, resetKachaData, resetKachaCounter, getReport, getReportGroup1, getKachaReport, getAdjustmentsReport,
     editTransaction, removeTransaction, recordSettle,

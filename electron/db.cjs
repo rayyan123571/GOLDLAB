@@ -653,6 +653,15 @@ const api = {
     return { ok, recovery: false }
   },
 
+  // Verify the DEVELOPER pin that guards ڈیفالٹ سیٹنگز → پرچی ہیڈر. Deliberately
+  // separate from pinCheck(): it never looks at settings.pin_hash, so whatever
+  // the shopkeeper sets or changes as HIS pin has no effect here, and his pin can
+  // never open the shop-header section. Read-only, sets nothing — there is no
+  // "create" or "change" path for this one, by design.
+  pinCheckDev(code) {
+    return { ok: pinGate.isDevPin(code) }
+  },
+
   // Set (or change) the pin. When one already exists, `auth` must be the current
   // pin or the recovery code — so a change can never happen unauthenticated. A
   // FRESH salt is generated every time. flush() writes through immediately, so a

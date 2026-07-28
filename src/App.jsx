@@ -23,7 +23,7 @@ export default function App() {
   screenRef.current = screen
   const toggleParchiRef = useRef(toggleParchi)
   toggleParchiRef.current = toggleParchi
-  // Ctrl+S / Ctrl+N. Both triggers run the Save / New buttons' own handlers
+  // Alt+S / Alt+N. Both triggers run the Save / New buttons' own handlers
   // (CustomerEntry registers them with the store), so shortcut and button are the
   // same action; with CustomerEntry unmounted they are no-ops.
   const saveParchiRef = useRef(triggerSaveParchi)

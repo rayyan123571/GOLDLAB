@@ -105,7 +105,7 @@ export default function CustomerEntry() {
   // mandatory for a ledger save; with no entries at all, just save the customer.
   //
   // savingRef makes the whole thing re-entrant-safe: saveParchi() is async, so a
-  // fast double-press (Ctrl+S twice, or a double-click on the button) would
+  // fast double-press (Alt+S twice, or a double-click on the button) would
   // otherwise start a second save before the first finished and write the parchi
   // twice. The second press is simply dropped. This is a duplicate guard only —
   // WHETHER a save is allowed at all is still decided exactly where it was, inside
@@ -163,7 +163,7 @@ export default function CustomerEntry() {
     setSaveMsg(null)
   }
 
-  // Ctrl+S / Ctrl+N run THESE handlers — the very ones the Save / New buttons
+  // Alt+S / Alt+N run THESE handlers — the very ones the Save / New buttons
   // below are wired to, toast and all. Re-registered on every render so the
   // shortcut always calls the current closure; cleared on unmount, so leaving the
   // main screen leaves nothing for the hotkey to fire.
